@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/desktop/src-tauri",
+    "crates/dataforge-core",
+    "crates/dataforge-engine",
+    "crates/dataforge-mysql",
+    "crates/dataforge-sqlite",
+    "crates/dataforge-postgres",
+    "crates/dataforge-config",
+]
+
+[workspace.dependencies]
+# Framework
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-build = "2"
+
+# Async
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+futures = "0.3"
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Database drivers
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "sqlite", "chrono", "uuid", "json"] }
+mysql_async = "0.34"
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# SSH
+russh = "0.46"
+russh-keys = "0.46"
+
+# Security
+keyring = "3"
+
+# Utils
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dashmap = "6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

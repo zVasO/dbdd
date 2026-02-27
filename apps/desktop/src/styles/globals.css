@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+/* Theme tokens */
+:root {
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f8f9fa;
+  --color-bg-tertiary: #f1f3f5;
+  --color-bg-hover: #e9ecef;
+  --color-bg-active: #dee2e6;
+  --color-bg-sidebar: #f8f9fa;
+
+  --color-text-primary: #212529;
+  --color-text-secondary: #495057;
+  --color-text-tertiary: #868e96;
+  --color-text-disabled: #adb5bd;
+
+  --color-border: #dee2e6;
+  --color-border-strong: #ced4da;
+
+  --color-accent: #228be6;
+  --color-accent-hover: #1c7ed6;
+  --color-accent-subtle: #e7f5ff;
+
+  --color-success: #40c057;
+  --color-warning: #fab005;
+  --color-error: #fa5252;
+  --color-info: #228be6;
+
+  --color-grid-row-alt: #f8f9fa;
+  --color-grid-row-hover: #e7f5ff;
+  --color-grid-cell-edited: #fff9db;
+  --color-grid-cell-null: #f1f3f5;
+
+  --sidebar-width: 260px;
+  --statusbar-height: 28px;
+  --toolbar-height: 40px;
+  --tab-height: 36px;
+
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+  --font-sans: 'Inter', -apple-system, system-ui, sans-serif;
+
+  /* shadcn required variables */
+  --background: 0 0% 100%;
+  --foreground: 210 11% 15%;
+  --card: 210 17% 98%;
+  --card-foreground: 210 11% 15%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 210 11% 15%;
+  --primary: 210 100% 52%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 17% 95%;
+  --secondary-foreground: 210 11% 15%;
+  --muted: 210 17% 95%;
+  --muted-foreground: 210 8% 55%;
+  --accent: 210 17% 93%;
+  --accent-foreground: 210 11% 15%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 210 14% 89%;
+  --input: 210 14% 89%;
+  --ring: 210 100% 52%;
+  --radius: 0.5rem;
+}
+
+html.dark {
+  --color-bg-primary: #1a1b1e;
+  --color-bg-secondary: #25262b;
+  --color-bg-tertiary: #2c2e33;
+  --color-bg-hover: #373a40;
+  --color-bg-active: #495057;
+  --color-bg-sidebar: #25262b;
+
+  --color-text-primary: #f1f3f5;
+  --color-text-secondary: #c1c2c5;
+  --color-text-tertiary: #909296;
+  --color-text-disabled: #5c5f66;
+
+  --color-border: #373a40;
+  --color-border-strong: #495057;
+
+  --color-accent: #4dabf7;
+  --color-accent-hover: #74c0fc;
+  --color-accent-subtle: #1c3a5e;
+
+  --color-grid-row-alt: #25262b;
+  --color-grid-row-hover: #1c3a5e;
+  --color-grid-cell-edited: #3d3400;
+  --color-grid-cell-null: #2c2e33;
+
+  /* shadcn dark variables */
+  --background: 220 13% 10%;
+  --foreground: 210 17% 95%;
+  --card: 220 13% 14%;
+  --card-foreground: 210 17% 95%;
+  --popover: 220 13% 14%;
+  --popover-foreground: 210 17% 95%;
+  --primary: 210 100% 66%;
+  --primary-foreground: 220 13% 10%;
+  --secondary: 220 13% 17%;
+  --secondary-foreground: 210 17% 95%;
+  --muted: 220 13% 17%;
+  --muted-foreground: 220 8% 57%;
+  --accent: 220 13% 17%;
+  --accent-foreground: 210 17% 95%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 220 13% 22%;
+  --input: 220 13% 22%;
+  --ring: 210 100% 66%;
+  --radius: 0.5rem;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-border-strong); }
+
+::selection { background: var(--color-accent-subtle); }
+
+button, input, select, textarea { user-select: none; }

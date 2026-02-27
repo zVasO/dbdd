@@ -1,0 +1,27 @@
+use rusqlite::Connection;
+
+pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS connections (
+            id TEXT PRIMARY KEY,
+            config_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS query_history (
+            id TEXT PRIMARY KEY,
+            connection_id TEXT NOT NULL,
+            sql TEXT NOT NULL,
+            executed_at TEXT NOT NULL,
+            duration_ms INTEGER NOT NULL,
+            row_count INTEGER,
+            status TEXT NOT NULL,
+            error_message TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_query_history_connection
+        ON query_history(connection_id, executed_at DESC);",
+    )
+}
