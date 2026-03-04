@@ -112,6 +112,7 @@ export function ConnectionForm({ onCancel }: Props) {
     e.preventDefault();
     try {
       await connect(buildConfig(), form.password || undefined);
+      onCancel(); // Close form after successful connection
     } catch {
       // error handled by store
     }

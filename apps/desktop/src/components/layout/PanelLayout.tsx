@@ -9,6 +9,7 @@ import { FilterBar } from '@/components/grid/FilterBar';
 import { ColumnFilter } from '@/components/grid/ColumnFilter';
 import { CodePreview } from '@/components/editor/CodePreview';
 import { Button } from '@/components/ui/button';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import type { QueryResult } from '@/lib/types';
 
 export function PanelLayout() {
@@ -142,7 +143,11 @@ function renderResult(tab: { error: string | null; result: QueryResult | null; i
     );
   }
   if (tab.result) {
-    return <DataGrid result={tab.result} database={tab.database} table={tab.table} />;
+    return (
+      <ErrorBoundary>
+        <DataGrid result={tab.result} database={tab.database} table={tab.table} />
+      </ErrorBoundary>
+    );
   }
   if (tab.isExecuting) {
     return (
