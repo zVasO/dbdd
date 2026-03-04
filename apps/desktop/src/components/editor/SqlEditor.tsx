@@ -1,4 +1,5 @@
-import { lazy, Suspense, useCallback } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
+import { format as formatSql } from 'sql-formatter';
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 
@@ -9,12 +10,45 @@ interface Props {
 }
 
 export function SqlEditor({ value, onChange, onExecute }: Props) {
+  const editorRef = useRef<any>(null);
+
   const handleMount = useCallback(
     (editor: any, monaco: any) => {
+      editorRef.current = editor;
+
+      // Ctrl/Cmd + Enter — execute query
       editor.addCommand(
-        // Ctrl/Cmd + Enter
-        2048 | 3, // KeyMod.CtrlCmd | KeyCode.Enter
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
         () => onExecute(),
+      );
+
+      // Ctrl/Cmd + I — format SQL
+      editor.addCommand(
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyI,
+        () => {
+          const model = editor.getModel();
+          if (!model) return;
+          const val = model.getValue();
+          try {
+            const formatted = formatSql(val, {
+              language: 'sql',
+              tabWidth: 2,
+              keywordCase: 'upper',
+            });
+            editor.setValue(formatted);
+            onChange(formatted);
+          } catch {
+            // If formatting fails, do nothing
+          }
+        },
+      );
+
+      // Ctrl/Cmd + / — toggle line comment
+      editor.addCommand(
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.Slash,
+        () => {
+          editor.trigger('keyboard', 'editor.action.commentLine', null);
+        },
       );
 
       // Register SQL autocompletion provider
@@ -52,8 +86,32 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
         },
       });
     },
-    [onExecute],
+    [onExecute, onChange],
   );
+
+  // Listen for toolbar format event
+  useEffect(() => {
+    const handler = () => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const model = editor.getModel();
+      if (!model) return;
+      const val = model.getValue();
+      try {
+        const formatted = formatSql(val, {
+          language: 'sql',
+          tabWidth: 2,
+          keywordCase: 'upper',
+        });
+        editor.setValue(formatted);
+        onChange(formatted);
+      } catch {
+        // If formatting fails, do nothing
+      }
+    };
+    document.addEventListener('dataforge:format', handler);
+    return () => document.removeEventListener('dataforge:format', handler);
+  }, [onChange]);
 
   return (
     <Suspense

@@ -10,7 +10,7 @@ import {
   TooltipContent,
   TooltipProvider,
 } from '@/components/ui/tooltip';
-import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2 } from 'lucide-react';
+import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2, Wand2 } from 'lucide-react';
 import { useState, useCallback, useEffect } from 'react';
 
 interface Props {
@@ -80,6 +80,22 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
             </Button>
           </TooltipTrigger>
           <TooltipContent>Run query (Ctrl+Enter)</TooltipContent>
+        </Tooltip>
+
+        {/* Format SQL */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => document.dispatchEvent(new CustomEvent('dataforge:format'))}
+              className="gap-1.5 text-xs"
+            >
+              <Wand2 className="h-3.5 w-3.5" />
+              Format
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Format SQL (Ctrl+I)</TooltipContent>
         </Tooltip>
 
         <div className="mx-1 h-4 w-px bg-border" />
