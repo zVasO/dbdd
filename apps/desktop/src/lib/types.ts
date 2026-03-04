@@ -27,6 +27,7 @@ export interface ConnectionConfig {
   ssl_mode: SslMode;
   ssh_tunnel: SshTunnelConfig | null;
   color: string | null;
+  environment?: 'local' | 'development' | 'testing' | 'staging' | 'production' | null;
   pool_size: number | null;
   query_timeout_ms: number | null;
 }

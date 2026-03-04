@@ -25,7 +25,13 @@ export function ConnectionCard({ connection }: Props) {
   };
 
   return (
-    <Card className="py-0">
+    <Card
+      className="py-0"
+      style={{
+        borderLeftColor: connection.config.color || undefined,
+        borderLeftWidth: connection.config.color ? '3px' : undefined,
+      }}
+    >
       <CardContent className="flex items-center justify-between p-3">
         <div className="flex items-center gap-3">
           <div>
@@ -36,6 +42,11 @@ export function ConnectionCard({ connection }: Props) {
               <Badge variant="secondary" className="text-xs">
                 {connection.config.db_type}
               </Badge>
+              {connection.config.environment && (
+                <Badge variant="outline" className="text-[9px]">
+                  {connection.config.environment}
+                </Badge>
+              )}
               <span>{connection.config.host}:{connection.config.port}</span>
             </div>
           </div>
