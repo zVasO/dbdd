@@ -11,9 +11,17 @@ import {
   Moon,
   Terminal,
   Unplug,
+  Settings,
+  FolderOpen,
+  Save,
 } from 'lucide-react';
+import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 
-export function CommandPalette() {
+interface CommandPaletteProps {
+  onOpenPreferences?: () => void;
+}
+
+export function CommandPalette({ onOpenPreferences }: CommandPaletteProps) {
   const open = useUIStore((s) => s.commandPaletteOpen);
   const setOpen = useUIStore((s) => s.setCommandPaletteOpen);
 
@@ -138,6 +146,51 @@ export function CommandPalette() {
                 icon={<Terminal className="h-4 w-4" />}
               >
                 Toggle Activity Log
+              </CommandItem>
+              {onOpenPreferences && (
+                <CommandItem
+                  onSelect={() => runAndClose(() => onOpenPreferences())}
+                  icon={<Settings className="h-4 w-4" />}
+                  shortcut="Ctrl+,"
+                >
+                  Preferences
+                </CommandItem>
+              )}
+            </Command.Group>
+
+            {/* File group */}
+            <Command.Group
+              heading="File"
+              className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground"
+            >
+              <CommandItem
+                onSelect={() => runAndClose(async () => {
+                  const file = await openSqlFile();
+                  if (!file) return;
+                  const { createTab, tabs, activeTabId, updateSql } = useQueryStore.getState();
+                  const activeTab = tabs.find((t) => t.id === activeTabId);
+                  if (activeTab && !activeTab.sql.trim()) {
+                    updateSql(activeTab.id, file.content);
+                  } else {
+                    const id = createTab(file.name, { editorVisible: true });
+                    useQueryStore.getState().updateSql(id, file.content);
+                  }
+                })}
+                icon={<FolderOpen className="h-4 w-4" />}
+                shortcut="Ctrl+O"
+              >
+                Open SQL File
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  const { tabs, activeTabId } = useQueryStore.getState();
+                  const tab = tabs.find((t) => t.id === activeTabId);
+                  if (tab?.sql) saveSqlFile(tab.sql, `${tab.title.replace(/[^a-zA-Z0-9_-]/g, '_')}.sql`);
+                })}
+                icon={<Save className="h-4 w-4" />}
+                shortcut="Ctrl+Shift+S"
+              >
+                Save SQL File
               </CommandItem>
             </Command.Group>
 

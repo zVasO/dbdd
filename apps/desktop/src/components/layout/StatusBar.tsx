@@ -1,6 +1,7 @@
 import { useQueryStore } from '@/stores/queryStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useChangeStore } from '@/stores/changeStore';
+import { usePreferencesStore } from '@/stores/preferencesStore';
 import { ConnectionStatus } from '@/components/connection/ConnectionStatus';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -16,7 +17,8 @@ export function StatusBar({ connected, dbType, onDisconnect }: Props) {
   const activeTabId = useQueryStore((s) => s.activeTabId);
   const tabs = useQueryStore((s) => s.tabs);
   const activeTab = tabs.find((t) => t.id === activeTabId);
-  const { theme, toggleTheme } = useUIStore();
+  const toggleTheme = useUIStore((s) => s.toggleTheme);
+  const theme = usePreferencesStore((s) => s.theme);
   const pendingCount = useChangeStore((s) => s.pendingCount());
   const hasPending = pendingCount > 0;
 
