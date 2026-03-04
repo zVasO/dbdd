@@ -58,7 +58,7 @@ export function sqlValue(val: CellValue): string {
 }
 
 function escapeId(name: string): string {
-  return `\`${name}\``;
+  return `\`${name.replace(/`/g, '``')}\``;
 }
 
 function whereClause(primaryKeys: Record<string, CellValue>): string {
@@ -127,11 +127,16 @@ export const useChangeStore = create<ChangeState>((set, get) => ({
   previewOpen: false,
 
   addChange: (change) => {
+    // Reject edits/deletes without primary keys
+    if ((change.type === 'edit' || change.type === 'delete') && Object.keys(change.primaryKeys).length === 0) {
+      return;
+    }
+
     const id = crypto.randomUUID();
     const full = { ...change, id } as Change;
 
     set((s) => {
-      let next = s.pending;
+      const next = s.pending;
 
       // Dedup logic: if editing the same cell again, replace/remove the old edit
       if (full.type === 'edit') {

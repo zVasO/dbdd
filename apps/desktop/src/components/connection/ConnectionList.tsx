@@ -6,7 +6,7 @@ export function ConnectionList() {
 
   if (savedConnections.length === 0) {
     return (
-      <p className="text-sm" style={{ color: 'var(--color-text-tertiary)' }}>
+      <p className="text-sm text-muted-foreground">
         No saved connections. Create one to get started.
       </p>
     );
