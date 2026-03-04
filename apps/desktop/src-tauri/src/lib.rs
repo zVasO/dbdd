@@ -52,6 +52,7 @@ pub fn run() {
             commands::query::execute_query,
             commands::query::cancel_query,
             commands::query::get_query_history,
+            commands::query::execute_batch,
             commands::schema::list_databases,
             commands::schema::list_schemas,
             commands::schema::list_tables,
