@@ -2,13 +2,15 @@ import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { Key, Plus, Search, Trash2, X, Filter, Eye, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight as ChevronRightIcon } from 'lucide-react';
+import { Key, Plus, Search, Trash2, X, Filter, Eye, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight as ChevronRightIcon, Copy, FileJson, Table2, FileCode, FileText } from 'lucide-react';
+import { copyAsJson, copyAsInsert, copyAsCsv, copyAsMarkdown, copyToClipboard } from '@/lib/copyFormats';
 import type { QueryResult, CellValue } from '@/lib/types';
 import { useChangeStore } from '@/stores/changeStore';
 import { useFilterStore } from '@/stores/filterStore';
 import type { RowInsert } from '@/stores/changeStore';
 import { Button } from '@/components/ui/button';
 import { QuickLook } from './QuickLook';
+import { usePreferencesStore } from '@/stores/preferencesStore';
 
 interface Props {
   result: QueryResult;
@@ -36,7 +38,8 @@ function getStoredPageSize(): number {
     const v = localStorage.getItem('dataforge:pageSize');
     if (v === 'all') return Infinity;
     const n = Number(v);
-    return n > 0 ? n : 300;
+    if (n > 0) return n;
+    return usePreferencesStore.getState().defaultPageSize;
   } catch {
     return 300;
   }
@@ -78,10 +81,17 @@ export function DataGrid({ result, database, table }: Props) {
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIndex: number; colIndex: number } | null>(null);
 
+  // Preferences
+  const alternatingRowColors = usePreferencesStore((s) => s.alternatingRowColors);
+
   // Change tracking
   const addChange = useChangeStore((s) => s.addChange);
-  const pendingChanges = useChangeStore((s) =>
-    database && table ? s.getPendingForTable(database, table) : []
+  const pending = useChangeStore((s) => s.pending);
+  const pendingChanges = useMemo(
+    () => database && table
+      ? pending.filter((c) => c.database === database && c.table === table)
+      : [],
+    [pending, database, table]
   );
 
   // Column visibility
@@ -396,6 +406,13 @@ export function DataGrid({ result, database, table }: Props) {
     navigator.clipboard.writeText([header, ...rows].join('\n'));
   }, [selectedRows, result, paginatedRows]);
 
+  const getSelectedOrContextRows = useCallback((contextRowIndex: number) => {
+    if (selectedRows.size > 0) {
+      return [...selectedRows].sort((a, b) => a - b).map((idx) => paginatedRows[idx]);
+    }
+    return [paginatedRows[contextRowIndex]];
+  }, [selectedRows, paginatedRows]);
+
   // ─── Keyboard ──────────────────────────────────────────────────────────────
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -629,8 +646,8 @@ export function DataGrid({ result, database, table }: Props) {
                   ? 'opacity-40'
                   : isSelected
                     ? 'bg-primary/15 hover:bg-primary/20'
-                    : isOdd
-                      ? 'bg-muted/20 hover:bg-muted/40'
+                    : isOdd && alternatingRowColors
+                      ? 'bg-muted/30 hover:bg-muted/40'
                       : 'hover:bg-muted/30',
               )}
               style={{
@@ -883,9 +900,55 @@ export function DataGrid({ result, database, table }: Props) {
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => { copySelectedRows(); setContextMenu(null); }}
             >
+              <Copy className="h-3.5 w-3.5" />
               Copy Rows
               <kbd className="ml-auto text-[10px] text-muted-foreground">Ctrl+C</kbd>
             </button>
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
+              onClick={() => {
+                const rows = getSelectedOrContextRows(contextMenu.rowIndex);
+                copyToClipboard(copyAsJson(result.columns, rows));
+                setContextMenu(null);
+              }}
+            >
+              <FileJson className="h-3.5 w-3.5" />
+              Copy as JSON
+            </button>
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
+              onClick={() => {
+                const rows = getSelectedOrContextRows(contextMenu.rowIndex);
+                copyToClipboard(copyAsInsert(result.columns, rows, table || 'table'));
+                setContextMenu(null);
+              }}
+            >
+              <FileCode className="h-3.5 w-3.5" />
+              Copy as INSERT
+            </button>
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
+              onClick={() => {
+                const rows = getSelectedOrContextRows(contextMenu.rowIndex);
+                copyToClipboard(copyAsCsv(result.columns, rows));
+                setContextMenu(null);
+              }}
+            >
+              <FileText className="h-3.5 w-3.5" />
+              Copy as CSV
+            </button>
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
+              onClick={() => {
+                const rows = getSelectedOrContextRows(contextMenu.rowIndex);
+                copyToClipboard(copyAsMarkdown(result.columns, rows));
+                setContextMenu(null);
+              }}
+            >
+              <Table2 className="h-3.5 w-3.5" />
+              Copy as Markdown
+            </button>
+            <div className="my-1 h-px bg-border" />
             <button
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {

@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { ipc } from '../lib/ipc';
 import { useActivityStore } from './activityStore';
+import { useConnectionStore } from './connectionStore';
+import { saveSession } from '../lib/sessionRecovery';
 import type { QueryResult, QueryHistoryEntry } from '../lib/types';
 
 export interface QueryTab {
@@ -28,6 +30,7 @@ interface QueryState {
   executeQuery: (connectionId: string, tabId: string) => Promise<void>;
   cancelQuery: (connectionId: string, queryId: string) => Promise<void>;
   loadHistory: (connectionId: string) => Promise<void>;
+  restoreTabs: (tabs: Array<{ id: string; title: string; sql: string; editorVisible: boolean; database?: string; table?: string }>, activeTabId: string | null) => void;
 }
 
 export const useQueryStore = create<QueryState>((set, get) => ({
@@ -127,4 +130,24 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     const history = await ipc.getQueryHistory(connectionId);
     set({ history });
   },
+
+  restoreTabs: (tabs, activeTabId) => {
+    const restored: QueryTab[] = tabs.map((t) => ({
+      ...t,
+      result: null,
+      isExecuting: false,
+      error: null,
+    }));
+    set({ tabs: restored, activeTabId });
+  },
 }));
+
+// Auto-save session on tab changes (debounced)
+let _saveTimeout: ReturnType<typeof setTimeout> | null = null;
+useQueryStore.subscribe((state) => {
+  if (_saveTimeout) clearTimeout(_saveTimeout);
+  _saveTimeout = setTimeout(() => {
+    const connectionId = useConnectionStore.getState().activeConnectionId;
+    saveSession(state.tabs, state.activeTabId, connectionId);
+  }, 1000);
+});

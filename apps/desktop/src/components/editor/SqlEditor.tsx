@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
 import { format as formatSql } from 'sql-formatter';
+import { usePreferencesStore } from '@/stores/preferencesStore';
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 
@@ -11,6 +12,10 @@ interface Props {
 
 export function SqlEditor({ value, onChange, onExecute }: Props) {
   const editorRef = useRef<any>(null);
+  const fontSize = usePreferencesStore((s) => s.editorFontSize);
+  const showLineNumbers = usePreferencesStore((s) => s.editorShowLineNumbers);
+  const wordWrap = usePreferencesStore((s) => s.editorWordWrap);
+  const theme = usePreferencesStore((s) => s.theme);
 
   const handleMount = useCallback(
     (editor: any, monaco: any) => {
@@ -127,14 +132,14 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
         value={value}
         onChange={(val) => onChange(val || '')}
         onMount={handleMount}
-        theme="vs-dark"
+        theme={theme === 'dark' ? 'vs-dark' : 'vs'}
         options={{
           minimap: { enabled: false },
-          fontSize: 13,
+          fontSize,
           fontFamily: 'var(--font-mono)',
-          lineNumbers: 'on',
+          lineNumbers: showLineNumbers ? 'on' : 'off',
           scrollBeyondLastLine: false,
-          wordWrap: 'on',
+          wordWrap: wordWrap ? 'on' : 'off',
           tabSize: 2,
           automaticLayout: true,
           padding: { top: 8 },

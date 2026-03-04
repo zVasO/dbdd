@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useQueryStore } from '@/stores/queryStore';
 import { useSchemaStore } from '@/stores/schemaStore';
@@ -12,6 +12,8 @@ import { PanelLayout } from './PanelLayout';
 import { ActivityBar } from './ActivityBar';
 import { CommandPalette } from './CommandPalette';
 import { OpenAnything } from './OpenAnything';
+import { PreferencesDialog } from './PreferencesDialog';
+import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 
 export function AppLayout() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
@@ -24,6 +26,7 @@ export function AppLayout() {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
 
+  const [prefsOpen, setPrefsOpen] = useState(false);
   const isDragging = useRef(false);
 
   useEffect(() => {
@@ -124,6 +127,38 @@ export function AppLayout() {
         store.setFilterBarOpen(!store.filterBarOpen);
       },
     },
+    {
+      key: ',',
+      modifiers: ['ctrl'],
+      handler: () => setPrefsOpen(true),
+    },
+    {
+      key: 'o',
+      modifiers: ['ctrl'],
+      handler: async () => {
+        const file = await openSqlFile();
+        if (!file) return;
+        const { createTab, tabs, activeTabId, updateSql } = useQueryStore.getState();
+        const activeTab = tabs.find((t) => t.id === activeTabId);
+        if (activeTab && !activeTab.sql.trim()) {
+          updateSql(activeTab.id, file.content);
+        } else {
+          const id = createTab(file.name, { editorVisible: true });
+          useQueryStore.getState().updateSql(id, file.content);
+        }
+      },
+    },
+    {
+      key: 's',
+      modifiers: ['ctrl', 'shift'],
+      handler: () => {
+        const { tabs, activeTabId } = useQueryStore.getState();
+        const tab = tabs.find((t) => t.id === activeTabId);
+        if (tab?.sql) {
+          saveSqlFile(tab.sql, `${tab.title.replace(/[^a-zA-Z0-9_-]/g, '_')}.sql`);
+        }
+      },
+    },
   ]);
 
   return (
@@ -149,8 +184,9 @@ export function AppLayout() {
         dbType={activeConfig?.db_type}
         onDisconnect={disconnect}
       />
-      <CommandPalette />
+      <CommandPalette onOpenPreferences={() => setPrefsOpen(true)} />
       <OpenAnything />
+      <PreferencesDialog open={prefsOpen} onOpenChange={setPrefsOpen} />
     </div>
   );
 }
