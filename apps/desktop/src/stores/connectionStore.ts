@@ -37,6 +37,8 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         activeConfig: config,
         connecting: false,
       });
+      // Reload saved connections list so the UI reflects the new/updated connection
+      await get().loadSavedConnections();
       return connectionId;
     } catch (e) {
       set({ connecting: false, error: String(e) });
