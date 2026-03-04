@@ -2,12 +2,13 @@ import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { Key, Plus, Search, Trash2, X, Filter } from 'lucide-react';
+import { Key, Plus, Search, Trash2, X, Filter, Eye, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight as ChevronRightIcon } from 'lucide-react';
 import type { QueryResult, CellValue } from '@/lib/types';
 import { useChangeStore } from '@/stores/changeStore';
 import { useFilterStore } from '@/stores/filterStore';
 import type { RowInsert } from '@/stores/changeStore';
 import { Button } from '@/components/ui/button';
+import { QuickLook } from './QuickLook';
 
 interface Props {
   result: QueryResult;
@@ -21,6 +22,26 @@ interface EditingCell {
   value: string;
 }
 
+interface SortColumn {
+  colIndex: number;
+  direction: 'asc' | 'desc';
+}
+
+const PAGE_SIZES = [100, 300, 500, 1000] as const;
+const DEFAULT_COL_WIDTH = 180;
+const MIN_COL_WIDTH = 80;
+
+function getStoredPageSize(): number {
+  try {
+    const v = localStorage.getItem('dataforge:pageSize');
+    if (v === 'all') return Infinity;
+    const n = Number(v);
+    return n > 0 ? n : 300;
+  } catch {
+    return 300;
+  }
+}
+
 export function DataGrid({ result, database, table }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
@@ -28,14 +49,33 @@ export function DataGrid({ result, database, table }: Props) {
   const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
 
+  // Quick Look state
+  const [quickLookCell, setQuickLookCell] = useState<{
+    cell: CellValue;
+    columnName: string;
+    columnType: string;
+  } | null>(null);
+  const [focusedColIndex, setFocusedColIndex] = useState<number>(0);
+
   // Filter state
   const [filterText, setFilterText] = useState('');
+
+  // Sorting state
+  const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
+
+  // Pagination state
+  const [pageSize, setPageSize] = useState<number>(getStoredPageSize);
+  const [currentPage, setCurrentPage] = useState(0);
+
+  // Column resize state
+  const [columnWidths, setColumnWidths] = useState<Record<number, number>>({});
+  const resizingRef = useRef<{ colIndex: number; startX: number; startWidth: number } | null>(null);
 
   // Drag selection state
   const [isDragging, setIsDragging] = useState(false);
   const [dragStartRow, setDragStartRow] = useState<number | null>(null);
 
-  // Context menu state (colIndex is for Quick Filter)
+  // Context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIndex: number; colIndex: number } | null>(null);
 
   // Change tracking
@@ -50,7 +90,6 @@ export function DataGrid({ result, database, table }: Props) {
     () => result.columns.filter((col) => columnVisibility[col.name] !== false),
     [result.columns, columnVisibility],
   );
-  // Map from visible column index to the original column index in result.columns
   const visibleColIndexMap = useMemo(
     () => visibleColumns.map((col) => result.columns.indexOf(col)),
     [visibleColumns, result.columns],
@@ -73,7 +112,6 @@ export function DataGrid({ result, database, table }: Props) {
     return pendingChanges.some((c) => c.type === 'delete' && c.rowIndex === rowIndex);
   }, [pendingChanges]);
 
-  // Insert row handler
   const handleInsertRow = useCallback(() => {
     if (!database || !table) return;
     const values: Record<string, any> = {};
@@ -83,10 +121,10 @@ export function DataGrid({ result, database, table }: Props) {
     addChange({ type: 'insert', table, database, values });
   }, [database, table, result.columns, addChange]);
 
-  // Extract inserted rows from pending changes
   const insertedRows = pendingChanges.filter((c): c is RowInsert => c.type === 'insert');
 
-  // filteredRows + a map from filtered index -> original index in result.rows
+  // ─── Data pipeline: filter → sort → paginate ──────────────────────────────
+
   const { filteredRows, filteredIndexMap } = useMemo(() => {
     if (!filterText) {
       return {
@@ -105,14 +143,75 @@ export function DataGrid({ result, database, table }: Props) {
     return { filteredRows: rows, filteredIndexMap: indexMap };
   }, [filterText, result.rows]);
 
+  // Sort
+  const { sortedRows, sortedIndexMap } = useMemo(() => {
+    if (sortColumns.length === 0) {
+      return { sortedRows: filteredRows, sortedIndexMap: filteredIndexMap };
+    }
+
+    const indices = filteredRows.map((_, i) => i);
+    indices.sort((a, b) => {
+      for (const { colIndex, direction } of sortColumns) {
+        const cellA = filteredRows[a].cells[colIndex];
+        const cellB = filteredRows[b].cells[colIndex];
+        const valA = formatCell(cellA);
+        const valB = formatCell(cellB);
+
+        // Nulls last
+        if (cellA.type === 'Null' && cellB.type !== 'Null') return 1;
+        if (cellA.type !== 'Null' && cellB.type === 'Null') return -1;
+        if (cellA.type === 'Null' && cellB.type === 'Null') continue;
+
+        let cmp = 0;
+        if ((cellA.type === 'Integer' || cellA.type === 'Float') && (cellB.type === 'Integer' || cellB.type === 'Float')) {
+          cmp = (cellA.value as number) - (cellB.value as number);
+        } else {
+          cmp = valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' });
+        }
+
+        if (cmp !== 0) return direction === 'asc' ? cmp : -cmp;
+      }
+      return 0;
+    });
+
+    return {
+      sortedRows: indices.map((i) => filteredRows[i]),
+      sortedIndexMap: indices.map((i) => filteredIndexMap[i]),
+    };
+  }, [filteredRows, filteredIndexMap, sortColumns]);
+
+  // Paginate
+  const totalSortedRows = sortedRows.length;
+  const totalPages = pageSize === Infinity ? 1 : Math.max(1, Math.ceil(totalSortedRows / pageSize));
+  const safePage = Math.min(currentPage, totalPages - 1);
+
+  const { paginatedRows, paginatedIndexMap } = useMemo(() => {
+    if (pageSize === Infinity) {
+      return { paginatedRows: sortedRows, paginatedIndexMap: sortedIndexMap };
+    }
+    const start = safePage * pageSize;
+    const end = start + pageSize;
+    return {
+      paginatedRows: sortedRows.slice(start, end),
+      paginatedIndexMap: sortedIndexMap.slice(start, end),
+    };
+  }, [sortedRows, sortedIndexMap, safePage, pageSize]);
+
+  // Reset page when filter/sort changes
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [filterText, sortColumns]);
+
+  // ─── Virtualizer ──────────────────────────────────────────────────────────
+
   const rowVirtualizer = useVirtualizer({
-    count: filteredRows.length,
+    count: paginatedRows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 32,
     overscan: 20,
   });
 
-  // Focus the input when entering edit mode
+  // Focus input on edit
   useEffect(() => {
     if (editingCell && editInputRef.current) {
       editInputRef.current.focus();
@@ -120,40 +219,94 @@ export function DataGrid({ result, database, table }: Props) {
     }
   }, [editingCell]);
 
-  // Global mouseup listener to end drag selection
+  // Global mouseup for drag selection + column resize
   useEffect(() => {
     const handleMouseUp = () => {
-      if (isDragging) {
-        setIsDragging(false);
+      if (isDragging) setIsDragging(false);
+      if (resizingRef.current) {
+        resizingRef.current = null;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (resizingRef.current) {
+        const delta = e.clientX - resizingRef.current.startX;
+        const newWidth = Math.max(MIN_COL_WIDTH, resizingRef.current.startWidth + delta);
+        setColumnWidths((prev) => ({ ...prev, [resizingRef.current!.colIndex]: newWidth }));
       }
     };
 
     window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mousemove', handleMouseMove);
     return () => {
       window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mousemove', handleMouseMove);
     };
   }, [isDragging]);
+
+  // ─── Column resize ─────────────────────────────────────────────────────────
+
+  const handleResizeStart = useCallback((e: React.MouseEvent, colIndex: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const currentWidth = columnWidths[colIndex] ?? DEFAULT_COL_WIDTH;
+    resizingRef.current = { colIndex, startX: e.clientX, startWidth: currentWidth };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [columnWidths]);
+
+  const getColWidth = useCallback((colIndex: number) => {
+    return columnWidths[colIndex] ?? DEFAULT_COL_WIDTH;
+  }, [columnWidths]);
+
+  // ─── Column sorting ────────────────────────────────────────────────────────
+
+  const handleHeaderClick = useCallback((colIndex: number, shiftKey: boolean) => {
+    setSortColumns((prev) => {
+      const existingIdx = prev.findIndex((s) => s.colIndex === colIndex);
+      if (existingIdx !== -1) {
+        const existing = prev[existingIdx];
+        if (existing.direction === 'asc') {
+          // asc → desc
+          const next = [...prev];
+          next[existingIdx] = { ...existing, direction: 'desc' };
+          return next;
+        } else {
+          // desc → remove
+          return prev.filter((_, i) => i !== existingIdx);
+        }
+      }
+      // New sort
+      if (shiftKey) {
+        return [...prev, { colIndex, direction: 'asc' }];
+      }
+      return [{ colIndex, direction: 'asc' }];
+    });
+  }, []);
+
+  const getSortDirection = useCallback((colIndex: number): 'asc' | 'desc' | null => {
+    const found = sortColumns.find((s) => s.colIndex === colIndex);
+    return found?.direction ?? null;
+  }, [sortColumns]);
+
+  // ─── Row interaction ───────────────────────────────────────────────────────
 
   const handleRowMouseDown = useCallback(
     (e: React.MouseEvent, rowIndex: number) => {
       if (editingCell) return;
-
       if (e.shiftKey && lastSelectedRow !== null) {
         const start = Math.min(lastSelectedRow, rowIndex);
         const end = Math.max(lastSelectedRow, rowIndex);
         const next = new Set<number>();
-        for (let i = start; i <= end; i++) {
-          next.add(i);
-        }
+        for (let i = start; i <= end; i++) next.add(i);
         setSelectedRows(next);
       } else if (e.ctrlKey || e.metaKey) {
         setSelectedRows((prev) => {
           const next = new Set(prev);
-          if (next.has(rowIndex)) {
-            next.delete(rowIndex);
-          } else {
-            next.add(rowIndex);
-          }
+          if (next.has(rowIndex)) next.delete(rowIndex);
+          else next.add(rowIndex);
           return next;
         });
       } else {
@@ -161,7 +314,6 @@ export function DataGrid({ result, database, table }: Props) {
         setDragStartRow(rowIndex);
         setSelectedRows(new Set([rowIndex]));
       }
-
       setLastSelectedRow(rowIndex);
     },
     [lastSelectedRow, editingCell],
@@ -170,13 +322,10 @@ export function DataGrid({ result, database, table }: Props) {
   const handleRowMouseEnter = useCallback(
     (rowIndex: number) => {
       if (!isDragging || dragStartRow === null) return;
-
       const start = Math.min(dragStartRow, rowIndex);
       const end = Math.max(dragStartRow, rowIndex);
       const next = new Set<number>();
-      for (let i = start; i <= end; i++) {
-        next.add(i);
-      }
+      for (let i = start; i <= end; i++) next.add(i);
       setSelectedRows(next);
     },
     [isDragging, dragStartRow],
@@ -184,14 +333,10 @@ export function DataGrid({ result, database, table }: Props) {
 
   const handleCellDoubleClick = useCallback(
     (rowIndex: number, colIndex: number) => {
-      const cell = filteredRows[rowIndex].cells[colIndex];
-      setEditingCell({
-        rowIndex,
-        colIndex,
-        value: formatCell(cell),
-      });
+      const cell = paginatedRows[rowIndex].cells[colIndex];
+      setEditingCell({ rowIndex, colIndex, value: formatCell(cell) });
     },
-    [filteredRows],
+    [paginatedRows],
   );
 
   const commitEdit = useCallback(() => {
@@ -199,53 +344,36 @@ export function DataGrid({ result, database, table }: Props) {
       setEditingCell(null);
       return;
     }
-
     const { rowIndex, colIndex } = editingCell;
-    // rowIndex here is the filtered index; map to original
-    const actualRowIndex = filteredIndexMap[rowIndex];
+    const actualRowIndex = paginatedIndexMap[rowIndex];
     const row = result.rows[actualRowIndex];
     const column = result.columns[colIndex];
     const oldValue = formatCell(row.cells[colIndex]);
     const newValue = editingCell.value;
-
     if (oldValue === newValue) {
       setEditingCell(null);
       return;
     }
-
     if (database && table) {
-      // Build primary key map
       const primaryKeys: Record<string, string | number | boolean | null> = {};
       result.columns.forEach((col, i) => {
-        if (col.is_primary_key) {
-          primaryKeys[col.name] = formatCell(row.cells[i]);
-        }
+        if (col.is_primary_key) primaryKeys[col.name] = formatCell(row.cells[i]);
       });
-
       if (Object.keys(primaryKeys).length > 0) {
         addChange({
-          type: 'edit',
-          table,
-          database,
-          rowIndex: actualRowIndex,
-          primaryKeys,
-          column: column.name,
-          oldValue,
-          newValue,
+          type: 'edit', table, database, rowIndex: actualRowIndex, primaryKeys,
+          column: column.name, oldValue, newValue,
         });
       }
     }
-
     setEditingCell(null);
-  }, [editingCell, result, database, table, addChange, filteredIndexMap]);
+  }, [editingCell, result, database, table, addChange, paginatedIndexMap]);
 
-  const cancelEdit = useCallback(() => {
-    setEditingCell(null);
-  }, []);
+  const cancelEdit = useCallback(() => setEditingCell(null), []);
 
-  const handleDeleteRow = useCallback((filteredIdx: number) => {
+  const handleDeleteRow = useCallback((paginatedIdx: number) => {
     if (!database || !table) return;
-    const actualRowIndex = filteredIndexMap[filteredIdx];
+    const actualRowIndex = paginatedIndexMap[paginatedIdx];
     const row = result.rows[actualRowIndex];
     const primaryKeys: Record<string, string | number | boolean | null> = {};
     const originalRow: Record<string, string | number | boolean | null> = {};
@@ -256,46 +384,59 @@ export function DataGrid({ result, database, table }: Props) {
     if (Object.keys(primaryKeys).length === 0) return;
     addChange({ type: 'delete', table, database, rowIndex: actualRowIndex, primaryKeys, originalRow });
     setContextMenu(null);
-  }, [database, table, result, addChange, filteredIndexMap]);
+  }, [database, table, result, addChange, paginatedIndexMap]);
 
   const copySelectedRows = useCallback(() => {
     if (selectedRows.size === 0) return;
     const sortedIndices = [...selectedRows].sort((a, b) => a - b);
     const header = result.columns.map((c) => c.name).join('\t');
     const rows = sortedIndices.map((idx) =>
-      filteredRows[idx].cells.map((cell) => formatCell(cell)).join('\t')
+      paginatedRows[idx].cells.map((cell) => formatCell(cell)).join('\t')
     );
     navigator.clipboard.writeText([header, ...rows].join('\n'));
-  }, [selectedRows, result, filteredRows]);
+  }, [selectedRows, result, paginatedRows]);
+
+  // ─── Keyboard ──────────────────────────────────────────────────────────────
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    // Ctrl+C
     if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
       e.preventDefault();
       copySelectedRows();
       return;
     }
-    // Ctrl+A
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
       e.preventDefault();
       const all = new Set<number>();
-      for (let i = 0; i < filteredRows.length; i++) all.add(i);
+      for (let i = 0; i < paginatedRows.length; i++) all.add(i);
       setSelectedRows(all);
       return;
     }
-    // Escape
     if (e.key === 'Escape') {
       if (contextMenu) { setContextMenu(null); return; }
       if (editingCell) cancelEdit();
       else setSelectedRows(new Set());
       return;
     }
-    // Arrow navigation
+    // Space → Quick Look
+    if (e.key === ' ' && !editingCell) {
+      e.preventDefault();
+      if (selectedRows.size === 1) {
+        const rowIdx = [...selectedRows][0];
+        const row = paginatedRows[rowIdx];
+        if (row) {
+          const colIdx = focusedColIndex < result.columns.length ? focusedColIndex : 0;
+          const col = result.columns[colIdx];
+          const cell = row.cells[colIdx];
+          setQuickLookCell({ cell, columnName: col.name, columnType: col.native_type });
+        }
+      }
+      return;
+    }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       const current = lastSelectedRow ?? -1;
       const next = e.key === 'ArrowDown'
-        ? Math.min(current + 1, filteredRows.length - 1)
+        ? Math.min(current + 1, paginatedRows.length - 1)
         : Math.max(current - 1, 0);
       if (e.shiftKey) {
         setSelectedRows((prev) => {
@@ -309,14 +450,15 @@ export function DataGrid({ result, database, table }: Props) {
       setLastSelectedRow(next);
       return;
     }
-  }, [copySelectedRows, filteredRows.length, editingCell, cancelEdit, lastSelectedRow, contextMenu]);
+  }, [copySelectedRows, paginatedRows, editingCell, cancelEdit, lastSelectedRow, contextMenu, focusedColIndex, result.columns, selectedRows]);
+
+  // ─── Export ────────────────────────────────────────────────────────────────
 
   const exportData = useCallback((format: 'csv' | 'json' | 'sql') => {
     const dataRows = selectedRows.size > 0
-      ? [...selectedRows].sort((a, b) => a - b).map((i) => filteredRows[i])
-      : filteredRows;
+      ? [...selectedRows].sort((a, b) => a - b).map((i) => paginatedRows[i])
+      : paginatedRows;
     const cols = result.columns;
-
     let content: string;
     let filename: string;
 
@@ -341,7 +483,6 @@ export function DataGrid({ result, database, table }: Props) {
       content = JSON.stringify(data, null, 2);
       filename = 'export.json';
     } else {
-      // SQL INSERT
       const tableName = 'table_name';
       const colNames = cols.map((c) => `\`${c.name}\``).join(', ');
       const rows = dataRows.map((row) => {
@@ -364,7 +505,22 @@ export function DataGrid({ result, database, table }: Props) {
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
-  }, [selectedRows, result, filteredRows]);
+  }, [selectedRows, result, paginatedRows]);
+
+  // ─── Pagination helpers ────────────────────────────────────────────────────
+
+  const handlePageSizeChange = useCallback((size: number) => {
+    setPageSize(size);
+    setCurrentPage(0);
+    try {
+      localStorage.setItem('dataforge:pageSize', size === Infinity ? 'all' : String(size));
+    } catch {}
+  }, []);
+
+  const pageStart = pageSize === Infinity ? 0 : safePage * pageSize;
+  const pageEnd = pageSize === Infinity ? totalSortedRows : Math.min(pageStart + pageSize, totalSortedRows);
+
+  // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div
@@ -375,40 +531,61 @@ export function DataGrid({ result, database, table }: Props) {
       style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}
       onScroll={() => { if (contextMenu) setContextMenu(null); }}
       onClick={(e) => {
-        if (e.target === parentRef.current) {
-          setSelectedRows(new Set());
-        }
+        if (e.target === parentRef.current) setSelectedRows(new Set());
       }}
     >
       {/* Column headers */}
       <div className="sticky top-0 z-10 flex border-b-2 border-border bg-muted">
-        {/* Row number header */}
         <div className="flex w-[50px] shrink-0 items-center justify-center border-r border-border px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           #
         </div>
-        {visibleColumns.map((col) => (
-          <div
-            key={col.name}
-            className="flex w-[180px] shrink-0 items-center gap-1 border-r border-border px-2 py-1.5"
-          >
-            {col.is_primary_key && (
-              <Key className="h-3 w-3 shrink-0 text-primary" />
-            )}
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-xs font-semibold text-foreground">
-                {col.name}
+        {visibleColumns.map((col, visIdx) => {
+          const colIdx = visibleColIndexMap[visIdx];
+          const width = getColWidth(colIdx);
+          const sortDir = getSortDirection(colIdx);
+
+          return (
+            <div
+              key={col.name}
+              className="relative flex shrink-0 items-center gap-1 border-r border-border px-2 py-1.5 cursor-pointer hover:bg-accent/30"
+              style={{ width }}
+              onClick={(e) => handleHeaderClick(colIdx, e.shiftKey)}
+            >
+              {col.is_primary_key && (
+                <Key className="h-3 w-3 shrink-0 text-primary" />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-semibold text-foreground">
+                  {col.name}
+                </div>
+                <div className="flex items-center gap-1">
+                  <Badge variant="secondary" className="h-3.5 rounded px-1 py-0 text-[9px] font-normal">
+                    {col.native_type}
+                  </Badge>
+                  {col.nullable && (
+                    <span className="text-[9px] text-muted-foreground">null</span>
+                  )}
+                </div>
               </div>
-              <div className="flex items-center gap-1">
-                <Badge variant="secondary" className="h-3.5 rounded px-1 py-0 text-[9px] font-normal">
-                  {col.native_type}
-                </Badge>
-                {col.nullable && (
-                  <span className="text-[9px] text-muted-foreground">null</span>
+              {/* Sort indicator */}
+              <span className="shrink-0 text-muted-foreground">
+                {sortDir === 'asc' ? (
+                  <ChevronUp className="h-3 w-3 text-primary" />
+                ) : sortDir === 'desc' ? (
+                  <ChevronDown className="h-3 w-3 text-primary" />
+                ) : (
+                  <ChevronsUpDown className="h-3 w-3 opacity-0 group-hover:opacity-50" />
                 )}
-              </div>
+              </span>
+              {/* Resize handle */}
+              <div
+                className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-primary/40"
+                onMouseDown={(e) => handleResizeStart(e, colIdx)}
+                onClick={(e) => e.stopPropagation()}
+              />
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Filter bar */}
@@ -426,7 +603,7 @@ export function DataGrid({ result, database, table }: Props) {
           </button>
         )}
         <span className="text-[10px] text-muted-foreground">
-          {filteredRows.length}/{result.rows.length}
+          {totalSortedRows}/{result.rows.length}
         </span>
       </div>
 
@@ -436,8 +613,9 @@ export function DataGrid({ result, database, table }: Props) {
         style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
       >
         {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-          const row = filteredRows[virtualRow.index];
-          const actualRowIndex = filteredIndexMap[virtualRow.index];
+          const row = paginatedRows[virtualRow.index];
+          const actualRowIndex = paginatedIndexMap[virtualRow.index];
+          const displayIndex = pageStart + virtualRow.index;
           const isOdd = virtualRow.index % 2 === 1;
           const isSelected = selectedRows.has(virtualRow.index);
           const rowDeleted = isRowDeleted(actualRowIndex);
@@ -478,12 +656,13 @@ export function DataGrid({ result, database, table }: Props) {
                   rowDeleted && 'line-through',
                 )}
               >
-                {virtualRow.index + 1}
+                {displayIndex + 1}
               </div>
 
               {/* Cells */}
               {visibleColumns.map((col, visIdx) => {
                 const colIdx = visibleColIndexMap[visIdx];
+                const width = getColWidth(colIdx);
                 const cell = row.cells[colIdx];
                 const isEditing =
                   editingCell?.rowIndex === virtualRow.index &&
@@ -494,10 +673,12 @@ export function DataGrid({ result, database, table }: Props) {
                   <div
                     key={colIdx}
                     className={cn(
-                      'flex w-[180px] shrink-0 items-center border-r border-border/30',
+                      'flex shrink-0 items-center border-r border-border/30',
                       isEditing && 'ring-2 ring-inset ring-primary',
                       pendingEdit && !isEditing && 'bg-yellow-500/15',
                     )}
+                    style={{ width }}
+                    onClick={() => setFocusedColIndex(colIdx)}
                     onContextMenu={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -565,35 +746,94 @@ export function DataGrid({ result, database, table }: Props) {
           className="flex bg-green-500/10 border-b border-border"
           style={{ height: 32 }}
         >
-          {/* Row number */}
-          <div
-            className="flex w-[50px] shrink-0 items-center justify-center border-r border-border bg-green-500/10 text-[10px] text-green-600"
-          >
+          <div className="flex w-[50px] shrink-0 items-center justify-center border-r border-border bg-green-500/10 text-[10px] text-green-600">
             +{idx + 1}
           </div>
-          {/* Cells */}
-          {visibleColumns.map((col) => (
-            <div
-              key={col.name}
-              className="flex w-[180px] shrink-0 items-center border-r border-border px-2 text-xs text-green-600 dark:text-green-400"
-            >
-              {insert.values[col.name] === null ? (
-                <span className="italic text-green-400/60">NULL</span>
-              ) : (
-                String(insert.values[col.name])
-              )}
-            </div>
-          ))}
+          {visibleColumns.map((col, visIdx) => {
+            const colIdx = visibleColIndexMap[visIdx];
+            const width = getColWidth(colIdx);
+            return (
+              <div
+                key={col.name}
+                className="flex shrink-0 items-center border-r border-border px-2 text-xs text-green-600 dark:text-green-400"
+                style={{ width }}
+              >
+                {insert.values[col.name] === null ? (
+                  <span className="italic text-green-400/60">NULL</span>
+                ) : (
+                  String(insert.values[col.name])
+                )}
+              </div>
+            );
+          })}
         </div>
       ))}
 
-      {/* Footer summary */}
+      {/* Footer with pagination */}
       {result.rows.length > 0 && (
         <div className="sticky bottom-0 flex items-center gap-3 border-t border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground">
-          <span>{result.total_rows ?? result.rows.length} rows</span>
+          {/* Row info */}
+          <span>
+            {totalSortedRows > 0
+              ? `${pageStart + 1}–${pageEnd} of ${totalSortedRows}`
+              : '0 rows'}
+          </span>
           {selectedRows.size > 0 && (
             <span className="text-primary">{selectedRows.size} selected</span>
           )}
+
+          {/* Pagination controls */}
+          {totalPages > 1 && (
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
+                disabled={safePage === 0}
+                className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
+              >
+                <ChevronLeft className="h-3.5 w-3.5" />
+              </button>
+              <span className="px-1 tabular-nums">
+                {safePage + 1}/{totalPages}
+              </span>
+              <button
+                onClick={() => setCurrentPage((p) => Math.min(totalPages - 1, p + 1))}
+                disabled={safePage >= totalPages - 1}
+                className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
+              >
+                <ChevronRightIcon className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* Page size selector */}
+          <div className="flex items-center gap-1">
+            {PAGE_SIZES.map((size) => (
+              <button
+                key={size}
+                onClick={() => handlePageSizeChange(size)}
+                className={cn(
+                  'rounded px-1.5 py-0.5',
+                  pageSize === size
+                    ? 'bg-primary/15 text-primary font-medium'
+                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                )}
+              >
+                {size}
+              </button>
+            ))}
+            <button
+              onClick={() => handlePageSizeChange(Infinity)}
+              className={cn(
+                'rounded px-1.5 py-0.5',
+                pageSize === Infinity
+                  ? 'bg-primary/15 text-primary font-medium'
+                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+              )}
+            >
+              All
+            </button>
+          </div>
+
           <div className="ml-auto flex items-center gap-3">
             {database && table && (
               <Button
@@ -649,8 +889,25 @@ export function DataGrid({ result, database, table }: Props) {
             <button
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
+                const row = paginatedRows[contextMenu.rowIndex];
+                if (row) {
+                  const colIdx = contextMenu.colIndex;
+                  const col = result.columns[colIdx];
+                  const cell = row.cells[colIdx];
+                  setQuickLookCell({ cell, columnName: col.name, columnType: col.native_type });
+                }
+                setContextMenu(null);
+              }}
+            >
+              <Eye className="h-3.5 w-3.5" />
+              Quick Look
+              <kbd className="ml-auto text-[10px] text-muted-foreground">Space</kbd>
+            </button>
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
+              onClick={() => {
                 const all = new Set<number>();
-                for (let i = 0; i < filteredRows.length; i++) all.add(i);
+                for (let i = 0; i < paginatedRows.length; i++) all.add(i);
                 setSelectedRows(all);
                 setContextMenu(null);
               }}
@@ -676,7 +933,7 @@ export function DataGrid({ result, database, table }: Props) {
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
                 const col = result.columns[contextMenu.colIndex];
-                const row = filteredRows[contextMenu.rowIndex];
+                const row = paginatedRows[contextMenu.rowIndex];
                 const value = formatCell(row.cells[contextMenu.colIndex]);
                 handleQuickFilter(col.name, value);
                 setContextMenu(null);
@@ -701,6 +958,15 @@ export function DataGrid({ result, database, table }: Props) {
           </div>
         </>
       )}
+
+      {/* Quick Look dialog */}
+      <QuickLook
+        open={quickLookCell !== null}
+        onClose={() => setQuickLookCell(null)}
+        cell={quickLookCell?.cell ?? null}
+        columnName={quickLookCell?.columnName ?? ''}
+        columnType={quickLookCell?.columnType ?? ''}
+      />
     </div>
   );
 }
