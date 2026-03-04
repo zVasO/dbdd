@@ -30,6 +30,12 @@ export const ipc = {
   getQueryHistory: (connectionId: string, limit?: number) =>
     invoke<QueryHistoryEntry[]>('get_query_history', { connectionId, limit }),
 
+  executeBatch: (connectionId: string, statements: string[]) =>
+    invoke<Array<{ Ok?: QueryResult; Err?: string }>>('execute_batch', {
+      connectionId,
+      statements,
+    }),
+
   listDatabases: (connectionId: string) =>
     invoke<DatabaseInfo[]>('list_databases', { connectionId }),
 

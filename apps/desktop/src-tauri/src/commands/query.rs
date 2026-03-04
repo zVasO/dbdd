@@ -94,3 +94,24 @@ pub async fn get_query_history(
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn execute_batch(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    statements: Vec<String>,
+) -> Result<Vec<Result<QueryResult, String>>, String> {
+    let active = state
+        .connection_manager
+        .get(&connection_id)
+        .ok_or("Connection not found")?;
+
+    let mut results = Vec::new();
+    for sql in &statements {
+        match active.connection.execute(sql).await {
+            Ok(result) => results.push(Ok(result)),
+            Err(e) => results.push(Err(e.to_string())),
+        }
+    }
+    Ok(results)
+}
