@@ -11,6 +11,7 @@ import { StatusBar } from './StatusBar';
 import { PanelLayout } from './PanelLayout';
 import { ActivityBar } from './ActivityBar';
 import { CommandPalette } from './CommandPalette';
+import { OpenAnything } from './OpenAnything';
 
 export function AppLayout() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
@@ -58,6 +59,11 @@ export function AppLayout() {
       key: 'n',
       modifiers: ['ctrl'],
       handler: () => createTab(),
+    },
+    {
+      key: 'p',
+      modifiers: ['ctrl'],
+      handler: () => useUIStore.getState().setOpenAnythingOpen(true),
     },
     {
       key: 'k',
@@ -144,6 +150,7 @@ export function AppLayout() {
         onDisconnect={disconnect}
       />
       <CommandPalette />
+      <OpenAnything />
     </div>
   );
 }
