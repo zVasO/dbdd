@@ -65,9 +65,9 @@ export function ConnectionForm({ onCancel }: Props) {
     }
   };
 
-  const handleUrlImport = () => {
-    const parsed = parseConnectionUrl(urlInput);
-    if (!parsed) return;
+  const applyParsedUrl = (value: string) => {
+    const parsed = parseConnectionUrl(value);
+    if (!parsed) return false;
     setForm((prev) => ({
       ...prev,
       db_type: parsed.db_type,
@@ -76,10 +76,21 @@ export function ConnectionForm({ onCancel }: Props) {
       username: parsed.username,
       password: parsed.password,
       database: parsed.database,
-      // Auto-set name if empty
       name: prev.name || `${parsed.host}/${parsed.database}`,
     }));
     setUrlInput('');
+    return true;
+  };
+
+  const handleUrlImport = () => {
+    applyParsedUrl(urlInput);
+  };
+
+  const handleUrlPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pasted = e.clipboardData.getData('text').trim();
+    if (applyParsedUrl(pasted)) {
+      e.preventDefault();
+    }
   };
 
   const buildConfig = (): ConnectionConfig => ({
@@ -127,6 +138,7 @@ export function ConnectionForm({ onCancel }: Props) {
             placeholder="postgres://user:pass@host:5432/db"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
+            onPaste={handleUrlPaste}
             className="text-xs font-mono"
           />
           <Button
