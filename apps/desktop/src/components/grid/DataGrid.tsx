@@ -2,9 +2,11 @@ import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { Key, Search, Trash2, X } from 'lucide-react';
+import { Key, Plus, Search, Trash2, X } from 'lucide-react';
 import type { QueryResult, CellValue } from '@/lib/types';
 import { useChangeStore } from '@/stores/changeStore';
+import type { RowInsert } from '@/stores/changeStore';
+import { Button } from '@/components/ui/button';
 
 interface Props {
   result: QueryResult;
@@ -50,6 +52,19 @@ export function DataGrid({ result, database, table }: Props) {
   const isRowDeleted = useCallback((rowIndex: number) => {
     return pendingChanges.some((c) => c.type === 'delete' && c.rowIndex === rowIndex);
   }, [pendingChanges]);
+
+  // Insert row handler
+  const handleInsertRow = useCallback(() => {
+    if (!database || !table) return;
+    const values: Record<string, any> = {};
+    result.columns.forEach((col) => {
+      values[col.name] = null;
+    });
+    addChange({ type: 'insert', table, database, values });
+  }, [database, table, result.columns, addChange]);
+
+  // Extract inserted rows from pending changes
+  const insertedRows = pendingChanges.filter((c): c is RowInsert => c.type === 'insert');
 
   // filteredRows + a map from filtered index -> original index in result.rows
   const { filteredRows, filteredIndexMap } = useMemo(() => {
@@ -513,6 +528,35 @@ export function DataGrid({ result, database, table }: Props) {
         })}
       </div>
 
+      {/* Pending inserted rows */}
+      {insertedRows.map((insert, idx) => (
+        <div
+          key={insert.id}
+          className="flex bg-green-500/10 border-b border-border"
+          style={{ height: 32 }}
+        >
+          {/* Row number */}
+          <div
+            className="flex w-[50px] shrink-0 items-center justify-center border-r border-border bg-green-500/10 text-[10px] text-green-600"
+          >
+            +{idx + 1}
+          </div>
+          {/* Cells */}
+          {result.columns.map((col) => (
+            <div
+              key={col.name}
+              className="flex w-[180px] shrink-0 items-center border-r border-border px-2 text-xs text-green-600 dark:text-green-400"
+            >
+              {insert.values[col.name] === null ? (
+                <span className="italic text-green-400/60">NULL</span>
+              ) : (
+                String(insert.values[col.name])
+              )}
+            </div>
+          ))}
+        </div>
+      ))}
+
       {/* Footer summary */}
       {result.rows.length > 0 && (
         <div className="sticky bottom-0 flex items-center gap-3 border-t border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground">
@@ -521,6 +565,17 @@ export function DataGrid({ result, database, table }: Props) {
             <span className="text-primary">{selectedRows.size} selected</span>
           )}
           <div className="ml-auto flex items-center gap-3">
+            {database && table && (
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={handleInsertRow}
+                className="gap-1 text-xs"
+              >
+                <Plus className="h-3 w-3" />
+                Insert Row
+              </Button>
+            )}
             <div className="flex items-center gap-1">
               <button
                 onClick={() => exportData('csv')}
