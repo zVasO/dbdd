@@ -1,3 +1,5 @@
+import { Button } from '@/components/ui/button';
+import { X, Plus } from 'lucide-react';
 import type { QueryTab } from '@/stores/queryStore';
 
 interface Props {
@@ -11,47 +13,47 @@ interface Props {
 export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTab }: Props) {
   return (
     <div
-      className="flex items-center border-b"
-      style={{
-        height: 'var(--tab-height)',
-        background: 'var(--color-bg-secondary)',
-        borderColor: 'var(--color-border)',
-      }}
+      className="flex items-center border-b border-border bg-muted"
+      style={{ height: 'var(--tab-height)' }}
     >
-      {tabs.map((tab) => (
-        <div
-          key={tab.id}
-          className="group flex items-center gap-1 border-r px-3 py-1 text-xs cursor-pointer"
-          style={{
-            borderColor: 'var(--color-border)',
-            background: tab.id === activeTabId ? 'var(--color-bg-primary)' : 'transparent',
-            color: tab.id === activeTabId ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-          }}
-          onClick={() => onSelectTab(tab.id)}
-        >
-          <span className="truncate max-w-[120px]">{tab.title}</span>
-          {tab.isExecuting && (
-            <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full" style={{ background: 'var(--color-accent)' }} />
-          )}
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onCloseTab(tab.id);
-            }}
-            className="ml-1 opacity-0 group-hover:opacity-100 hover:opacity-80"
-            style={{ color: 'var(--color-text-tertiary)' }}
+      {tabs.map((tab) => {
+        const isActive = tab.id === activeTabId;
+        return (
+          <div
+            key={tab.id}
+            className={`group flex cursor-pointer items-center gap-1 border-r border-border px-3 py-1 text-xs ${
+              isActive
+                ? 'bg-background text-foreground'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+            onClick={() => onSelectTab(tab.id)}
           >
-            x
-          </button>
-        </div>
-      ))}
-      <button
+            <span className="max-w-[120px] truncate">{tab.title}</span>
+            {tab.isExecuting && (
+              <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+            )}
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCloseTab(tab.id);
+              }}
+              className="ml-1 size-4 opacity-0 group-hover:opacity-100"
+            >
+              <X className="size-3" />
+            </Button>
+          </div>
+        );
+      })}
+      <Button
+        variant="ghost"
+        size="icon-xs"
         onClick={onNewTab}
-        className="px-3 py-1 text-xs hover:opacity-80"
-        style={{ color: 'var(--color-text-tertiary)' }}
+        className="ml-1 text-muted-foreground hover:text-foreground"
       >
-        +
-      </button>
+        <Plus className="size-3" />
+      </Button>
     </div>
   );
 }

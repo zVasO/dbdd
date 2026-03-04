@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { useConnectionStore } from '@/stores/connectionStore';
 import type { SavedConnection } from '@/lib/types';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 
 interface Props {
   connection: SavedConnection;
@@ -22,38 +25,40 @@ export function ConnectionCard({ connection }: Props) {
   };
 
   return (
-    <div
-      className="flex items-center justify-between rounded-lg border p-3"
-      style={{
-        borderColor: connection.config.color || 'var(--color-border)',
-        background: 'var(--color-bg-secondary)',
-      }}
-    >
-      <div>
-        <div className="font-medium" style={{ color: 'var(--color-text-primary)' }}>
-          {connection.config.name || 'Unnamed'}
+    <Card className="py-0">
+      <CardContent className="flex items-center justify-between p-3">
+        <div className="flex items-center gap-3">
+          <div>
+            <div className="font-medium text-card-foreground">
+              {connection.config.name || 'Unnamed'}
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Badge variant="secondary" className="text-xs">
+                {connection.config.db_type}
+              </Badge>
+              <span>{connection.config.host}:{connection.config.port}</span>
+            </div>
+          </div>
         </div>
-        <div className="text-xs" style={{ color: 'var(--color-text-tertiary)' }}>
-          {connection.config.db_type} - {connection.config.host}:{connection.config.port}
+        <div className="flex gap-2">
+          <Button
+            variant="default"
+            size="sm"
+            onClick={handleConnect}
+            disabled={loading}
+          >
+            {loading ? 'Connecting...' : 'Connect'}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:text-destructive-foreground hover:bg-destructive"
+            onClick={() => deleteConnection(connection.config.id)}
+          >
+            Delete
+          </Button>
         </div>
-      </div>
-      <div className="flex gap-2">
-        <button
-          onClick={handleConnect}
-          disabled={loading}
-          className="rounded px-3 py-1 text-xs font-medium text-white"
-          style={{ background: 'var(--color-accent)' }}
-        >
-          {loading ? 'Connecting...' : 'Connect'}
-        </button>
-        <button
-          onClick={() => deleteConnection(connection.config.id)}
-          className="rounded px-3 py-1 text-xs"
-          style={{ color: 'var(--color-error)' }}
-        >
-          Delete
-        </button>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

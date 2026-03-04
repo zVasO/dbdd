@@ -18,16 +18,23 @@ pub async fn connect(
         .await
         .map_err(|e| e.to_string())?;
 
-    if let Some(ref pw) = password {
+    // If a password is provided, store it securely. Otherwise, try to retrieve a stored one.
+    let effective_password = if let Some(ref pw) = password {
         state
             .config_store
             .store_password(&config.id, pw)
             .map_err(|e| e.to_string())?;
-    }
+        Some(pw.clone())
+    } else {
+        state
+            .config_store
+            .get_password(&config.id)
+            .map_err(|e| e.to_string())?
+    };
 
     let connection_id = state
         .connection_manager
-        .connect(&config, password.as_deref())
+        .connect(&config, effective_password.as_deref())
         .await
         .map_err(|e| e.to_string())?;
 

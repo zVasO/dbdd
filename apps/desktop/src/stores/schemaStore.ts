@@ -5,19 +5,27 @@ import type { DatabaseInfo, TableInfo, TableStructure, TableRef } from '../lib/t
 interface SchemaState {
   databases: DatabaseInfo[];
   tables: Record<string, TableInfo[]>;
+  structures: Record<string, TableStructure>;
   selectedTable: TableStructure | null;
   loading: boolean;
+  structureLoading: Record<string, boolean>;
 
   loadDatabases: (connectionId: string) => Promise<void>;
   loadTables: (connectionId: string, database: string, schema?: string) => Promise<void>;
   loadTableStructure: (connectionId: string, tableRef: TableRef) => Promise<void>;
 }
 
-export const useSchemaStore = create<SchemaState>((set) => ({
+function structureKey(db: string, table: string): string {
+  return `${db}.${table}`;
+}
+
+export const useSchemaStore = create<SchemaState>((set, get) => ({
   databases: [],
   tables: {},
+  structures: {},
   selectedTable: null,
   loading: false,
+  structureLoading: {},
 
   loadDatabases: async (connectionId) => {
     set({ loading: true });
@@ -43,12 +51,24 @@ export const useSchemaStore = create<SchemaState>((set) => ({
   },
 
   loadTableStructure: async (connectionId, tableRef) => {
-    set({ loading: true });
+    const key = structureKey(tableRef.database ?? '', tableRef.table);
+
+    // Return cached if available
+    if (get().structures[key]) {
+      set({ selectedTable: get().structures[key] });
+      return;
+    }
+
+    set((s) => ({ structureLoading: { ...s.structureLoading, [key]: true } }));
     try {
       const structure = await ipc.getTableStructure(connectionId, tableRef);
-      set({ selectedTable: structure, loading: false });
+      set((s) => ({
+        selectedTable: structure,
+        structures: { ...s.structures, [key]: structure },
+        structureLoading: { ...s.structureLoading, [key]: false },
+      }));
     } catch {
-      set({ loading: false });
+      set((s) => ({ structureLoading: { ...s.structureLoading, [key]: false } }));
     }
   },
 }));
