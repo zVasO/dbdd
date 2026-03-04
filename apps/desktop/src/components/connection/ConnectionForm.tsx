@@ -65,7 +65,7 @@ export function ConnectionForm({ onCancel }: Props) {
     }
   };
 
-  const applyParsedUrl = (value: string) => {
+  const applyParsedUrl = (value: string, keepUrl = false) => {
     const parsed = parseConnectionUrl(value);
     if (!parsed) return false;
     setForm((prev) => ({
@@ -78,7 +78,7 @@ export function ConnectionForm({ onCancel }: Props) {
       database: parsed.database,
       name: prev.name || `${parsed.host}/${parsed.database}`,
     }));
-    setUrlInput('');
+    if (!keepUrl) setUrlInput('');
     return true;
   };
 
@@ -88,8 +88,9 @@ export function ConnectionForm({ onCancel }: Props) {
 
   const handleUrlPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
     const pasted = e.clipboardData.getData('text').trim();
-    if (applyParsedUrl(pasted)) {
+    if (applyParsedUrl(pasted, true)) {
       e.preventDefault();
+      setUrlInput(pasted);
     }
   };
 
