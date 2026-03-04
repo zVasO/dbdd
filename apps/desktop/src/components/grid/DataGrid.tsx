@@ -2,9 +2,10 @@ import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { Key, Plus, Search, Trash2, X } from 'lucide-react';
+import { Key, Plus, Search, Trash2, X, Filter } from 'lucide-react';
 import type { QueryResult, CellValue } from '@/lib/types';
 import { useChangeStore } from '@/stores/changeStore';
+import { useFilterStore } from '@/stores/filterStore';
 import type { RowInsert } from '@/stores/changeStore';
 import { Button } from '@/components/ui/button';
 
@@ -34,14 +35,33 @@ export function DataGrid({ result, database, table }: Props) {
   const [isDragging, setIsDragging] = useState(false);
   const [dragStartRow, setDragStartRow] = useState<number | null>(null);
 
-  // Context menu state
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIndex: number } | null>(null);
+  // Context menu state (colIndex is for Quick Filter)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIndex: number; colIndex: number } | null>(null);
 
   // Change tracking
   const addChange = useChangeStore((s) => s.addChange);
   const pendingChanges = useChangeStore((s) =>
     database && table ? s.getPendingForTable(database, table) : []
   );
+
+  // Column visibility
+  const columnVisibility = useFilterStore((s) => s.columnVisibility);
+  const visibleColumns = useMemo(
+    () => result.columns.filter((col) => columnVisibility[col.name] !== false),
+    [result.columns, columnVisibility],
+  );
+  // Map from visible column index to the original column index in result.columns
+  const visibleColIndexMap = useMemo(
+    () => visibleColumns.map((col) => result.columns.indexOf(col)),
+    [visibleColumns, result.columns],
+  );
+
+  // Quick filter handler
+  const handleQuickFilter = useCallback((colName: string, value: string) => {
+    const { setFilterBarOpen, addFilter } = useFilterStore.getState();
+    setFilterBarOpen(true);
+    addFilter(colName, value);
+  }, []);
 
   const getCellPendingEdit = useCallback((rowIndex: number, colName: string) => {
     return pendingChanges.find(
@@ -366,7 +386,7 @@ export function DataGrid({ result, database, table }: Props) {
         <div className="flex w-[50px] shrink-0 items-center justify-center border-r border-border px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           #
         </div>
-        {result.columns.map((col) => (
+        {visibleColumns.map((col) => (
           <div
             key={col.name}
             className="flex w-[180px] shrink-0 items-center gap-1 border-r border-border px-2 py-1.5"
@@ -447,7 +467,7 @@ export function DataGrid({ result, database, table }: Props) {
                   setSelectedRows(new Set([virtualRow.index]));
                   setLastSelectedRow(virtualRow.index);
                 }
-                setContextMenu({ x: e.clientX, y: e.clientY, rowIndex: virtualRow.index });
+                setContextMenu({ x: e.clientX, y: e.clientY, rowIndex: virtualRow.index, colIndex: 0 });
               }}
             >
               {/* Row number */}
@@ -462,11 +482,12 @@ export function DataGrid({ result, database, table }: Props) {
               </div>
 
               {/* Cells */}
-              {row.cells.map((cell, colIdx) => {
+              {visibleColumns.map((col, visIdx) => {
+                const colIdx = visibleColIndexMap[visIdx];
+                const cell = row.cells[colIdx];
                 const isEditing =
                   editingCell?.rowIndex === virtualRow.index &&
                   editingCell?.colIndex === colIdx;
-                const col = result.columns[colIdx];
                 const pendingEdit = getCellPendingEdit(actualRowIndex, col.name);
 
                 return (
@@ -477,6 +498,15 @@ export function DataGrid({ result, database, table }: Props) {
                       isEditing && 'ring-2 ring-inset ring-primary',
                       pendingEdit && !isEditing && 'bg-yellow-500/15',
                     )}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (!selectedRows.has(virtualRow.index)) {
+                        setSelectedRows(new Set([virtualRow.index]));
+                        setLastSelectedRow(virtualRow.index);
+                      }
+                      setContextMenu({ x: e.clientX, y: e.clientY, rowIndex: virtualRow.index, colIndex: colIdx });
+                    }}
                     onDoubleClick={(e) => {
                       e.stopPropagation();
                       if (!rowDeleted) handleCellDoubleClick(virtualRow.index, colIdx);
@@ -542,7 +572,7 @@ export function DataGrid({ result, database, table }: Props) {
             +{idx + 1}
           </div>
           {/* Cells */}
-          {result.columns.map((col) => (
+          {visibleColumns.map((col) => (
             <div
               key={col.name}
               className="flex w-[180px] shrink-0 items-center border-r border-border px-2 text-xs text-green-600 dark:text-green-400"
@@ -640,6 +670,21 @@ export function DataGrid({ result, database, table }: Props) {
               onClick={() => { exportData('json'); setContextMenu(null); }}
             >
               Export as JSON
+            </button>
+            <div className="my-1 h-px bg-border" />
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
+              onClick={() => {
+                const col = result.columns[contextMenu.colIndex];
+                const row = filteredRows[contextMenu.rowIndex];
+                const value = formatCell(row.cells[contextMenu.colIndex]);
+                handleQuickFilter(col.name, value);
+                setContextMenu(null);
+              }}
+            >
+              <Filter className="h-3.5 w-3.5" />
+              Quick Filter
+              <kbd className="ml-auto text-[10px] text-muted-foreground">Ctrl+F</kbd>
             </button>
             {database && table && (
               <>

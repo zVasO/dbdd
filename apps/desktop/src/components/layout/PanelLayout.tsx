@@ -1,9 +1,12 @@
+import { useCallback } from 'react';
 import { useQueryStore } from '@/stores/queryStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { EditorTabs } from '@/components/editor/EditorTabs';
 import { SqlEditor } from '@/components/editor/SqlEditor';
 import { EditorToolbar } from '@/components/editor/EditorToolbar';
 import { DataGrid } from '@/components/grid/DataGrid';
+import { FilterBar } from '@/components/grid/FilterBar';
+import { ColumnFilter } from '@/components/grid/ColumnFilter';
 import { CodePreview } from '@/components/editor/CodePreview';
 import { Button } from '@/components/ui/button';
 import type { QueryResult } from '@/lib/types';
@@ -20,6 +23,14 @@ export function PanelLayout() {
       createTab();
     }
   };
+
+  const handleFilterApply = useCallback((whereClause: string) => {
+    if (!activeConnectionId || !activeTab?.table || !activeTab?.database) return;
+    const base = `SELECT * FROM \`${activeTab.table}\``;
+    const sql = whereClause ? `${base} WHERE ${whereClause} LIMIT 500` : `${base} LIMIT 500`;
+    updateSql(activeTab.id, sql);
+    executeQuery(activeConnectionId, activeTab.id);
+  }, [activeConnectionId, activeTab, updateSql, executeQuery]);
 
   // No tabs open yet -- show empty state
   if (tabs.length === 0) {
@@ -71,8 +82,16 @@ export function PanelLayout() {
                       }}
                     />
                   </div>
-                  <div className="flex-1 overflow-hidden border-t border-border">
-                    {renderResult(activeTab)}
+                  <div className="flex-1 flex flex-col overflow-hidden border-t border-border">
+                    {activeTab.result && (
+                      <FilterBar
+                        columns={activeTab.result.columns}
+                        onApply={handleFilterApply}
+                      />
+                    )}
+                    <div className="flex-1 overflow-hidden">
+                      {renderResult(activeTab)}
+                    </div>
                   </div>
                 </div>
               </>
@@ -92,6 +111,12 @@ export function PanelLayout() {
                     </span>
                   )}
                 </div>
+                {activeTab.result && (
+                  <FilterBar
+                    columns={activeTab.result.columns}
+                    onApply={handleFilterApply}
+                  />
+                )}
                 <div className="flex-1 overflow-hidden">
                   {renderResult(activeTab)}
                 </div>
@@ -100,6 +125,9 @@ export function PanelLayout() {
           </div>
         )}
       </div>
+      {activeTab?.result && (
+        <ColumnFilter columns={activeTab.result.columns} />
+      )}
       <CodePreview />
     </>
   );

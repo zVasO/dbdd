@@ -4,6 +4,7 @@ import { useQueryStore } from '@/stores/queryStore';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useChangeStore } from '@/stores/changeStore';
+import { useFilterStore } from '@/stores/filterStore';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcut';
 import { Sidebar } from './Sidebar';
 import { StatusBar } from './StatusBar';
@@ -99,6 +100,22 @@ export function AppLayout() {
       handler: () => {
         const store = useChangeStore.getState();
         if (store.hasPendingChanges()) store.setPreviewOpen(true);
+      },
+    },
+    {
+      key: 'f',
+      modifiers: ['ctrl', 'alt'],
+      handler: () => {
+        const store = useFilterStore.getState();
+        store.setColumnFilterOpen(!store.columnFilterOpen);
+      },
+    },
+    {
+      key: 'f',
+      modifiers: ['ctrl'],
+      handler: () => {
+        const store = useFilterStore.getState();
+        store.setFilterBarOpen(!store.filterBarOpen);
       },
     },
   ]);
