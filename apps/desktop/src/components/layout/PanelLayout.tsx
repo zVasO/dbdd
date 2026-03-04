@@ -105,7 +105,7 @@ export function PanelLayout() {
   );
 }
 
-function renderResult(tab: { error: string | null; result: QueryResult | null; isExecuting: boolean }) {
+function renderResult(tab: { error: string | null; result: QueryResult | null; isExecuting: boolean; database?: string; table?: string }) {
   if (tab.error) {
     return (
       <div className="p-4 text-sm text-destructive">
@@ -114,7 +114,7 @@ function renderResult(tab: { error: string | null; result: QueryResult | null; i
     );
   }
   if (tab.result) {
-    return <DataGrid result={tab.result} />;
+    return <DataGrid result={tab.result} database={tab.database} table={tab.table} />;
   }
   if (tab.isExecuting) {
     return (

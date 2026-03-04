@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { ipc } from '../lib/ipc';
+import { useActivityStore } from './activityStore';
 import type { QueryResult, QueryHistoryEntry } from '../lib/types';
 
 export interface QueryTab {
@@ -9,6 +10,9 @@ export interface QueryTab {
   result: QueryResult | null;
   isExecuting: boolean;
   error: string | null;
+  editorVisible: boolean;
+  database?: string;
+  table?: string;
 }
 
 interface QueryState {
@@ -16,10 +20,11 @@ interface QueryState {
   activeTabId: string | null;
   history: QueryHistoryEntry[];
 
-  createTab: (title?: string) => string;
+  createTab: (title?: string, opts?: { editorVisible?: boolean; database?: string; table?: string }) => string;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateSql: (tabId: string, sql: string) => void;
+  setEditorVisible: (tabId: string, visible: boolean) => void;
   executeQuery: (connectionId: string, tabId: string) => Promise<void>;
   cancelQuery: (connectionId: string, queryId: string) => Promise<void>;
   loadHistory: (connectionId: string) => Promise<void>;
@@ -30,7 +35,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   activeTabId: null,
   history: [],
 
-  createTab: (title) => {
+  createTab: (title, opts) => {
     const id = crypto.randomUUID();
     const tab: QueryTab = {
       id,
@@ -39,6 +44,9 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       result: null,
       isExecuting: false,
       error: null,
+      editorVisible: opts?.editorVisible ?? true,
+      database: opts?.database,
+      table: opts?.table,
     };
     set((s) => ({ tabs: [...s.tabs, tab], activeTabId: id }));
     return id;
@@ -65,9 +73,21 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     }));
   },
 
+  setEditorVisible: (tabId, visible) => {
+    set((s) => ({
+      tabs: s.tabs.map((t) =>
+        t.id === tabId ? { ...t, editorVisible: visible } : t,
+      ),
+    }));
+  },
+
   executeQuery: async (connectionId, tabId) => {
     const tab = get().tabs.find((t) => t.id === tabId);
     if (!tab || !tab.sql.trim()) return;
+
+    const activity = useActivityStore.getState();
+    const activityId = activity.logStart(tab.sql);
+    const startTime = performance.now();
 
     set((s) => ({
       tabs: s.tabs.map((t) =>
@@ -79,12 +99,16 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
     try {
       const result = await ipc.executeQuery(connectionId, tab.sql);
+      const durationMs = Math.round(performance.now() - startTime);
+      useActivityStore.getState().logSuccess(activityId, durationMs, result.rows.length);
       set((s) => ({
         tabs: s.tabs.map((t) =>
           t.id === tabId ? { ...t, isExecuting: false, result } : t,
         ),
       }));
     } catch (e) {
+      const durationMs = Math.round(performance.now() - startTime);
+      useActivityStore.getState().logError(activityId, durationMs, String(e));
       set((s) => ({
         tabs: s.tabs.map((t) =>
           t.id === tabId
