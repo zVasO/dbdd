@@ -14,6 +14,7 @@ import { CommandPalette } from './CommandPalette';
 import { OpenAnything } from './OpenAnything';
 import { PreferencesDialog } from './PreferencesDialog';
 import { CsvImportDialog } from '@/components/editor/CsvImportDialog';
+import { SettingsPage } from '@/components/settings/SettingsPage';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 
 export function AppLayout() {
@@ -29,6 +30,8 @@ export function AppLayout() {
 
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [csvImportOpen, setCsvImportOpen] = useState(false);
+  const settingsOpen = useUIStore((s) => s.settingsOpen);
+  const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
   const isDragging = useRef(false);
 
   useEffect(() => {
@@ -163,6 +166,10 @@ export function AppLayout() {
     },
   ]);
 
+  if (settingsOpen) {
+    return <SettingsPage onClose={() => setSettingsOpen(false)} />;
+  }
+
   return (
     <div className="flex h-screen flex-col bg-background">
       <div className="flex flex-1 overflow-hidden">
@@ -188,7 +195,7 @@ export function AppLayout() {
       />
       <CommandPalette onOpenPreferences={() => setPrefsOpen(true)} onOpenCsvImport={() => setCsvImportOpen(true)} />
       <OpenAnything />
-      <PreferencesDialog open={prefsOpen} onOpenChange={setPrefsOpen} />
+      <PreferencesDialog open={prefsOpen} onOpenChange={setPrefsOpen} onOpenSettings={() => setSettingsOpen(true)} />
       <CsvImportDialog open={csvImportOpen} onOpenChange={setCsvImportOpen} />
     </div>
   );
