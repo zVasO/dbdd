@@ -10,6 +10,7 @@ import {
   Tooltip,
   TooltipTrigger,
   TooltipContent,
+  TooltipProvider,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useDashboardStore } from '@/stores/dashboardStore';
@@ -150,6 +151,7 @@ export function DashboardView({ connectionId }: DashboardViewProps) {
   }
 
   return (
+    <TooltipProvider delayDuration={300}>
     <div className="flex h-full flex-col">
       {/* Toolbar */}
       <div className="flex items-center justify-between border-b px-4 py-2 bg-background shrink-0">
@@ -237,5 +239,6 @@ export function DashboardView({ connectionId }: DashboardViewProps) {
         onSave={handleSaveWidget}
       />
     </div>
+    </TooltipProvider>
   );
 }
