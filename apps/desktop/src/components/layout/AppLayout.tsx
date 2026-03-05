@@ -19,6 +19,14 @@ import { AiChatPanel } from '@/components/ai/AiChatPanel';
 import { SnippetPalette } from '@/components/snippets/SnippetPalette';
 import { useAIStore } from '@/stores/aiStore';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
+import { ImportDialog } from '@/components/import-export/ImportDialog';
+import { ExportDialog } from '@/components/import-export/ExportDialog';
+import { DataGeneratorDialog } from '@/components/data-gen/DataGeneratorDialog';
+import { ShareDialog } from '@/components/sharing/ShareDialog';
+import { NotesPanel } from '@/components/notes/NotesPanel';
+import { useImportExportStore } from '@/stores/importExportStore';
+import { useDataGenStore } from '@/stores/dataGenStore';
+import { useNotesStore } from '@/stores/notesStore';
 
 export function AppLayout() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
@@ -34,6 +42,7 @@ export function AppLayout() {
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [csvImportOpen, setCsvImportOpen] = useState(false);
   const [snippetPaletteOpen, setSnippetPaletteOpen] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const settingsOpen = useUIStore((s) => s.settingsOpen);
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
   const isDragging = useRef(false);
@@ -181,6 +190,16 @@ export function AppLayout() {
       modifiers: ['ctrl', 'shift'],
       handler: () => setSnippetPaletteOpen(true),
     },
+    {
+      key: 'e',
+      modifiers: ['ctrl', 'shift'],
+      handler: () => useImportExportStore.getState().setExportDialogOpen(true),
+    },
+    {
+      key: 'g',
+      modifiers: ['ctrl', 'shift'],
+      handler: () => useDataGenStore.getState().setDialogOpen(true),
+    },
   ]);
 
   if (settingsOpen) {
@@ -188,7 +207,7 @@ export function AppLayout() {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-background">
+    <div className="flex h-full flex-col bg-background">
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />
         {sidebarOpen && (
@@ -229,6 +248,11 @@ export function AppLayout() {
           }
         }}
       />
+      <ImportDialog />
+      <ExportDialog />
+      <DataGeneratorDialog />
+      <ShareDialog open={shareDialogOpen} onOpenChange={setShareDialogOpen} />
+      <NotesPanel />
     </div>
   );
 }

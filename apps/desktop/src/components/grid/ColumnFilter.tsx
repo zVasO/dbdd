@@ -62,7 +62,7 @@ export function ColumnFilter({ columns }: ColumnFilterProps) {
                   className="h-3 w-3 rounded border-border"
                 />
                 <span className="flex-1 truncate">{col.name}</span>
-                <span className="text-[10px] text-muted-foreground">{col.data_type}</span>
+                <span className="text-[10px] text-muted-foreground">{typeof col.data_type === 'string' ? col.data_type : Object.keys(col.data_type)[0]}</span>
               </label>
             ))}
           </div>

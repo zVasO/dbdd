@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { usePreferencesStore } from './preferencesStore';
+import { useThemeStore } from './themeStore';
 
 interface UIState {
   sidebarOpen: boolean;
@@ -26,6 +27,8 @@ export const useUIStore = create<UIState>((set) => ({
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSidebarWidth: (width) => set({ sidebarWidth: width }),
   toggleTheme: () => {
+    useThemeStore.getState().toggleDarkMode();
+    // Keep prefs store in sync
     const prefs = usePreferencesStore.getState();
     const next = prefs.theme === 'dark' ? 'light' : 'dark';
     prefs.setPreference('theme', next);

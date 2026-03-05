@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import {
   Activity,
   RefreshCw,
@@ -9,10 +9,15 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { ActiveConnections } from '@/components/health/ActiveConnections';
 import { SlowQueryList } from '@/components/health/SlowQueryList';
 import { StorageOverview } from '@/components/health/StorageOverview';
+
+const LiveMetrics = lazy(() => import('@/components/health/LiveMetrics').then(m => ({ default: m.LiveMetrics })));
+const AlertConfig = lazy(() => import('@/components/health/AlertConfig').then(m => ({ default: m.AlertConfig })));
+const AlertHistory = lazy(() => import('@/components/health/AlertHistory').then(m => ({ default: m.AlertHistory })));
 
 const AUTO_REFRESH_INTERVAL_MS = 5000;
 
@@ -127,13 +132,33 @@ export function HealthDashboard() {
       </div>
 
       {/* Dashboard content */}
-      <div className="flex-1 overflow-y-auto min-h-0">
-        <div className="p-4 flex flex-col gap-4">
-          <ActiveConnections refreshTrigger={refreshTrigger} />
-          <SlowQueryList refreshTrigger={refreshTrigger} />
-          <StorageOverview refreshTrigger={refreshTrigger} />
-        </div>
-      </div>
+      <Tabs defaultValue="overview" className="flex-1 flex flex-col min-h-0">
+        <TabsList className="mx-4 mt-2 w-fit">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="live">Live Metrics</TabsTrigger>
+          <TabsTrigger value="alerts">Alerts</TabsTrigger>
+        </TabsList>
+        <TabsContent value="overview" className="flex-1 overflow-y-auto min-h-0 mt-0">
+          <div className="p-4 flex flex-col gap-4">
+            <ActiveConnections refreshTrigger={refreshTrigger} />
+            <SlowQueryList refreshTrigger={refreshTrigger} />
+            <StorageOverview refreshTrigger={refreshTrigger} />
+          </div>
+        </TabsContent>
+        <TabsContent value="live" className="flex-1 overflow-y-auto min-h-0 mt-0">
+          <Suspense fallback={<div className="flex items-center justify-center h-32 text-sm text-muted-foreground">Loading...</div>}>
+            <LiveMetrics />
+          </Suspense>
+        </TabsContent>
+        <TabsContent value="alerts" className="flex-1 overflow-y-auto min-h-0 mt-0">
+          <div className="p-4 flex flex-col gap-4">
+            <Suspense fallback={<div className="flex items-center justify-center h-32 text-sm text-muted-foreground">Loading...</div>}>
+              <AlertConfig />
+              <AlertHistory />
+            </Suspense>
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

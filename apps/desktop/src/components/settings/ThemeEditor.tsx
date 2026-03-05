@@ -1,13 +1,27 @@
-import { useState } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { useThemeStore } from '@/stores/themeStore';
 import type { Theme, ThemeColors } from '@/lib/themeTypes';
+import { getEffectiveColors, getEffectiveTypography, getEffectiveLayout, isDualMode } from '@/lib/themeTypes';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { ThemePreview } from './ThemePreview';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { FontSelect } from './FontSelect';
+import { ChevronDown, ChevronRight, Moon, Sun } from 'lucide-react';
+
+// Convert any CSS color (oklch, hsl, rgb, etc.) to hex for <input type="color">
+function cssColorToHex(color: string): string {
+  if (/^#[0-9a-f]{6}$/i.test(color)) return color;
+  try {
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (!ctx) return '#000000';
+    ctx.fillStyle = color;
+    return ctx.fillStyle; // returns hex
+  } catch {
+    return '#000000';
+  }
+}
 
 interface Props {
   themeId: string;
@@ -54,6 +68,7 @@ export function ThemeEditor({ themeId, onBack }: Props) {
     Base: true,
     Brand: true,
   });
+  const [previewDark, setPreviewDark] = useState(theme?.isDark ?? true);
 
   if (!theme) {
     return (
@@ -67,13 +82,19 @@ export function ThemeEditor({ themeId, onBack }: Props) {
   }
 
   const isReadOnly = theme.builtIn;
+  const dual = isDualMode(theme);
 
   const toggleGroup = (label: string) => {
     setExpandedGroups((prev) => ({ ...prev, [label]: !prev[label] }));
   };
 
-  // Create a live preview theme by cloning the current theme state
-  const previewTheme = theme;
+  // For preview: override isDark to match the preview toggle
+  const previewTheme: Theme = dual ? { ...theme, isDark: previewDark } : theme;
+
+  // Colors shown in the editor: effective colors for the current preview mode
+  const editColors = dual
+    ? getEffectiveColors({ ...theme, isDark: previewDark })
+    : theme.colors;
 
   return (
     <div className="flex h-full gap-4">
@@ -89,7 +110,7 @@ export function ThemeEditor({ themeId, onBack }: Props) {
           )}
         </div>
 
-        <ScrollArea className="flex-1">
+        <div className="flex-1 overflow-y-auto">
           <div className="space-y-4 pr-3">
             {/* Name */}
             {!isReadOnly && (
@@ -103,8 +124,26 @@ export function ThemeEditor({ themeId, onBack }: Props) {
               </div>
             )}
 
-            {/* Dark mode toggle */}
-            {!isReadOnly && (
+            {/* Dark/Light preview toggle */}
+            {dual ? (
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Preview Mode</Label>
+                <div className="flex gap-0.5 border border-border rounded-md overflow-hidden">
+                  <button
+                    className={`flex items-center gap-1 px-2 py-1 text-xs ${!previewDark ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => setPreviewDark(false)}
+                  >
+                    <Sun className="size-3" /> Light
+                  </button>
+                  <button
+                    className={`flex items-center gap-1 px-2 py-1 text-xs ${previewDark ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => setPreviewDark(true)}
+                  >
+                    <Moon className="size-3" /> Dark
+                  </button>
+                </div>
+              </div>
+            ) : !isReadOnly && (
               <div className="flex items-center justify-between">
                 <Label className="text-xs">Dark Mode</Label>
                 <ToggleSwitch
@@ -133,9 +172,16 @@ export function ThemeEditor({ themeId, onBack }: Props) {
                       <ColorField
                         key={key}
                         label={formatLabel(key)}
-                        value={theme.colors[key]}
+                        value={editColors[key]}
                         readOnly={isReadOnly}
-                        onChange={(v) => updateThemeColors(themeId, { [key]: v })}
+                        onChange={(v) => {
+                          if (dual && previewDark && theme.darkColors) {
+                            // Edit the dark variant
+                            updateTheme(themeId, { darkColors: { ...theme.darkColors, [key]: v } });
+                          } else {
+                            updateThemeColors(themeId, { [key]: v });
+                          }
+                        }}
                       />
                     ))}
                   </div>
@@ -148,33 +194,27 @@ export function ThemeEditor({ themeId, onBack }: Props) {
             {/* Typography */}
             <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Typography</h3>
             <div className="space-y-2">
-              <div className="space-y-1">
-                <Label className="text-[10px] text-muted-foreground">Sans Font</Label>
-                <Input
-                  className="text-xs h-7"
-                  value={theme.typography.fontSans}
-                  readOnly={isReadOnly}
-                  onChange={(e) => updateThemeTypography(themeId, { fontSans: e.target.value })}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-[10px] text-muted-foreground">Mono Font</Label>
-                <Input
-                  className="text-xs h-7"
-                  value={theme.typography.fontMono}
-                  readOnly={isReadOnly}
-                  onChange={(e) => updateThemeTypography(themeId, { fontMono: e.target.value })}
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-[10px] text-muted-foreground">Serif Font</Label>
-                <Input
-                  className="text-xs h-7"
-                  value={theme.typography.fontSerif}
-                  readOnly={isReadOnly}
-                  onChange={(e) => updateThemeTypography(themeId, { fontSerif: e.target.value })}
-                />
-              </div>
+              <FontSelect
+                label="Sans Font"
+                category="sans"
+                value={theme.typography.fontSans}
+                readOnly={isReadOnly}
+                onChange={(v) => updateThemeTypography(themeId, { fontSans: v })}
+              />
+              <FontSelect
+                label="Mono Font"
+                category="mono"
+                value={theme.typography.fontMono}
+                readOnly={isReadOnly}
+                onChange={(v) => updateThemeTypography(themeId, { fontMono: v })}
+              />
+              <FontSelect
+                label="Serif Font"
+                category="serif"
+                value={theme.typography.fontSerif}
+                readOnly={isReadOnly}
+                onChange={(v) => updateThemeTypography(themeId, { fontSerif: v })}
+              />
             </div>
 
             <Separator />
@@ -205,7 +245,7 @@ export function ThemeEditor({ themeId, onBack }: Props) {
             {/* spacer for scroll */}
             <div className="h-4" />
           </div>
-        </ScrollArea>
+        </div>
       </div>
 
       {/* Preview panel */}
@@ -230,13 +270,26 @@ function ColorField({
   readOnly: boolean;
   onChange: (v: string) => void;
 }) {
+  const pickerRef = useRef<HTMLInputElement>(null);
+  const hexValue = useMemo(() => cssColorToHex(value), [value]);
+
   return (
     <div className="flex items-center gap-2">
       <div
-        className="size-5 rounded border border-border shrink-0 cursor-pointer"
+        className="relative size-5 rounded border border-border shrink-0 cursor-pointer"
         style={{ background: value }}
         title={value}
-      />
+        onClick={() => !readOnly && pickerRef.current?.click()}
+      >
+        <input
+          ref={pickerRef}
+          type="color"
+          className="sr-only"
+          value={hexValue}
+          disabled={readOnly}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      </div>
       <span className="text-[10px] text-muted-foreground flex-1 truncate">{label}</span>
       <Input
         className="text-[10px] h-6 w-44 font-mono"

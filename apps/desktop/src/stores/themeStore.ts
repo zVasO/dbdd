@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Theme, ThemeColors, ThemeTypography, ThemeLayout, ThemeShadows } from '@/lib/themeTypes';
-import { applyThemeToDOM, clearThemeFromDOM, importTheme } from '@/lib/themeTypes';
+import { applyThemeToDOM, importTheme, parseCSSVariablesDual } from '@/lib/themeTypes';
 import { BUILT_IN_THEMES, DARK_DEFAULT } from '@/lib/builtInThemes';
 
 const STORAGE_KEY = 'dataforge:themes';
@@ -12,15 +12,17 @@ interface ThemeState {
 
   // Actions
   setActiveTheme: (id: string) => void;
+  toggleDarkMode: () => void;
   createTheme: (name: string, baseThemeId?: string) => string;
   duplicateTheme: (id: string) => string;
   deleteTheme: (id: string) => void;
-  updateTheme: (id: string, updates: Partial<Pick<Theme, 'name' | 'isDark' | 'colors' | 'typography' | 'layout' | 'shadows'>>) => void;
+  updateTheme: (id: string, updates: Partial<Pick<Theme, 'name' | 'isDark' | 'colors' | 'typography' | 'layout' | 'shadows' | 'darkColors' | 'darkTypography' | 'darkLayout'>>) => void;
   updateThemeColors: (id: string, colors: Partial<ThemeColors>) => void;
   updateThemeTypography: (id: string, typography: Partial<ThemeTypography>) => void;
   updateThemeLayout: (id: string, layout: Partial<ThemeLayout>) => void;
   updateThemeShadows: (id: string, shadows: Partial<ThemeShadows>) => void;
   importThemeFromJSON: (json: string) => string | null;
+  importThemeFromCSS: (css: string, name: string) => string | null;
   exportThemeAsJSON: (id: string) => string | null;
   getActiveTheme: () => Theme;
 }
@@ -58,8 +60,8 @@ export const useThemeStore = create<ThemeState>((set, get) => {
   const activeId = loadActiveThemeId();
   const activeTheme = allThemes.find((t) => t.id === activeId) || DARK_DEFAULT;
 
-  // Apply theme on startup
-  applyThemeToDOM(activeTheme);
+  // Apply theme on startup (no animation)
+  applyThemeToDOM(activeTheme, false);
 
   return {
     themes: allThemes,
@@ -71,6 +73,19 @@ export const useThemeStore = create<ThemeState>((set, get) => {
       applyThemeToDOM(theme);
       saveActiveThemeId(id);
       set({ activeThemeId: id });
+    },
+
+    toggleDarkMode: () => {
+      const theme = get().getActiveTheme();
+      const updated = { ...theme, isDark: !theme.isDark };
+      // Always update in-memory state so the next toggle reads the correct isDark
+      const themes = get().themes.map((t) => t.id === theme.id ? updated : t);
+      set({ themes });
+      // Only persist custom themes to localStorage
+      if (!theme.builtIn) {
+        saveCustomThemes(themes);
+      }
+      applyThemeToDOM(updated);
     },
 
     createTheme: (name, baseThemeId) => {
@@ -185,13 +200,60 @@ export const useThemeStore = create<ThemeState>((set, get) => {
     importThemeFromJSON: (json) => {
       const theme = importTheme(json);
       if (!theme) return null;
-      // Ensure unique ID
       theme.id = generateId();
       theme.builtIn = false;
       const themes = [...get().themes, theme];
       set({ themes });
       saveCustomThemes(themes);
       return theme.id;
+    },
+
+    importThemeFromCSS: (css, name) => {
+      const dual = parseCSSVariablesDual(css);
+      const activeTheme = get().getActiveTheme();
+      const id = generateId();
+
+      const hasBoth = dual.hasLight && dual.hasDark;
+      const hasAny = dual.light.matchedColors > 0 || dual.dark.matchedColors > 0;
+      if (!hasAny) return null;
+
+      // Light colors (from :root)
+      const lightColors: ThemeColors = { ...activeTheme.colors, ...dual.light.colors };
+      const lightTypo: ThemeTypography = { ...activeTheme.typography, ...dual.light.typography };
+      const lightLayout: ThemeLayout = { ...activeTheme.layout, ...dual.light.layout };
+
+      // Dark colors (from .dark, with :root as fallback)
+      const darkColors: ThemeColors = hasBoth
+        ? { ...activeTheme.colors, ...dual.light.colors, ...dual.dark.colors }
+        : { ...activeTheme.colors, ...dual.dark.colors };
+      const darkTypo: ThemeTypography = hasBoth
+        ? { ...activeTheme.typography, ...dual.light.typography, ...dual.dark.typography }
+        : { ...activeTheme.typography, ...dual.dark.typography };
+      const darkLayout: ThemeLayout = hasBoth
+        ? { ...activeTheme.layout, ...dual.light.layout, ...dual.dark.layout }
+        : { ...activeTheme.layout, ...dual.dark.layout };
+
+      const newTheme: Theme = {
+        id,
+        name,
+        builtIn: false,
+        isDark: dual.hasDark, // default to dark if it has a .dark block
+        colors: dual.hasLight ? lightColors : darkColors,
+        typography: dual.hasLight ? lightTypo : darkTypo,
+        layout: dual.hasLight ? lightLayout : darkLayout,
+        shadows: { ...activeTheme.shadows },
+        // Only add dark variants if both modes exist
+        ...(hasBoth && {
+          darkColors,
+          darkTypography: darkTypo,
+          darkLayout: darkLayout,
+        }),
+      };
+
+      const themes = [...get().themes, newTheme];
+      set({ themes });
+      saveCustomThemes(themes);
+      return id;
     },
 
     exportThemeAsJSON: (id) => {

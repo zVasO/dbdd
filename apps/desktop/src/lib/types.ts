@@ -56,7 +56,7 @@ export interface QueryResult {
 
 export interface ColumnMeta {
   name: string;
-  data_type: string;
+  data_type: string | Record<string, unknown>;
   native_type: string;
   nullable: boolean;
   is_primary_key: boolean;

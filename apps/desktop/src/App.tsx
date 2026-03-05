@@ -4,6 +4,7 @@ import { useQueryStore } from "@/stores/queryStore";
 import { WelcomePage } from "@/pages/WelcomePage";
 import { WorkspacePage } from "@/pages/WorkspacePage";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { TitleBar } from "@/components/layout/TitleBar";
 import { loadSession, clearSession } from "@/lib/sessionRecovery";
 import { ipc } from "@/lib/ipc";
 // Initialize theme store on import (applies saved theme to DOM)
@@ -56,7 +57,12 @@ function App() {
 
   return (
     <ErrorBoundary>
-      {activeConnectionId ? <WorkspacePage /> : <WelcomePage />}
+      <div className="flex h-screen flex-col">
+        <TitleBar />
+        <div className="flex-1 overflow-hidden">
+          {activeConnectionId ? <WorkspacePage /> : <WelcomePage />}
+        </div>
+      </div>
     </ErrorBoundary>
   );
 }

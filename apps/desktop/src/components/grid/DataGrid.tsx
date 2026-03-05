@@ -3,7 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Key, Plus, Search, Trash2, X, Filter, Eye, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight as ChevronRightIcon, Copy, CopyPlus, ClipboardPaste, FileJson, Table2, FileCode, FileText } from 'lucide-react';
-import { copyAsJson, copyAsInsert, copyAsCsv, copyAsMarkdown, copyToClipboard } from '@/lib/copyFormats';
+import { copyAsJson, copyAsInsert, copyAsCsv, copyAsMarkdown, copyAsTsv, copyCellAsJson, copyCellAsText, copyToClipboard } from '@/lib/copyFormats';
 import type { QueryResult, CellValue } from '@/lib/types';
 import { ipc } from '@/lib/ipc';
 import { useChangeStore } from '@/stores/changeStore';
@@ -38,6 +38,39 @@ const PAGE_SIZES = [100, 300, 500, 1000] as const;
 const DEFAULT_COL_WIDTH = 180;
 const MIN_COL_WIDTH = 80;
 
+function cellKey(row: number, col: number): string { return `${row}:${col}`; }
+function parseCellKey(key: string): { rowIndex: number; colIndex: number } {
+  const [r, c] = key.split(':');
+  return { rowIndex: Number(r), colIndex: Number(c) };
+}
+
+const TYPE_LABELS: Record<string, string> = {
+  SmallInt: 'int', Integer: 'int', BigInt: 'bigint', Float: 'float', Double: 'double',
+  Serial: 'serial', BigSerial: 'bigserial', Boolean: 'bool',
+  Text: 'text', Blob: 'blob', Bytea: 'bytes',
+  Date: 'date', Time: 'time', TimeTz: 'timetz', Timestamp: 'timestamp', TimestampTz: 'timestamptz',
+  Interval: 'interval', Json: 'json', Jsonb: 'jsonb', Uuid: 'uuid',
+  Inet: 'inet', Cidr: 'cidr', MacAddr: 'mac', Point: 'point', Line: 'line', Box: 'box', Circle: 'circle',
+};
+
+function formatDataType(dt: unknown): string {
+  if (typeof dt === 'string') return TYPE_LABELS[dt] ?? dt.toLowerCase();
+  if (dt && typeof dt === 'object') {
+    const key = Object.keys(dt)[0];
+    const val = (dt as Record<string, unknown>)[key];
+    if (key === 'Varchar' || key === 'Char') return `${key.toLowerCase()}(${val ?? ''})`;
+    if (key === 'Decimal') {
+      const d = val as { precision?: number; scale?: number } | null;
+      return d?.precision != null ? `decimal(${d.precision},${d.scale ?? 0})` : 'decimal';
+    }
+    if (key === 'Array') return `${formatDataType(val)}[]`;
+    if (key === 'Enum') return 'enum';
+    if (key === 'Unknown') return String(val).toLowerCase();
+    return key.toLowerCase();
+  }
+  return 'unknown';
+}
+
 function getStoredPageSize(): number {
   try {
     const v = localStorage.getItem('dataforge:pageSize');
@@ -65,6 +98,10 @@ export function DataGrid({ result, database, table }: Props) {
   } | null>(null);
   const [focusedColIndex, setFocusedColIndex] = useState<number>(0);
 
+  // Cell selection state (multi-cell: "rowIndex:colIndex" keys)
+  const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
+  const [lastSelectedCellKey, setLastSelectedCellKey] = useState<{ rowIndex: number; colIndex: number } | null>(null);
+
   // Filter state
   const [filterText, setFilterText] = useState('');
 
@@ -79,15 +116,20 @@ export function DataGrid({ result, database, table }: Props) {
   const [columnWidths, setColumnWidths] = useState<Record<number, number>>({});
   const resizingRef = useRef<{ colIndex: number; startX: number; startWidth: number } | null>(null);
 
-  // Drag selection state
+  // Drag selection state (rows)
   const [isDragging, setIsDragging] = useState(false);
   const [dragStartRow, setDragStartRow] = useState<number | null>(null);
+
+  // Drag selection state (cells)
+  const [isCellDragging, setIsCellDragging] = useState(false);
+  const [cellDragStart, setCellDragStart] = useState<{ rowIndex: number; colIndex: number } | null>(null);
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; rowIndex: number; colIndex: number } | null>(null);
 
   // Preferences
   const alternatingRowColors = usePreferencesStore((s) => s.alternatingRowColors);
+  const defaultCopyFormat = usePreferencesStore((s) => s.defaultCopyFormat);
 
   // Change tracking
   const addChange = useChangeStore((s) => s.addChange);
@@ -322,6 +364,7 @@ export function DataGrid({ result, database, table }: Props) {
   useEffect(() => {
     const handleMouseUp = () => {
       if (isDragging) setIsDragging(false);
+      if (isCellDragging) setIsCellDragging(false);
       if (resizingRef.current) {
         resizingRef.current = null;
         document.body.style.cursor = '';
@@ -343,7 +386,7 @@ export function DataGrid({ result, database, table }: Props) {
       window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('mousemove', handleMouseMove);
     };
-  }, [isDragging]);
+  }, [isDragging, isCellDragging]);
 
   // ─── Column resize ─────────────────────────────────────────────────────────
 
@@ -401,9 +444,14 @@ export function DataGrid({ result, database, table }: Props) {
 
   // ─── Row interaction ───────────────────────────────────────────────────────
 
-  const handleRowMouseDown = useCallback(
+  // Row gutter click → row selection only (left click)
+  const handleRowGutterMouseDown = useCallback(
     (e: React.MouseEvent, rowIndex: number) => {
       if (editingCell) return;
+      if (e.button === 2) return;
+      e.stopPropagation();
+      setSelectedCells(new Set());
+      setLastSelectedCellKey(null);
       if (e.shiftKey && lastSelectedRow !== null) {
         const start = Math.min(lastSelectedRow, rowIndex);
         const end = Math.max(lastSelectedRow, rowIndex);
@@ -435,8 +483,69 @@ export function DataGrid({ result, database, table }: Props) {
       const next = new Set<number>();
       for (let i = start; i <= end; i++) next.add(i);
       setSelectedRows(next);
+      setSelectedCells(new Set());
     },
     [isDragging, dragStartRow],
+  );
+
+  // Cell click → cell selection + start drag (left click only)
+  const handleCellMouseDown = useCallback(
+    (e: React.MouseEvent, rowIndex: number, colIndex: number) => {
+      if (editingCell) return;
+      if (e.button === 2) return; // right-click handled by onContextMenu
+      e.stopPropagation();
+      setSelectedRows(new Set());
+      if (e.shiftKey && lastSelectedCellKey) {
+        // Range select from last cell to this cell
+        const minRow = Math.min(lastSelectedCellKey.rowIndex, rowIndex);
+        const maxRow = Math.max(lastSelectedCellKey.rowIndex, rowIndex);
+        const minCol = Math.min(lastSelectedCellKey.colIndex, colIndex);
+        const maxCol = Math.max(lastSelectedCellKey.colIndex, colIndex);
+        const next = new Set<string>();
+        for (let r = minRow; r <= maxRow; r++) {
+          for (let c = minCol; c <= maxCol; c++) {
+            next.add(cellKey(r, c));
+          }
+        }
+        setSelectedCells(next);
+      } else if (e.ctrlKey || e.metaKey) {
+        setSelectedCells((prev) => {
+          const next = new Set(prev);
+          const k = cellKey(rowIndex, colIndex);
+          if (next.has(k)) next.delete(k);
+          else next.add(k);
+          return next;
+        });
+        setLastSelectedCellKey({ rowIndex, colIndex });
+      } else {
+        setIsCellDragging(true);
+        setCellDragStart({ rowIndex, colIndex });
+        setSelectedCells(new Set([cellKey(rowIndex, colIndex)]));
+        setLastSelectedCellKey({ rowIndex, colIndex });
+      }
+      setFocusedColIndex(colIndex);
+    },
+    [editingCell, lastSelectedCellKey],
+  );
+
+  // Cell drag → rectangular selection
+  const handleCellMouseEnter = useCallback(
+    (rowIndex: number, colIndex: number) => {
+      if (!isCellDragging || !cellDragStart) return;
+      const minRow = Math.min(cellDragStart.rowIndex, rowIndex);
+      const maxRow = Math.max(cellDragStart.rowIndex, rowIndex);
+      const minCol = Math.min(cellDragStart.colIndex, colIndex);
+      const maxCol = Math.max(cellDragStart.colIndex, colIndex);
+      const next = new Set<string>();
+      for (let r = minRow; r <= maxRow; r++) {
+        for (let c = minCol; c <= maxCol; c++) {
+          next.add(cellKey(r, c));
+        }
+      }
+      setSelectedCells(next);
+      setLastSelectedCellKey({ rowIndex, colIndex });
+    },
+    [isCellDragging, cellDragStart],
   );
 
   const handleCellDoubleClick = useCallback(
@@ -542,15 +651,51 @@ export function DataGrid({ result, database, table }: Props) {
     setContextMenu(null);
   }, [database, table, result, addChange, paginatedIndexMap]);
 
-  const copySelectedRows = useCallback(() => {
+  const formatRowsForCopy = useCallback((columns: typeof result.columns, rows: typeof paginatedRows) => {
+    switch (defaultCopyFormat) {
+      case 'json': return copyAsJson(columns, rows);
+      case 'csv': return copyAsCsv(columns, rows);
+      case 'tsv': return copyAsTsv(columns, rows);
+      case 'markdown': return copyAsMarkdown(columns, rows);
+      case 'insert': return copyAsInsert(columns, rows, table || 'table');
+      default: return copyAsJson(columns, rows);
+    }
+  }, [defaultCopyFormat, table]);
+
+  const copySelection = useCallback(() => {
+    // Cell selection
+    if (selectedCells.size > 0) {
+      const parsed = [...selectedCells].map(parseCellKey);
+      if (parsed.length === 1) {
+        // Single cell
+        const { rowIndex, colIndex } = parsed[0];
+        const row = paginatedRows[rowIndex];
+        if (!row) return;
+        const col = result.columns[colIndex];
+        const cell = row.cells[colIndex];
+        if (defaultCopyFormat === 'json') {
+          copyToClipboard(copyCellAsJson(col.name, cell));
+        } else {
+          copyToClipboard(copyCellAsText(cell));
+        }
+      } else {
+        // Multi-cell: gather unique rows/cols, build partial rows for copy
+        const colIndices = [...new Set(parsed.map((p) => p.colIndex))].sort((a, b) => a - b);
+        const rowIndices = [...new Set(parsed.map((p) => p.rowIndex))].sort((a, b) => a - b);
+        const cols = colIndices.map((i) => result.columns[i]);
+        const rows = rowIndices.map((ri) => ({
+          cells: colIndices.map((ci) => paginatedRows[ri].cells[ci]),
+        }));
+        copyToClipboard(formatRowsForCopy(cols, rows as any));
+      }
+      return;
+    }
+    // Row selection
     if (selectedRows.size === 0) return;
     const sortedIndices = [...selectedRows].sort((a, b) => a - b);
-    const header = result.columns.map((c) => c.name).join('\t');
-    const rows = sortedIndices.map((idx) =>
-      paginatedRows[idx].cells.map((cell) => formatCell(cell)).join('\t')
-    );
-    navigator.clipboard.writeText([header, ...rows].join('\n'));
-  }, [selectedRows, result, paginatedRows]);
+    const rows = sortedIndices.map((idx) => paginatedRows[idx]);
+    copyToClipboard(formatRowsForCopy(result.columns, rows));
+  }, [selectedCells, selectedRows, result, paginatedRows, defaultCopyFormat, formatRowsForCopy]);
 
   const getSelectedOrContextRows = useCallback((contextRowIndex: number) => {
     if (selectedRows.size > 0) {
@@ -559,16 +704,34 @@ export function DataGrid({ result, database, table }: Props) {
     return [paginatedRows[contextRowIndex]];
   }, [selectedRows, paginatedRows]);
 
+  // Build columns + rows from cell selection (for copy actions)
+  const getContextColumnsFromCells = useCallback(() => {
+    const parsed = [...selectedCells].map(parseCellKey);
+    const colIndices = [...new Set(parsed.map((p) => p.colIndex))].sort((a, b) => a - b);
+    return colIndices.map((i) => result.columns[i]);
+  }, [selectedCells, result.columns]);
+
+  const getContextRowsFromCells = useCallback(() => {
+    const parsed = [...selectedCells].map(parseCellKey);
+    const colIndices = [...new Set(parsed.map((p) => p.colIndex))].sort((a, b) => a - b);
+    const rowIndices = [...new Set(parsed.map((p) => p.rowIndex))].sort((a, b) => a - b);
+    return rowIndices.map((ri) => ({
+      cells: colIndices.map((ci) => paginatedRows[ri].cells[ci]),
+    })) as typeof paginatedRows;
+  }, [selectedCells, paginatedRows]);
+
   // ─── Keyboard ──────────────────────────────────────────────────────────────
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
       e.preventDefault();
-      copySelectedRows();
+      copySelection();
       return;
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
       e.preventDefault();
+      setSelectedCells(new Set());
+      setLastSelectedCellKey(null);
       const all = new Set<number>();
       for (let i = 0; i < paginatedRows.length; i++) all.add(i);
       setSelectedRows(all);
@@ -589,6 +752,7 @@ export function DataGrid({ result, database, table }: Props) {
     if (e.key === 'Escape') {
       if (contextMenu) { setContextMenu(null); return; }
       if (editingCell) cancelEdit();
+      else if (selectedCells.size > 0) { setSelectedCells(new Set()); setLastSelectedCellKey(null); }
       else setSelectedRows(new Set());
       return;
     }
@@ -607,8 +771,39 @@ export function DataGrid({ result, database, table }: Props) {
       }
       return;
     }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      if (lastSelectedCellKey && !editingCell) {
+        e.preventDefault();
+        const nextCol = e.key === 'ArrowRight'
+          ? Math.min(lastSelectedCellKey.colIndex + 1, result.columns.length - 1)
+          : Math.max(lastSelectedCellKey.colIndex - 1, 0);
+        const next = { rowIndex: lastSelectedCellKey.rowIndex, colIndex: nextCol };
+        if (e.shiftKey) {
+          setSelectedCells((prev) => { const s = new Set(prev); s.add(cellKey(next.rowIndex, next.colIndex)); return s; });
+        } else {
+          setSelectedCells(new Set([cellKey(next.rowIndex, next.colIndex)]));
+        }
+        setLastSelectedCellKey(next);
+        setFocusedColIndex(nextCol);
+        return;
+      }
+    }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
+      if (lastSelectedCellKey && selectedCells.size > 0) {
+        const nextRow = e.key === 'ArrowDown'
+          ? Math.min(lastSelectedCellKey.rowIndex + 1, paginatedRows.length - 1)
+          : Math.max(lastSelectedCellKey.rowIndex - 1, 0);
+        const next = { rowIndex: nextRow, colIndex: lastSelectedCellKey.colIndex };
+        if (e.shiftKey) {
+          setSelectedCells((prev) => { const s = new Set(prev); s.add(cellKey(next.rowIndex, next.colIndex)); return s; });
+        } else {
+          setSelectedCells(new Set([cellKey(next.rowIndex, next.colIndex)]));
+          setSelectedRows(new Set());
+        }
+        setLastSelectedCellKey(next);
+        return;
+      }
       const current = lastSelectedRow ?? -1;
       const next = e.key === 'ArrowDown'
         ? Math.min(current + 1, paginatedRows.length - 1)
@@ -625,7 +820,7 @@ export function DataGrid({ result, database, table }: Props) {
       setLastSelectedRow(next);
       return;
     }
-  }, [copySelectedRows, paginatedRows, editingCell, cancelEdit, lastSelectedRow, contextMenu, focusedColIndex, result.columns, selectedRows, database, table, handleDuplicateRow, handlePasteRows]);
+  }, [copySelection, paginatedRows, editingCell, cancelEdit, lastSelectedRow, contextMenu, focusedColIndex, result.columns, selectedRows, selectedCells, lastSelectedCellKey, database, table, handleDuplicateRow, handlePasteRows]);
 
   // ─── Export ────────────────────────────────────────────────────────────────
 
@@ -700,7 +895,7 @@ export function DataGrid({ result, database, table }: Props) {
       style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}
       onScroll={() => { if (contextMenu) setContextMenu(null); }}
       onClick={(e) => {
-        if (e.target === parentRef.current) setSelectedRows(new Set());
+        if (e.target === parentRef.current) { setSelectedRows(new Set()); setSelectedCells(new Set()); setLastSelectedCellKey(null); }
       }}
     >
       {/* Column headers */}
@@ -729,7 +924,7 @@ export function DataGrid({ result, database, table }: Props) {
                 </div>
                 <div className="flex items-center gap-1">
                   <Badge variant="secondary" className="h-3.5 rounded px-1 py-0 text-[9px] font-normal">
-                    {col.native_type}
+                    {formatDataType(col.data_type)}
                   </Badge>
                   {col.nullable && (
                     <span className="text-[9px] text-muted-foreground">null</span>
@@ -807,24 +1002,25 @@ export function DataGrid({ result, database, table }: Props) {
                 transform: `translateY(${virtualRow.start}px)`,
                 minWidth: totalContentWidth,
               }}
-              onMouseDown={(e) => handleRowMouseDown(e, virtualRow.index)}
               onMouseEnter={() => handleRowMouseEnter(virtualRow.index)}
               onContextMenu={(e) => {
                 e.preventDefault();
-                if (!selectedRows.has(virtualRow.index)) {
+                // Row-level context (gutter area) — only if no cell selection
+                if (selectedCells.size === 0 && !selectedRows.has(virtualRow.index)) {
                   setSelectedRows(new Set([virtualRow.index]));
                   setLastSelectedRow(virtualRow.index);
                 }
                 setContextMenu({ x: e.clientX, y: e.clientY, rowIndex: virtualRow.index, colIndex: 0 });
               }}
             >
-              {/* Row number */}
+              {/* Row number (click to select row) */}
               <div
                 className={cn(
-                  'flex w-[50px] shrink-0 items-center justify-center border-r border-border/30 text-[10px]',
+                  'flex w-[50px] shrink-0 items-center justify-center border-r border-border/30 text-[10px] cursor-pointer',
                   isSelected ? 'font-semibold text-primary' : 'text-muted-foreground',
                   rowDeleted && 'line-through',
                 )}
+                onMouseDown={(e) => handleRowGutterMouseDown(e, virtualRow.index)}
               >
                 {displayIndex + 1}
               </div>
@@ -839,22 +1035,38 @@ export function DataGrid({ result, database, table }: Props) {
                   editingCell?.colIndex === colIdx;
                 const pendingEdit = getCellPendingEdit(actualRowIndex, col.name);
 
+                const isCellSelected = selectedCells.has(cellKey(virtualRow.index, colIdx));
+
                 return (
                   <div
                     key={colIdx}
                     className={cn(
                       'flex shrink-0 items-center border-r border-border/30',
                       isEditing && 'ring-2 ring-inset ring-primary',
+                      !isEditing && isCellSelected && 'ring-2 ring-inset ring-primary/60 bg-primary/10',
                       pendingEdit && !isEditing && 'bg-yellow-500/15',
                     )}
                     style={{ width }}
-                    onClick={() => setFocusedColIndex(colIdx)}
+                    onMouseDown={(e) => handleCellMouseDown(e, virtualRow.index, colIdx)}
+                    onMouseEnter={() => handleCellMouseEnter(virtualRow.index, colIdx)}
                     onContextMenu={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      if (!selectedRows.has(virtualRow.index)) {
-                        setSelectedRows(new Set([virtualRow.index]));
-                        setLastSelectedRow(virtualRow.index);
+                      const k = cellKey(virtualRow.index, colIdx);
+                      if (selectedCells.size > 0) {
+                        // If right-clicking outside current cell selection, select just this cell
+                        if (!selectedCells.has(k)) {
+                          setSelectedCells(new Set([k]));
+                          setLastSelectedCellKey({ rowIndex: virtualRow.index, colIndex: colIdx });
+                          setSelectedRows(new Set());
+                        }
+                        // Otherwise keep current cell selection
+                      } else {
+                        // No cell selection — fallback to row selection
+                        if (!selectedRows.has(virtualRow.index)) {
+                          setSelectedRows(new Set([virtualRow.index]));
+                          setLastSelectedRow(virtualRow.index);
+                        }
                       }
                       setContextMenu({ x: e.clientX, y: e.clientY, rowIndex: virtualRow.index, colIndex: colIdx });
                     }}
@@ -982,8 +1194,13 @@ export function DataGrid({ result, database, table }: Props) {
               ? `${pageStart + 1}–${pageEnd} of ${totalSortedRows}`
               : '0 rows'}
           </span>
-          {selectedRows.size > 0 && (
-            <span className="text-primary">{selectedRows.size} selected</span>
+          {selectedCells.size > 0 && (
+            <span className="text-primary">
+              {selectedCells.size} cell{selectedCells.size > 1 ? 's' : ''}
+            </span>
+          )}
+          {selectedCells.size === 0 && selectedRows.size > 0 && (
+            <span className="text-primary">{selectedRows.size} row{selectedRows.size > 1 ? 's' : ''}</span>
           )}
 
           {/* Pagination controls */}
@@ -1083,19 +1300,20 @@ export function DataGrid({ result, database, table }: Props) {
             className="fixed z-50 min-w-[160px] rounded-md border border-border bg-popover p-1 text-xs text-popover-foreground shadow-lg"
             style={{ left: contextMenu.x, top: contextMenu.y }}
           >
+            {/* Copy — context-aware: cells vs rows */}
             <button
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
-              onClick={() => { copySelectedRows(); setContextMenu(null); }}
+              onClick={() => { copySelection(); setContextMenu(null); }}
             >
               <Copy className="h-3.5 w-3.5" />
-              Copy Rows
+              {selectedCells.size > 0 ? `Copy ${selectedCells.size} cell${selectedCells.size > 1 ? 's' : ''}` : 'Copy selection'}
               <kbd className="ml-auto text-[10px] text-muted-foreground">Ctrl+C</kbd>
             </button>
             <button
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
-                const rows = getSelectedOrContextRows(contextMenu.rowIndex);
-                copyToClipboard(copyAsJson(result.columns, rows));
+                const rows = selectedCells.size > 0 ? getContextRowsFromCells() : getSelectedOrContextRows(contextMenu.rowIndex);
+                copyToClipboard(copyAsJson(selectedCells.size > 0 ? getContextColumnsFromCells() : result.columns, rows));
                 setContextMenu(null);
               }}
             >
@@ -1105,8 +1323,9 @@ export function DataGrid({ result, database, table }: Props) {
             <button
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
-                const rows = getSelectedOrContextRows(contextMenu.rowIndex);
-                copyToClipboard(copyAsInsert(result.columns, rows, table || 'table'));
+                const cols = selectedCells.size > 0 ? getContextColumnsFromCells() : result.columns;
+                const rows = selectedCells.size > 0 ? getContextRowsFromCells() : getSelectedOrContextRows(contextMenu.rowIndex);
+                copyToClipboard(copyAsInsert(cols, rows, table || 'table'));
                 setContextMenu(null);
               }}
             >
@@ -1116,8 +1335,9 @@ export function DataGrid({ result, database, table }: Props) {
             <button
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
-                const rows = getSelectedOrContextRows(contextMenu.rowIndex);
-                copyToClipboard(copyAsCsv(result.columns, rows));
+                const cols = selectedCells.size > 0 ? getContextColumnsFromCells() : result.columns;
+                const rows = selectedCells.size > 0 ? getContextRowsFromCells() : getSelectedOrContextRows(contextMenu.rowIndex);
+                copyToClipboard(copyAsCsv(cols, rows));
                 setContextMenu(null);
               }}
             >
@@ -1127,8 +1347,9 @@ export function DataGrid({ result, database, table }: Props) {
             <button
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
-                const rows = getSelectedOrContextRows(contextMenu.rowIndex);
-                copyToClipboard(copyAsMarkdown(result.columns, rows));
+                const cols = selectedCells.size > 0 ? getContextColumnsFromCells() : result.columns;
+                const rows = selectedCells.size > 0 ? getContextRowsFromCells() : getSelectedOrContextRows(contextMenu.rowIndex);
+                copyToClipboard(copyAsMarkdown(cols, rows));
                 setContextMenu(null);
               }}
             >

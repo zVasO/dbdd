@@ -101,6 +101,22 @@ export function copyAsMarkdown(columns: ColumnMeta[], rows: Row[]): string {
   return [header, sep, ...body].join('\n');
 }
 
+export function copyAsTsv(columns: ColumnMeta[], rows: Row[]): string {
+  const header = columns.map((c) => c.name).join('\t');
+  const body = rows.map((row) =>
+    columns.map((_, i) => cellToString(row.cells[i])).join('\t')
+  );
+  return [header, ...body].join('\n');
+}
+
+export function copyCellAsJson(columnName: string, cell: CellValue): string {
+  return JSON.stringify({ [columnName]: cellToRaw(cell) }, null, 2);
+}
+
+export function copyCellAsText(cell: CellValue): string {
+  return cellToString(cell);
+}
+
 export async function copyToClipboard(text: string): Promise<void> {
   await navigator.clipboard.writeText(text);
 }

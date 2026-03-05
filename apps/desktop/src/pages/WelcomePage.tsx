@@ -16,7 +16,7 @@ export function WelcomePage() {
   }, [loadSavedConnections]);
 
   return (
-    <div className="flex h-screen items-center justify-center bg-background">
+    <div className="flex h-full items-center justify-center bg-background">
       <Card className="w-full max-w-2xl">
         <CardHeader>
           <CardTitle className="text-3xl">DataForge</CardTitle>

@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+export type CopyFormat = 'json' | 'csv' | 'tsv' | 'markdown' | 'insert';
+
 export interface Preferences {
   theme: 'light' | 'dark';
   editorFontSize: number;
@@ -9,6 +11,7 @@ export interface Preferences {
   defaultPageSize: number;
   alternatingRowColors: boolean;
   safeModeLevel: 'silent' | 'alert' | 'alert_select' | 'password' | 'password_select';
+  defaultCopyFormat: CopyFormat;
 }
 
 const STORAGE_KEY = 'dataforge:preferences';
@@ -22,6 +25,7 @@ const DEFAULTS: Preferences = {
   defaultPageSize: 300,
   alternatingRowColors: false,
   safeModeLevel: 'alert',
+  defaultCopyFormat: 'json',
 };
 
 function loadFromStorage(): Preferences {
@@ -65,6 +69,7 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => {
         defaultPageSize: state.defaultPageSize,
         alternatingRowColors: state.alternatingRowColors,
         safeModeLevel: state.safeModeLevel,
+        defaultCopyFormat: state.defaultCopyFormat,
       };
       if (key === 'theme') applyTheme(value as 'light' | 'dark');
       saveToStorage(prefs);
