@@ -9,7 +9,6 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { ActiveConnections } from '@/components/health/ActiveConnections';
 import { SlowQueryList } from '@/components/health/SlowQueryList';
@@ -128,13 +127,13 @@ export function HealthDashboard() {
       </div>
 
       {/* Dashboard content */}
-      <ScrollArea className="flex-1">
+      <div className="flex-1 overflow-y-auto min-h-0">
         <div className="p-4 flex flex-col gap-4">
           <ActiveConnections refreshTrigger={refreshTrigger} />
           <SlowQueryList refreshTrigger={refreshTrigger} />
           <StorageOverview refreshTrigger={refreshTrigger} />
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }
