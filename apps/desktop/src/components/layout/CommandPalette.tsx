@@ -27,12 +27,15 @@ import {
   Share2,
   StickyNote,
   Database,
+  TableProperties,
+  Users,
 } from 'lucide-react';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 import { useAIStore } from '@/stores/aiStore';
 import { useImportExportStore } from '@/stores/importExportStore';
 import { useDataGenStore } from '@/stores/dataGenStore';
 import { useNotesStore } from '@/stores/notesStore';
+import { useShortcutStore, formatBinding } from '@/stores/shortcutStore';
 
 interface CommandPaletteProps {
   onOpenPreferences?: () => void;
@@ -42,6 +45,9 @@ interface CommandPaletteProps {
 export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPaletteProps) {
   const open = useUIStore((s) => s.commandPaletteOpen);
   const setOpen = useUIStore((s) => s.setCommandPaletteOpen);
+  const sc = useShortcutStore((s) => s.getBinding);
+  // Subscribe to overrides so display updates when shortcuts change
+  useShortcutStore((s) => s.overrides);
 
   function runAndClose(fn: () => void) {
     fn();
@@ -121,21 +127,21 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
               <CommandItem
                 onSelect={handleNewQuery}
                 icon={<Plus className="h-4 w-4" />}
-                shortcut="Ctrl+N"
+                shortcut={formatBinding(sc('global.newTab'))}
               >
                 New Query Tab
               </CommandItem>
               <CommandItem
                 onSelect={handleRunQuery}
                 icon={<Play className="h-4 w-4" />}
-                shortcut="Ctrl+Enter"
+                shortcut={formatBinding(sc('editor.execute'))}
               >
                 Run Query
               </CommandItem>
               <CommandItem
                 onSelect={handleCloseTab}
                 icon={<X className="h-4 w-4" />}
-                shortcut="Ctrl+W"
+                shortcut={formatBinding(sc('global.closeTab'))}
               >
                 Close Tab
               </CommandItem>
@@ -149,7 +155,7 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
               <CommandItem
                 onSelect={handleToggleSidebar}
                 icon={<PanelLeft className="h-4 w-4" />}
-                shortcut="Ctrl+B"
+                shortcut={formatBinding(sc('global.toggleSidebar'))}
               >
                 Toggle Sidebar
               </CommandItem>
@@ -169,7 +175,7 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
                 <CommandItem
                   onSelect={() => runAndClose(() => onOpenPreferences())}
                   icon={<Settings className="h-4 w-4" />}
-                  shortcut="Ctrl+,"
+                  shortcut={formatBinding(sc('global.preferences'))}
                 >
                   Preferences
                 </CommandItem>
@@ -201,7 +207,7 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
                   }
                 })}
                 icon={<FolderOpen className="h-4 w-4" />}
-                shortcut="Ctrl+O"
+                shortcut={formatBinding(sc('global.openFile'))}
               >
                 Open SQL File
               </CommandItem>
@@ -212,7 +218,7 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
                   if (tab?.sql) saveSqlFile(tab.sql, `${tab.title.replace(/[^a-zA-Z0-9_-]/g, '_')}.sql`);
                 })}
                 icon={<Save className="h-4 w-4" />}
-                shortcut="Ctrl+Shift+S"
+                shortcut={formatBinding(sc('global.saveFile'))}
               >
                 Save SQL File
               </CommandItem>
@@ -263,7 +269,7 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
                   useAIStore.getState().setChatOpen(true);
                 })}
                 icon={<Sparkles className="h-4 w-4" />}
-                shortcut="Ctrl+J"
+                shortcut={formatBinding(sc('global.aiAssistant'))}
               >
                 AI Assistant
               </CommandItem>
@@ -272,7 +278,7 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
                   document.dispatchEvent(new CustomEvent('dataforge:snippet-palette'));
                 })}
                 icon={<Code2 className="h-4 w-4" />}
-                shortcut="Ctrl+Shift+I"
+                shortcut={formatBinding(sc('global.insertSnippet'))}
               >
                 Insert Snippet
               </CommandItem>
@@ -312,14 +318,14 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
               <CommandItem
                 onSelect={() => runAndClose(() => useImportExportStore.getState().setExportDialogOpen(true))}
                 icon={<Download className="h-4 w-4" />}
-                shortcut="Ctrl+Shift+E"
+                shortcut={formatBinding(sc('global.export'))}
               >
                 Export Data
               </CommandItem>
               <CommandItem
                 onSelect={() => runAndClose(() => useDataGenStore.getState().setDialogOpen(true))}
                 icon={<Database className="h-4 w-4" />}
-                shortcut="Ctrl+Shift+G"
+                shortcut={formatBinding(sc('global.dataGenerator'))}
               >
                 Generate Mock Data
               </CommandItem>
@@ -327,7 +333,7 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
                 onSelect={() => runAndClose(() => useNotesStore.getState().setPanelOpen(true))}
                 icon={<StickyNote className="h-4 w-4" />}
               >
-                Notes &amp; Annotations
+                Notes & Annotations
               </CommandItem>
               <CommandItem
                 onSelect={() => runAndClose(() => {
@@ -336,6 +342,24 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
                 icon={<Share2 className="h-4 w-4" />}
               >
                 Share / Import
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  const id = useQueryStore.getState().createTab('Table Designer', { editorVisible: false });
+                  useQueryStore.getState().setViewMode(id, 'table-designer');
+                })}
+                icon={<TableProperties className="h-4 w-4" />}
+              >
+                Table Designer
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  const id = useQueryStore.getState().createTab('Server Processes', { editorVisible: false });
+                  useQueryStore.getState().setViewMode(id, 'processes');
+                })}
+                icon={<Users className="h-4 w-4" />}
+              >
+                Server Processes
               </CommandItem>
             </Command.Group>
 

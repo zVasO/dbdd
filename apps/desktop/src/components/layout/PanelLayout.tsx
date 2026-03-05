@@ -23,6 +23,8 @@ const ExplainView = lazy(() => import('@/components/profiler/ExplainView').then(
 const QueryBuilderView = lazy(() => import('@/components/query-builder/QueryBuilderView').then(m => ({ default: m.QueryBuilderView })));
 const SchemaMigrationView = lazy(() => import('@/components/migration/SchemaMigrationView').then(m => ({ default: m.SchemaMigrationView })));
 const AlertManager = lazy(() => import('@/components/alerts/AlertManager').then(m => ({ default: m.AlertManager })));
+const TableDesigner = lazy(() => import('@/components/schema/TableDesigner').then(m => ({ default: m.TableDesigner })));
+const ProcessList = lazy(() => import('@/components/admin/ProcessList').then(m => ({ default: m.ProcessList })));
 
 const LazyFallback = () => <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">Loading...</div>;
 
@@ -129,7 +131,23 @@ export function PanelLayout() {
           </div>
         )}
 
-        {activeTab && !['er-diagram', 'dashboard', 'health', 'explain', 'query-builder', 'migration', 'alerts'].includes(activeTab.viewMode) && (
+        {activeTab && activeTab.viewMode === 'table-designer' && (
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <Suspense fallback={<LazyFallback />}>
+              <TableDesigner database={activeTab.database} table={activeTab.table} />
+            </Suspense>
+          </div>
+        )}
+
+        {activeTab && activeTab.viewMode === 'processes' && (
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <Suspense fallback={<LazyFallback />}>
+              <ProcessList />
+            </Suspense>
+          </div>
+        )}
+
+        {activeTab && !['er-diagram', 'dashboard', 'health', 'explain', 'query-builder', 'migration', 'alerts', 'table-designer', 'processes'].includes(activeTab.viewMode) && (
           <div className="flex flex-1 flex-col overflow-hidden">
             {activeTab.editorVisible ? (
               <>

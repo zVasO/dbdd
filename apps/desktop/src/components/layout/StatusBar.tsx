@@ -59,14 +59,16 @@ export function StatusBar({ connected, dbType, onDisconnect }: Props) {
           </>
         )}
         {activeTab?.isExecuting && <span>Executing...</span>}
-        <span className="text-[10px] text-muted-foreground/50">Ctrl+K</span>
-        <button
+        <kbd className="rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px] text-muted-foreground">Ctrl+K</kbd>
+        <Button
+          variant="ghost"
+          size="icon-xs"
           onClick={toggleTheme}
-          className="rounded p-0.5 text-muted-foreground hover:text-foreground"
+          className="text-muted-foreground hover:text-foreground"
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
           {theme === 'dark' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-        </button>
+        </Button>
       </div>
     </div>
   );

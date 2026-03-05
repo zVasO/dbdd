@@ -6,6 +6,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { useChangeStore } from '@/stores/changeStore';
 import { useFilterStore } from '@/stores/filterStore';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcut';
+import { useShortcutStore } from '@/stores/shortcutStore';
 import { Sidebar } from './Sidebar';
 import { StatusBar } from './StatusBar';
 import { PanelLayout } from './PanelLayout';
@@ -75,84 +76,54 @@ export function AppLayout() {
     }
   }, [activeConnectionId, loadDatabases]);
 
+  // Re-render when shortcut overrides change
+  const _shortcutOverrides = useShortcutStore((s) => s.overrides);
+  const sc = useShortcutStore((s) => s.getBinding);
+
   useKeyboardShortcuts([
+    { ...sc('global.newTab'), handler: () => createTab() },
+    { ...sc('global.openAnything'), handler: () => useUIStore.getState().setOpenAnythingOpen(true) },
+    { ...sc('global.commandPalette'), handler: () => useUIStore.getState().setCommandPaletteOpen(true) },
+    { ...sc('global.toggleSidebar'), handler: () => toggleSidebar() },
     {
-      key: 'n',
-      modifiers: ['ctrl'],
-      handler: () => createTab(),
-    },
-    {
-      key: 'p',
-      modifiers: ['ctrl'],
-      handler: () => useUIStore.getState().setOpenAnythingOpen(true),
-    },
-    {
-      key: 'k',
-      modifiers: ['ctrl'],
-      handler: () => useUIStore.getState().setCommandPaletteOpen(true),
-    },
-    {
-      key: 'b',
-      modifiers: ['ctrl'],
-      handler: () => toggleSidebar(),
-    },
-    {
-      key: 'w',
-      modifiers: ['ctrl'],
+      ...sc('global.closeTab'),
       handler: () => {
         const { activeTabId, closeTab } = useQueryStore.getState();
         if (activeTabId) closeTab(activeTabId);
       },
     },
     {
-      key: 's',
-      modifiers: ['ctrl'],
+      ...sc('global.save'),
       handler: () => {
         document.dispatchEvent(new CustomEvent('dataforge:commit'));
       },
     },
+    { ...sc('global.redo'), handler: () => useChangeStore.getState().redo() },
+    { ...sc('global.undo'), handler: () => useChangeStore.getState().undo() },
     {
-      key: 'z',
-      modifiers: ['ctrl', 'shift'],
-      handler: () => useChangeStore.getState().redo(),
-    },
-    {
-      key: 'z',
-      modifiers: ['ctrl'],
-      handler: () => useChangeStore.getState().undo(),
-    },
-    {
-      key: 'p',
-      modifiers: ['ctrl', 'shift'],
+      ...sc('global.previewChanges'),
       handler: () => {
         const store = useChangeStore.getState();
         if (store.hasPendingChanges()) store.setPreviewOpen(true);
       },
     },
     {
-      key: 'f',
-      modifiers: ['ctrl', 'alt'],
+      ...sc('global.columnFilter'),
       handler: () => {
         const store = useFilterStore.getState();
         store.setColumnFilterOpen(!store.columnFilterOpen);
       },
     },
     {
-      key: 'f',
-      modifiers: ['ctrl'],
+      ...sc('global.searchFilter'),
       handler: () => {
         const store = useFilterStore.getState();
         store.setFilterBarOpen(!store.filterBarOpen);
       },
     },
+    { ...sc('global.preferences'), handler: () => setPrefsOpen(true) },
     {
-      key: ',',
-      modifiers: ['ctrl'],
-      handler: () => setPrefsOpen(true),
-    },
-    {
-      key: 'o',
-      modifiers: ['ctrl'],
+      ...sc('global.openFile'),
       handler: async () => {
         const file = await openSqlFile();
         if (!file) return;
@@ -167,8 +138,7 @@ export function AppLayout() {
       },
     },
     {
-      key: 's',
-      modifiers: ['ctrl', 'shift'],
+      ...sc('global.saveFile'),
       handler: () => {
         const { tabs, activeTabId } = useQueryStore.getState();
         const tab = tabs.find((t) => t.id === activeTabId);
@@ -178,28 +148,15 @@ export function AppLayout() {
       },
     },
     {
-      key: 'j',
-      modifiers: ['ctrl'],
+      ...sc('global.aiAssistant'),
       handler: () => {
         const store = useAIStore.getState();
         store.setChatOpen(!store.chatOpen);
       },
     },
-    {
-      key: 'i',
-      modifiers: ['ctrl', 'shift'],
-      handler: () => setSnippetPaletteOpen(true),
-    },
-    {
-      key: 'e',
-      modifiers: ['ctrl', 'shift'],
-      handler: () => useImportExportStore.getState().setExportDialogOpen(true),
-    },
-    {
-      key: 'g',
-      modifiers: ['ctrl', 'shift'],
-      handler: () => useDataGenStore.getState().setDialogOpen(true),
-    },
+    { ...sc('global.insertSnippet'), handler: () => setSnippetPaletteOpen(true) },
+    { ...sc('global.export'), handler: () => useImportExportStore.getState().setExportDialogOpen(true) },
+    { ...sc('global.dataGenerator'), handler: () => useDataGenStore.getState().setDialogOpen(true) },
   ]);
 
   if (settingsOpen) {

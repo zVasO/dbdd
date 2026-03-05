@@ -41,7 +41,8 @@ export function ConnectionCard({ connection }: Props) {
 
   return (
     <Card
-      className="py-0"
+      className="cursor-pointer py-0 transition-colors hover:bg-accent/50"
+      onClick={() => handleConnect()}
       style={{
         borderLeftColor: connection.config.color || undefined,
         borderLeftWidth: connection.config.color ? '3px' : undefined,

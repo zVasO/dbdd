@@ -11,10 +11,11 @@ import {
   TooltipContent,
   TooltipProvider,
 } from '@/components/ui/tooltip';
-import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2, Wand2, FolderOpen, Download, Sparkles, Brain, Zap } from 'lucide-react';
+import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2, Wand2, FolderOpen, Download, Sparkles, Brain, Zap, GitBranch, Check, X } from 'lucide-react';
 import { useState, useCallback, useEffect } from 'react';
 import { useAIStore } from '@/stores/aiStore';
 import { AiResultDialog } from '@/components/ai/AiResultDialog';
+import { cn } from '@/lib/utils';
 
 interface Props {
   isExecuting: boolean;
@@ -31,6 +32,7 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
   const generateSql = useChangeStore((s) => s.generateSql);
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const [isCommitting, setIsCommitting] = useState(false);
+  const [txState, setTxState] = useState<'none' | 'active' | 'error'>('none');
   const [aiDialogOpen, setAiDialogOpen] = useState(false);
   const [aiDialogTitle, setAiDialogTitle] = useState('');
   const [aiDialogContent, setAiDialogContent] = useState('');
@@ -54,6 +56,30 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
       setIsCommitting(false);
     }
   }, [activeConnectionId, hasPending, generateSql]);
+
+  const handleBeginTx = useCallback(async () => {
+    if (!activeConnectionId || txState === 'active') return;
+    try {
+      await ipc.executeQuery(activeConnectionId, 'BEGIN');
+      setTxState('active');
+    } catch { setTxState('error'); }
+  }, [activeConnectionId, txState]);
+
+  const handleCommitTx = useCallback(async () => {
+    if (!activeConnectionId || txState !== 'active') return;
+    try {
+      await ipc.executeQuery(activeConnectionId, 'COMMIT');
+      setTxState('none');
+    } catch { setTxState('error'); }
+  }, [activeConnectionId, txState]);
+
+  const handleRollbackTx = useCallback(async () => {
+    if (!activeConnectionId || txState !== 'active') return;
+    try {
+      await ipc.executeQuery(activeConnectionId, 'ROLLBACK');
+      setTxState('none');
+    } catch { setTxState('error'); }
+  }, [activeConnectionId, txState]);
 
   // Listen for Ctrl+S commit event from AppLayout
   useEffect(() => {
@@ -232,6 +258,52 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
           </TooltipTrigger>
           <TooltipContent>AI Assistant (Ctrl+J)</TooltipContent>
         </Tooltip>
+
+        <div className="mx-1 h-4 w-px bg-border" />
+
+        {/* Transaction control */}
+        {txState === 'none' ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleBeginTx}
+                disabled={!activeConnectionId}
+                className="gap-1 text-xs"
+              >
+                <GitBranch className="h-3.5 w-3.5" />
+                BEGIN
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Start transaction</TooltipContent>
+          </Tooltip>
+        ) : (
+          <div className="flex items-center gap-0.5">
+            <Badge variant="outline" className={cn('gap-1 text-[10px]', txState === 'error' ? 'border-destructive text-destructive' : 'border-primary text-primary')}>
+              <GitBranch className="h-3 w-3" />
+              TXN
+            </Badge>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" variant="ghost" onClick={handleCommitTx} className="gap-1 text-xs text-primary hover:text-primary">
+                  <Check className="h-3.5 w-3.5" />
+                  COMMIT
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Commit transaction</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" variant="ghost" onClick={handleRollbackTx} className="gap-1 text-xs text-destructive hover:text-destructive">
+                  <X className="h-3.5 w-3.5" />
+                  ROLLBACK
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Rollback transaction</TooltipContent>
+            </Tooltip>
+          </div>
+        )}
 
         <div className="mx-1 h-4 w-px bg-border" />
 
