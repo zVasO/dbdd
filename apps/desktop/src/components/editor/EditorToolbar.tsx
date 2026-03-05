@@ -2,6 +2,7 @@ import { useChangeStore } from '@/stores/changeStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { ipc } from '@/lib/ipc';
 import { useQueryStore } from '@/stores/queryStore';
+import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -10,7 +11,7 @@ import {
   TooltipContent,
   TooltipProvider,
 } from '@/components/ui/tooltip';
-import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2, Wand2 } from 'lucide-react';
+import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2, Wand2, FolderOpen, Download } from 'lucide-react';
 import { useState, useCallback, useEffect } from 'react';
 
 interface Props {
@@ -96,6 +97,55 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
             </Button>
           </TooltipTrigger>
           <TooltipContent>Format SQL (Ctrl+I)</TooltipContent>
+        </Tooltip>
+
+        <div className="mx-1 h-4 w-px bg-border" />
+
+        {/* Open SQL file */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={async () => {
+                const file = await openSqlFile();
+                if (file) {
+                  const { activeTabId } = useQueryStore.getState();
+                  if (activeTabId) {
+                    useQueryStore.getState().updateSql(activeTabId, file.content);
+                  } else {
+                    const tabId = useQueryStore.getState().createTab(file.name);
+                    useQueryStore.getState().updateSql(tabId, file.content);
+                  }
+                }
+              }}
+              className="h-7 w-7"
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Open SQL file (Ctrl+O)</TooltipContent>
+        </Tooltip>
+
+        {/* Save SQL file */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={async () => {
+                const { activeTabId, tabs } = useQueryStore.getState();
+                const tab = tabs.find((t) => t.id === activeTabId);
+                if (tab?.sql) {
+                  await saveSqlFile(tab.sql, `${tab.title}.sql`);
+                }
+              }}
+              className="h-7 w-7"
+            >
+              <Download className="h-3.5 w-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Save SQL file (Ctrl+Shift+S)</TooltipContent>
         </Tooltip>
 
         <div className="mx-1 h-4 w-px bg-border" />

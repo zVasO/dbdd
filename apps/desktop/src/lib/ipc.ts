@@ -47,4 +47,16 @@ export const ipc = {
 
   getTableStructure: (connectionId: string, tableRef: TableRef) =>
     invoke<TableStructure>('get_table_structure', { connectionId, tableRef }),
+
+  pingConnection: (connectionId: string) =>
+    invoke<void>('ping_connection', { connectionId }),
+
+  openSqlFile: () =>
+    invoke<[string, string] | null>('open_sql_file'),
+
+  saveSqlFile: (content: string, suggestedName?: string) =>
+    invoke<string | null>('save_sql_file', { content, suggestedName }),
+
+  importCsvFile: () =>
+    invoke<[string, string] | null>('import_csv_file'),
 };

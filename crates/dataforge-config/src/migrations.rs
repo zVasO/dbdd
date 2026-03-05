@@ -22,6 +22,12 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_query_history_connection
-        ON query_history(connection_id, executed_at DESC);",
+        ON query_history(connection_id, executed_at DESC);
+
+        CREATE TABLE IF NOT EXISTS encrypted_passwords (
+            connection_id TEXT PRIMARY KEY,
+            ciphertext TEXT NOT NULL,
+            nonce TEXT NOT NULL
+        );",
     )
 }

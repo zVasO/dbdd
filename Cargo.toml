@@ -40,6 +40,9 @@ russh-keys = "0.46"
 
 # Security
 keyring = "3"
+aes-gcm = "0.10"
+rand = "0.8"
+base64 = "0.22"
 
 # Utils
 uuid = { version = "1", features = ["v4", "serde"] }

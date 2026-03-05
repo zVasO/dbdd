@@ -14,14 +14,16 @@ import {
   Settings,
   FolderOpen,
   Save,
+  Upload,
 } from 'lucide-react';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 
 interface CommandPaletteProps {
   onOpenPreferences?: () => void;
+  onOpenCsvImport?: () => void;
 }
 
-export function CommandPalette({ onOpenPreferences }: CommandPaletteProps) {
+export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPaletteProps) {
   const open = useUIStore((s) => s.commandPaletteOpen);
   const setOpen = useUIStore((s) => s.setCommandPaletteOpen);
 
@@ -192,6 +194,14 @@ export function CommandPalette({ onOpenPreferences }: CommandPaletteProps) {
               >
                 Save SQL File
               </CommandItem>
+              {onOpenCsvImport && (
+                <CommandItem
+                  onSelect={() => runAndClose(() => onOpenCsvImport())}
+                  icon={<Upload className="h-4 w-4" />}
+                >
+                  Import CSV
+                </CommandItem>
+              )}
             </Command.Group>
 
             {/* Connection group */}

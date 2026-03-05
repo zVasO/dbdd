@@ -104,3 +104,19 @@ pub async fn delete_saved_connection(
         .await
         .map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub async fn ping_connection(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+) -> Result<(), String> {
+    let active = state
+        .connection_manager
+        .get(&connection_id)
+        .ok_or("Connection not found")?;
+    active
+        .connection
+        .ping()
+        .await
+        .map_err(|e| e.to_string())
+}

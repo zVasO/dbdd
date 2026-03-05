@@ -5,6 +5,7 @@ import { WelcomePage } from "@/pages/WelcomePage";
 import { WorkspacePage } from "@/pages/WorkspacePage";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { loadSession, clearSession } from "@/lib/sessionRecovery";
+import { ipc } from "@/lib/ipc";
 
 function App() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
@@ -39,6 +40,17 @@ function App() {
     }
     restore();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep-alive: ping the active connection every 30 seconds
+  useEffect(() => {
+    if (!activeConnectionId) return;
+    const interval = setInterval(() => {
+      ipc.pingConnection(activeConnectionId).catch(() => {
+        // Connection lost — silently ignore; user will see errors on next action
+      });
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [activeConnectionId]);
 
   return (
     <ErrorBoundary>

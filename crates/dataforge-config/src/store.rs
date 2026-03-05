@@ -1,7 +1,8 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use rusqlite::Connection;
+use tracing::{debug, warn};
 use uuid::Uuid;
 
 use dataforge_core::error::{DataForgeError, Result};
@@ -9,8 +10,13 @@ use dataforge_core::models::connection::ConnectionConfig;
 use dataforge_core::models::connection::SavedConnection;
 use dataforge_core::models::query::{QueryHistoryEntry, QueryStatus};
 
+use crate::crypto;
+
 pub struct ConfigStore {
     conn: Mutex<Connection>,
+    encryption_key: [u8; 32],
+    #[allow(dead_code)]
+    app_data_dir: PathBuf,
 }
 
 impl ConfigStore {
@@ -25,8 +31,12 @@ impl ConfigStore {
         crate::migrations::run_migrations(&conn)
             .map_err(|e| DataForgeError::Config(e.to_string()))?;
 
+        let encryption_key = crypto::load_or_create_key(app_data_dir)?;
+
         Ok(Self {
             conn: Mutex::new(conn),
+            encryption_key,
+            app_data_dir: app_data_dir.to_path_buf(),
         })
     }
 
@@ -105,23 +115,81 @@ impl ConfigStore {
         Ok(())
     }
 
+    /// Store a password securely. Tries OS keyring first, falls back to AES-256-GCM encrypted SQLite.
     pub fn store_password(&self, config_id: &Uuid, password: &str) -> Result<()> {
+        // Always store in encrypted SQLite (reliable fallback)
+        self.store_password_encrypted(config_id, password)?;
+
+        // Also try OS keyring (best security)
         let service = format!("dataforge-{}", config_id);
-        let entry = keyring::Entry::new(&service, "password")
-            .map_err(|e| DataForgeError::Config(e.to_string()))?;
-        entry
-            .set_password(password)
-            .map_err(|e| DataForgeError::Config(e.to_string()))?;
+        match keyring::Entry::new(&service, "password") {
+            Ok(entry) => match entry.set_password(password) {
+                Ok(()) => debug!("Password stored in OS keyring for {}", config_id),
+                Err(e) => warn!("OS keyring store failed (using encrypted fallback): {e}"),
+            },
+            Err(e) => warn!("OS keyring init failed (using encrypted fallback): {e}"),
+        }
         Ok(())
     }
 
+    /// Retrieve a stored password. Tries OS keyring first, falls back to encrypted SQLite.
     pub fn get_password(&self, config_id: &Uuid) -> Result<Option<String>> {
+        // Try OS keyring first
         let service = format!("dataforge-{}", config_id);
-        let entry = keyring::Entry::new(&service, "password")
-            .map_err(|e| DataForgeError::Config(e.to_string()))?;
-        match entry.get_password() {
-            Ok(pw) => Ok(Some(pw)),
-            Err(keyring::Error::NoEntry) => Ok(None),
+        match keyring::Entry::new(&service, "password") {
+            Ok(entry) => match entry.get_password() {
+                Ok(pw) => {
+                    debug!("Password retrieved from OS keyring for {}", config_id);
+                    return Ok(Some(pw));
+                }
+                Err(keyring::Error::NoEntry) => {
+                    debug!("No password in OS keyring for {}, trying encrypted store", config_id);
+                }
+                Err(e) => {
+                    warn!("OS keyring retrieval failed: {e}, trying encrypted store");
+                }
+            },
+            Err(e) => {
+                warn!("OS keyring init failed: {e}, trying encrypted store");
+            }
+        }
+
+        // Fallback to encrypted SQLite
+        self.get_password_encrypted(config_id)
+    }
+
+    fn store_password_encrypted(&self, config_id: &Uuid, password: &str) -> Result<()> {
+        let (ciphertext, nonce) = crypto::encrypt(&self.encryption_key, password)?;
+        let conn = self.conn.lock().map_err(|e| DataForgeError::Internal(e.to_string()))?;
+        conn.execute(
+            "INSERT OR REPLACE INTO encrypted_passwords (connection_id, ciphertext, nonce) VALUES (?1, ?2, ?3)",
+            rusqlite::params![config_id.to_string(), ciphertext, nonce],
+        ).map_err(|e| DataForgeError::Config(e.to_string()))?;
+        Ok(())
+    }
+
+    fn get_password_encrypted(&self, config_id: &Uuid) -> Result<Option<String>> {
+        let conn = self.conn.lock().map_err(|e| DataForgeError::Internal(e.to_string()))?;
+        let mut stmt = conn.prepare(
+            "SELECT ciphertext, nonce FROM encrypted_passwords WHERE connection_id = ?1"
+        ).map_err(|e| DataForgeError::Config(e.to_string()))?;
+
+        let result = stmt.query_row(
+            rusqlite::params![config_id.to_string()],
+            |row| {
+                let ciphertext: String = row.get(0)?;
+                let nonce: String = row.get(1)?;
+                Ok((ciphertext, nonce))
+            },
+        );
+
+        match result {
+            Ok((ciphertext, nonce)) => {
+                let password = crypto::decrypt(&self.encryption_key, &ciphertext, &nonce)?;
+                debug!("Password retrieved from encrypted store for {}", config_id);
+                Ok(Some(password))
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(DataForgeError::Config(e.to_string())),
         }
     }
