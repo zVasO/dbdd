@@ -16,7 +16,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { ipc } from '@/lib/ipc';
 import type { QueryResult, CellValue } from '@/lib/types';
@@ -173,7 +172,7 @@ export function ActiveConnections({ refreshTrigger }: ActiveConnectionsProps) {
         )}
 
         {!loading && !error && processes.length > 0 && (
-          <ScrollArea className="max-h-[300px]">
+          <div className="max-h-[300px] overflow-y-auto rounded-md border">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -209,7 +208,7 @@ export function ActiveConnections({ refreshTrigger }: ActiveConnectionsProps) {
                 ))}
               </TableBody>
             </Table>
-          </ScrollArea>
+          </div>
         )}
       </CardContent>
     </Card>

@@ -9,7 +9,6 @@ import {
   CardTitle,
   CardDescription,
 } from '@/components/ui/card';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { ipc } from '@/lib/ipc';
 import type { QueryResult, CellValue } from '@/lib/types';
@@ -202,7 +201,7 @@ export function StorageOverview({ refreshTrigger }: StorageOverviewProps) {
         )}
 
         {!loading && !error && tables.length > 0 && (
-          <ScrollArea className="max-h-[350px]">
+          <div className="max-h-[350px] overflow-y-auto">
             <div className="flex flex-col gap-2">
               {tables.map((table, idx) => {
                 const pct =
@@ -247,7 +246,7 @@ export function StorageOverview({ refreshTrigger }: StorageOverviewProps) {
                 );
               })}
             </div>
-          </ScrollArea>
+          </div>
         )}
       </CardContent>
     </Card>
