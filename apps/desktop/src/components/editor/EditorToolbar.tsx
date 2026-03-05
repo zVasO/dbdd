@@ -11,8 +11,10 @@ import {
   TooltipContent,
   TooltipProvider,
 } from '@/components/ui/tooltip';
-import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2, Wand2, FolderOpen, Download } from 'lucide-react';
+import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2, Wand2, FolderOpen, Download, Sparkles, Brain, Zap } from 'lucide-react';
 import { useState, useCallback, useEffect } from 'react';
+import { useAIStore } from '@/stores/aiStore';
+import { AiResultDialog } from '@/components/ai/AiResultDialog';
 
 interface Props {
   isExecuting: boolean;
@@ -29,6 +31,10 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
   const generateSql = useChangeStore((s) => s.generateSql);
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const [isCommitting, setIsCommitting] = useState(false);
+  const [aiDialogOpen, setAiDialogOpen] = useState(false);
+  const [aiDialogTitle, setAiDialogTitle] = useState('');
+  const [aiDialogContent, setAiDialogContent] = useState('');
+  const [aiDialogLoading, setAiDialogLoading] = useState(false);
 
   const handleCommit = useCallback(async () => {
     if (!activeConnectionId || !hasPending) return;
@@ -150,6 +156,85 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
 
         <div className="mx-1 h-4 w-px bg-border" />
 
+        {/* AI: Explain Query */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={async () => {
+                const { tabs, activeTabId } = useQueryStore.getState();
+                const tab = tabs.find((t) => t.id === activeTabId);
+                if (!tab?.sql?.trim()) return;
+                setAiDialogTitle('Query Explanation');
+                setAiDialogContent('');
+                setAiDialogLoading(true);
+                setAiDialogOpen(true);
+                try {
+                  const result = await useAIStore.getState().explainQuery(tab.sql);
+                  setAiDialogContent(result);
+                } catch (e) {
+                  setAiDialogContent(`Error: ${String(e)}`);
+                } finally {
+                  setAiDialogLoading(false);
+                }
+              }}
+              className="h-7 w-7"
+            >
+              <Brain className="h-3.5 w-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Explain Query (AI)</TooltipContent>
+        </Tooltip>
+
+        {/* AI: Optimize Query */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={async () => {
+                const { tabs, activeTabId } = useQueryStore.getState();
+                const tab = tabs.find((t) => t.id === activeTabId);
+                if (!tab?.sql?.trim()) return;
+                setAiDialogTitle('Query Optimization');
+                setAiDialogContent('');
+                setAiDialogLoading(true);
+                setAiDialogOpen(true);
+                try {
+                  const result = await useAIStore.getState().optimizeQuery(tab.sql);
+                  setAiDialogContent(result);
+                } catch (e) {
+                  setAiDialogContent(`Error: ${String(e)}`);
+                } finally {
+                  setAiDialogLoading(false);
+                }
+              }}
+              className="h-7 w-7"
+            >
+              <Zap className="h-3.5 w-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Optimize Query (AI)</TooltipContent>
+        </Tooltip>
+
+        {/* AI: Chat */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => useAIStore.getState().setChatOpen(true)}
+              className="h-7 w-7"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>AI Assistant (Ctrl+J)</TooltipContent>
+        </Tooltip>
+
+        <div className="mx-1 h-4 w-px bg-border" />
+
         {/* Undo */}
         <Tooltip>
           <TooltipTrigger asChild>
@@ -233,6 +318,20 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
           </div>
         )}
       </div>
+      <AiResultDialog
+        open={aiDialogOpen}
+        onOpenChange={setAiDialogOpen}
+        title={aiDialogTitle}
+        content={aiDialogContent}
+        loading={aiDialogLoading}
+        onInsertSQL={(sql) => {
+          const { activeTabId, updateSql, tabs } = useQueryStore.getState();
+          const tab = tabs.find((t) => t.id === activeTabId);
+          if (tab) {
+            updateSql(tab.id, tab.sql ? `${tab.sql}\n${sql}` : sql);
+          }
+        }}
+      />
     </TooltipProvider>
   );
 }

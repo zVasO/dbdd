@@ -45,6 +45,24 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
         tables: { ...s.tables, [database]: tables },
         loading: false,
       }));
+
+      // Preload table structures in background for autocomplete
+      for (const table of tables) {
+        const key = structureKey(database, table.name);
+        if (!get().structures[key]) {
+          ipc.getTableStructure(connectionId, {
+            database,
+            schema: schema ?? null,
+            table: table.name,
+          }).then((structure) => {
+            set((s) => ({
+              structures: { ...s.structures, [key]: structure },
+            }));
+          }).catch(() => {
+            // Silently ignore — structure just won't be cached
+          });
+        }
+      }
     } catch {
       set({ loading: false });
     }

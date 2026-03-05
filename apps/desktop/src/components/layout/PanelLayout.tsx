@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useMemo, lazy, Suspense } from 'react';
 import { useQueryStore } from '@/stores/queryStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { EditorTabs } from '@/components/editor/EditorTabs';
@@ -15,6 +15,13 @@ import { cn } from '@/lib/utils';
 import { Table2, Columns3 } from 'lucide-react';
 import type { QueryResult } from '@/lib/types';
 import type { TabViewMode } from '@/stores/queryStore';
+
+const ERDiagramView = lazy(() => import('@/components/er-diagram/ERDiagramView').then(m => ({ default: m.ERDiagramView })));
+const DashboardView = lazy(() => import('@/components/dashboard/DashboardView').then(m => ({ default: m.DashboardView })));
+const HealthDashboard = lazy(() => import('@/components/health/HealthDashboard').then(m => ({ default: m.HealthDashboard })));
+const ExplainView = lazy(() => import('@/components/profiler/ExplainView').then(m => ({ default: m.ExplainView })));
+
+const LazyFallback = () => <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">Loading...</div>;
 
 export function PanelLayout() {
   const { tabs, activeTabId, updateSql, executeQuery, createTab, closeTab, setActiveTab, setEditorVisible, setViewMode, setActiveResult } = useQueryStore();
@@ -63,7 +70,39 @@ export function PanelLayout() {
           onNewTab={() => createTab()}
         />
 
-        {activeTab && (
+        {activeTab && activeTab.viewMode === 'er-diagram' && (
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <Suspense fallback={<LazyFallback />}>
+              <ERDiagramView />
+            </Suspense>
+          </div>
+        )}
+
+        {activeTab && activeTab.viewMode === 'dashboard' && (
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <Suspense fallback={<LazyFallback />}>
+              <DashboardView connectionId={activeConnectionId} />
+            </Suspense>
+          </div>
+        )}
+
+        {activeTab && activeTab.viewMode === 'health' && (
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <Suspense fallback={<LazyFallback />}>
+              <HealthDashboard />
+            </Suspense>
+          </div>
+        )}
+
+        {activeTab && activeTab.viewMode === 'explain' && (
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <Suspense fallback={<LazyFallback />}>
+              <ExplainView query={activeTab.sql} />
+            </Suspense>
+          </div>
+        )}
+
+        {activeTab && !['er-diagram', 'dashboard', 'health', 'explain'].includes(activeTab.viewMode) && (
           <div className="flex flex-1 flex-col overflow-hidden">
             {activeTab.editorVisible ? (
               <>

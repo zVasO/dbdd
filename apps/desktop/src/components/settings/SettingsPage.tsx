@@ -14,6 +14,7 @@ import {
   SelectItem,
 } from '@/components/ui/select';
 import { ThemeEditor } from './ThemeEditor';
+import { AiProviderConfig } from '@/components/ai/AiProviderConfig';
 import {
   X,
   Palette,
@@ -28,13 +29,14 @@ import {
   Check,
   Sun,
   Moon,
+  Sparkles,
 } from 'lucide-react';
 
 interface Props {
   onClose: () => void;
 }
 
-type Section = 'appearance' | 'editor' | 'grid' | 'security' | 'themes';
+type Section = 'appearance' | 'editor' | 'grid' | 'security' | 'ai' | 'themes';
 
 export function SettingsPage({ onClose }: Props) {
   const [activeSection, setActiveSection] = useState<Section>('appearance');
@@ -61,6 +63,7 @@ export function SettingsPage({ onClose }: Props) {
           <NavItem icon={<Settings2 className="size-4" />} label="Editor" active={activeSection === 'editor'} onClick={() => setActiveSection('editor')} />
           <NavItem icon={<Grid3X3 className="size-4" />} label="Data Grid" active={activeSection === 'grid'} onClick={() => setActiveSection('grid')} />
           <NavItem icon={<Shield className="size-4" />} label="Security" active={activeSection === 'security'} onClick={() => setActiveSection('security')} />
+          <NavItem icon={<Sparkles className="size-4" />} label="AI" active={activeSection === 'ai'} onClick={() => setActiveSection('ai')} />
           <Separator className="my-2" />
           <NavItem icon={<Palette className="size-4" />} label="Themes" active={activeSection === 'themes'} onClick={() => setActiveSection('themes')} />
         </nav>
@@ -72,6 +75,7 @@ export function SettingsPage({ onClose }: Props) {
             {activeSection === 'editor' && <EditorSection />}
             {activeSection === 'grid' && <GridSection />}
             {activeSection === 'security' && <SecuritySection />}
+            {activeSection === 'ai' && <AISection />}
             {activeSection === 'themes' && <ThemesSection onEditTheme={setEditingThemeId} />}
           </div>
         </ScrollArea>
@@ -234,6 +238,15 @@ function SecuritySection() {
           </SelectContent>
         </Select>
       </SettingRow>
+    </div>
+  );
+}
+
+function AISection() {
+  return (
+    <div className="space-y-6">
+      <SectionTitle title="AI Assistant" description="Configure AI providers for SQL generation, query explanation, and optimization." />
+      <AiProviderConfig />
     </div>
   );
 }

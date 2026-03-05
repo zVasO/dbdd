@@ -15,6 +15,9 @@ import { OpenAnything } from './OpenAnything';
 import { PreferencesDialog } from './PreferencesDialog';
 import { CsvImportDialog } from '@/components/editor/CsvImportDialog';
 import { SettingsPage } from '@/components/settings/SettingsPage';
+import { AiChatPanel } from '@/components/ai/AiChatPanel';
+import { SnippetPalette } from '@/components/snippets/SnippetPalette';
+import { useAIStore } from '@/stores/aiStore';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 
 export function AppLayout() {
@@ -30,6 +33,7 @@ export function AppLayout() {
 
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [csvImportOpen, setCsvImportOpen] = useState(false);
+  const [snippetPaletteOpen, setSnippetPaletteOpen] = useState(false);
   const settingsOpen = useUIStore((s) => s.settingsOpen);
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
   const isDragging = useRef(false);
@@ -164,6 +168,19 @@ export function AppLayout() {
         }
       },
     },
+    {
+      key: 'j',
+      modifiers: ['ctrl'],
+      handler: () => {
+        const store = useAIStore.getState();
+        store.setChatOpen(!store.chatOpen);
+      },
+    },
+    {
+      key: 'i',
+      modifiers: ['ctrl', 'shift'],
+      handler: () => setSnippetPaletteOpen(true),
+    },
   ]);
 
   if (settingsOpen) {
@@ -186,6 +203,7 @@ export function AppLayout() {
           />
         )}
         <PanelLayout />
+        <AiChatPanel />
       </div>
       <ActivityBar />
       <StatusBar
@@ -197,6 +215,20 @@ export function AppLayout() {
       <OpenAnything />
       <PreferencesDialog open={prefsOpen} onOpenChange={setPrefsOpen} onOpenSettings={() => setSettingsOpen(true)} />
       <CsvImportDialog open={csvImportOpen} onOpenChange={setCsvImportOpen} />
+      <SnippetPalette
+        open={snippetPaletteOpen}
+        onOpenChange={setSnippetPaletteOpen}
+        onInsert={(sql) => {
+          const { tabs, activeTabId, updateSql, createTab } = useQueryStore.getState();
+          const activeTab = tabs.find((t) => t.id === activeTabId);
+          if (activeTab) {
+            updateSql(activeTab.id, activeTab.sql ? `${activeTab.sql}\n${sql}` : sql);
+          } else {
+            const id = createTab('Snippet');
+            useQueryStore.getState().updateSql(id, sql);
+          }
+        }}
+      />
     </div>
   );
 }

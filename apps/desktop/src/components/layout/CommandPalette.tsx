@@ -15,8 +15,14 @@ import {
   FolderOpen,
   Save,
   Upload,
+  GitBranch,
+  LayoutDashboard,
+  Activity,
+  Sparkles,
+  Code2,
 } from 'lucide-react';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
+import { useAIStore } from '@/stores/aiStore';
 
 interface CommandPaletteProps {
   onOpenPreferences?: () => void;
@@ -208,6 +214,58 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
                   Import CSV
                 </CommandItem>
               )}
+            </Command.Group>
+
+            {/* Features group */}
+            <Command.Group
+              heading="Features"
+              className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground"
+            >
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  const id = useQueryStore.getState().createTab('ER Diagram', { editorVisible: false });
+                  useQueryStore.getState().setViewMode(id, 'er-diagram');
+                })}
+                icon={<GitBranch className="h-4 w-4" />}
+              >
+                Open ER Diagram
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  const id = useQueryStore.getState().createTab('Dashboard', { editorVisible: false });
+                  useQueryStore.getState().setViewMode(id, 'dashboard');
+                })}
+                icon={<LayoutDashboard className="h-4 w-4" />}
+              >
+                New Dashboard
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  const id = useQueryStore.getState().createTab('Health Monitor', { editorVisible: false });
+                  useQueryStore.getState().setViewMode(id, 'health');
+                })}
+                icon={<Activity className="h-4 w-4" />}
+              >
+                Database Health Monitor
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  useAIStore.getState().setChatOpen(true);
+                })}
+                icon={<Sparkles className="h-4 w-4" />}
+                shortcut="Ctrl+J"
+              >
+                AI Assistant
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  document.dispatchEvent(new CustomEvent('dataforge:snippet-palette'));
+                })}
+                icon={<Code2 className="h-4 w-4" />}
+                shortcut="Ctrl+Shift+I"
+              >
+                Insert Snippet
+              </CommandItem>
             </Command.Group>
 
             {/* Connection group */}
