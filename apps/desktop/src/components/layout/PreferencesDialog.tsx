@@ -1,4 +1,5 @@
 import { usePreferencesStore, type Preferences } from '@/stores/preferencesStore';
+import { useThemeStore } from '@/stores/themeStore';
 import {
   Dialog,
   DialogContent,
@@ -9,6 +10,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
+import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectTrigger,
@@ -16,15 +18,20 @@ import {
   SelectContent,
   SelectItem,
 } from '@/components/ui/select';
+import { Settings2, Moon, Sun } from 'lucide-react';
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onOpenSettings?: () => void;
 }
 
-export function PreferencesDialog({ open, onOpenChange }: Props) {
+export function PreferencesDialog({ open, onOpenChange, onOpenSettings }: Props) {
   const prefs = usePreferencesStore();
   const set = prefs.setPreference;
+  const themes = useThemeStore((s) => s.themes);
+  const activeThemeId = useThemeStore((s) => s.activeThemeId);
+  const setActiveTheme = useThemeStore((s) => s.setActiveTheme);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -38,13 +45,19 @@ export function PreferencesDialog({ open, onOpenChange }: Props) {
           {/* Appearance */}
           <Section title="Appearance">
             <Row label="Theme">
-              <Select value={prefs.theme} onValueChange={(v) => set('theme', v as Preferences['theme'])}>
-                <SelectTrigger className="w-32">
+              <Select value={activeThemeId} onValueChange={setActiveTheme}>
+                <SelectTrigger className="w-40">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="dark">Dark</SelectItem>
-                  <SelectItem value="light">Light</SelectItem>
+                  {themes.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      <span className="flex items-center gap-1.5">
+                        {t.isDark ? <Moon className="size-3" /> : <Sun className="size-3" />}
+                        {t.name}
+                      </span>
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </Row>
@@ -122,6 +135,24 @@ export function PreferencesDialog({ open, onOpenChange }: Props) {
               </Select>
             </Row>
           </Section>
+
+          {onOpenSettings && (
+            <>
+              <Separator />
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() => {
+                  onOpenChange(false);
+                  onOpenSettings();
+                }}
+              >
+                <Settings2 className="size-3.5" />
+                All Settings & Theme Editor
+              </Button>
+            </>
+          )}
         </div>
       </DialogContent>
     </Dialog>

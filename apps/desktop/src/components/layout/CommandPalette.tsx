@@ -158,6 +158,12 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
                   Preferences
                 </CommandItem>
               )}
+              <CommandItem
+                onSelect={() => runAndClose(() => useUIStore.getState().setSettingsOpen(true))}
+                icon={<Settings className="h-4 w-4" />}
+              >
+                Open Settings
+              </CommandItem>
             </Command.Group>
 
             {/* File group */}

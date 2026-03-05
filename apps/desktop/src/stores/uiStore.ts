@@ -6,12 +6,14 @@ interface UIState {
   sidebarWidth: number;
   commandPaletteOpen: boolean;
   openAnythingOpen: boolean;
+  settingsOpen: boolean;
 
   toggleSidebar: () => void;
   setSidebarWidth: (width: number) => void;
   toggleTheme: () => void;
   setCommandPaletteOpen: (open: boolean) => void;
   setOpenAnythingOpen: (open: boolean) => void;
+  setSettingsOpen: (open: boolean) => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -19,6 +21,7 @@ export const useUIStore = create<UIState>((set) => ({
   sidebarWidth: 260,
   commandPaletteOpen: false,
   openAnythingOpen: false,
+  settingsOpen: false,
 
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   setSidebarWidth: (width) => set({ sidebarWidth: width }),
@@ -29,4 +32,5 @@ export const useUIStore = create<UIState>((set) => ({
   },
   setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
   setOpenAnythingOpen: (open) => set({ openAnythingOpen: open }),
+  setSettingsOpen: (open) => set({ settingsOpen: open }),
 }));

@@ -6,6 +6,8 @@ import { WorkspacePage } from "@/pages/WorkspacePage";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { loadSession, clearSession } from "@/lib/sessionRecovery";
 import { ipc } from "@/lib/ipc";
+// Initialize theme store on import (applies saved theme to DOM)
+import "@/stores/themeStore";
 
 function App() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
