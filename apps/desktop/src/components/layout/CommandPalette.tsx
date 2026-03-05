@@ -20,9 +20,19 @@ import {
   Activity,
   Sparkles,
   Code2,
+  Workflow,
+  Download,
+  ArrowLeftRight,
+  Bell,
+  Share2,
+  StickyNote,
+  Database,
 } from 'lucide-react';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 import { useAIStore } from '@/stores/aiStore';
+import { useImportExportStore } from '@/stores/importExportStore';
+import { useDataGenStore } from '@/stores/dataGenStore';
+import { useNotesStore } from '@/stores/notesStore';
 
 interface CommandPaletteProps {
   onOpenPreferences?: () => void;
@@ -265,6 +275,67 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
                 shortcut="Ctrl+Shift+I"
               >
                 Insert Snippet
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  const id = useQueryStore.getState().createTab('Query Builder', { editorVisible: false });
+                  useQueryStore.getState().setViewMode(id, 'query-builder');
+                })}
+                icon={<Workflow className="h-4 w-4" />}
+              >
+                Visual Query Builder
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  const id = useQueryStore.getState().createTab('Schema Migration', { editorVisible: false });
+                  useQueryStore.getState().setViewMode(id, 'migration');
+                })}
+                icon={<ArrowLeftRight className="h-4 w-4" />}
+              >
+                Schema Migration
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  const id = useQueryStore.getState().createTab('Alerts', { editorVisible: false });
+                  useQueryStore.getState().setViewMode(id, 'alerts');
+                })}
+                icon={<Bell className="h-4 w-4" />}
+              >
+                Manage Alerts
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => useImportExportStore.getState().setImportDialogOpen(true))}
+                icon={<Upload className="h-4 w-4" />}
+              >
+                Import Data
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => useImportExportStore.getState().setExportDialogOpen(true))}
+                icon={<Download className="h-4 w-4" />}
+                shortcut="Ctrl+Shift+E"
+              >
+                Export Data
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => useDataGenStore.getState().setDialogOpen(true))}
+                icon={<Database className="h-4 w-4" />}
+                shortcut="Ctrl+Shift+G"
+              >
+                Generate Mock Data
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => useNotesStore.getState().setPanelOpen(true))}
+                icon={<StickyNote className="h-4 w-4" />}
+              >
+                Notes &amp; Annotations
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  document.dispatchEvent(new CustomEvent('dataforge:share-dialog'));
+                })}
+                icon={<Share2 className="h-4 w-4" />}
+              >
+                Share / Import
               </CommandItem>
             </Command.Group>
 

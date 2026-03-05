@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { usePreferencesStore, type Preferences } from '@/stores/preferencesStore';
+import { usePreferencesStore, type Preferences, type CopyFormat } from '@/stores/preferencesStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +14,8 @@ import {
   SelectItem,
 } from '@/components/ui/select';
 import { ThemeEditor } from './ThemeEditor';
+import { CSSImportDialog } from './CSSImportDialog';
+import { ShortcutsSection } from './ShortcutsSection';
 import { AiProviderConfig } from '@/components/ai/AiProviderConfig';
 import {
   X,
@@ -30,13 +32,15 @@ import {
   Sun,
   Moon,
   Sparkles,
+  FileCode2,
+  Keyboard,
 } from 'lucide-react';
 
 interface Props {
   onClose: () => void;
 }
 
-type Section = 'appearance' | 'editor' | 'grid' | 'security' | 'ai' | 'themes';
+type Section = 'appearance' | 'editor' | 'grid' | 'security' | 'ai' | 'themes' | 'shortcuts';
 
 export function SettingsPage({ onClose }: Props) {
   const [activeSection, setActiveSection] = useState<Section>('appearance');
@@ -44,7 +48,7 @@ export function SettingsPage({ onClose }: Props) {
 
   if (editingThemeId) {
     return (
-      <div className="flex h-screen flex-col bg-background">
+      <div className="flex h-full flex-col bg-background">
         <SettingsHeader onClose={onClose} title="Theme Editor" />
         <div className="flex-1 overflow-hidden p-4">
           <ThemeEditor themeId={editingThemeId} onBack={() => setEditingThemeId(null)} />
@@ -54,7 +58,7 @@ export function SettingsPage({ onClose }: Props) {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-background">
+    <div className="flex h-full flex-col bg-background">
       <SettingsHeader onClose={onClose} title="Settings" />
       <div className="flex flex-1 overflow-hidden">
         {/* Navigation */}
@@ -64,6 +68,7 @@ export function SettingsPage({ onClose }: Props) {
           <NavItem icon={<Grid3X3 className="size-4" />} label="Data Grid" active={activeSection === 'grid'} onClick={() => setActiveSection('grid')} />
           <NavItem icon={<Shield className="size-4" />} label="Security" active={activeSection === 'security'} onClick={() => setActiveSection('security')} />
           <NavItem icon={<Sparkles className="size-4" />} label="AI" active={activeSection === 'ai'} onClick={() => setActiveSection('ai')} />
+          <NavItem icon={<Keyboard className="size-4" />} label="Shortcuts" active={activeSection === 'shortcuts'} onClick={() => setActiveSection('shortcuts')} />
           <Separator className="my-2" />
           <NavItem icon={<Palette className="size-4" />} label="Themes" active={activeSection === 'themes'} onClick={() => setActiveSection('themes')} />
         </nav>
@@ -76,6 +81,7 @@ export function SettingsPage({ onClose }: Props) {
             {activeSection === 'grid' && <GridSection />}
             {activeSection === 'security' && <SecuritySection />}
             {activeSection === 'ai' && <AISection />}
+            {activeSection === 'shortcuts' && <ShortcutsSection />}
             {activeSection === 'themes' && <ThemesSection onEditTheme={setEditingThemeId} />}
           </div>
         </ScrollArea>
@@ -209,6 +215,24 @@ function GridSection() {
           </SelectContent>
         </Select>
       </SettingRow>
+
+      <SettingRow label="Default copy format" description="Format used when copying cells or rows with Ctrl+C.">
+        <Select
+          value={prefs.defaultCopyFormat}
+          onValueChange={(v) => set('defaultCopyFormat', v as CopyFormat)}
+        >
+          <SelectTrigger className="w-32">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="json">JSON</SelectItem>
+            <SelectItem value="csv">CSV</SelectItem>
+            <SelectItem value="tsv">TSV</SelectItem>
+            <SelectItem value="markdown">Markdown</SelectItem>
+            <SelectItem value="insert">INSERT</SelectItem>
+          </SelectContent>
+        </Select>
+      </SettingRow>
     </div>
   );
 }
@@ -262,6 +286,7 @@ function ThemesSection({ onEditTheme }: { onEditTheme: (id: string) => void }) {
   const exportThemeAsJSON = useThemeStore((s) => s.exportThemeAsJSON);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [cssImportOpen, setCssImportOpen] = useState(false);
 
   const builtIn = themes.filter((t) => t.builtIn);
   const custom = themes.filter((t) => !t.builtIn);
@@ -309,12 +334,22 @@ function ThemesSection({ onEditTheme }: { onEditTheme: (id: string) => void }) {
           <Palette className="size-3.5" />
           New Theme
         </Button>
+        <Button size="sm" variant="outline" onClick={() => setCssImportOpen(true)}>
+          <FileCode2 className="size-3.5" />
+          Import CSS
+        </Button>
         <Button size="sm" variant="outline" onClick={handleImport}>
           <Upload className="size-3.5" />
-          Import
+          Import JSON
         </Button>
         <input ref={fileInputRef} type="file" accept=".json" className="hidden" onChange={handleFileChange} />
       </div>
+
+      <CSSImportDialog
+        open={cssImportOpen}
+        onOpenChange={setCssImportOpen}
+        onCreated={(id) => onEditTheme(id)}
+      />
 
       {/* Built-in themes */}
       <div className="space-y-2">
@@ -326,7 +361,6 @@ function ThemesSection({ onEditTheme }: { onEditTheme: (id: string) => void }) {
               theme={theme}
               isActive={theme.id === activeThemeId}
               onSelect={() => setActiveTheme(theme.id)}
-              onEdit={() => onEditTheme(theme.id)}
               onDuplicate={() => {
                 const id = duplicateTheme(theme.id);
                 onEditTheme(id);
@@ -370,7 +404,7 @@ interface ThemeCardProps {
   theme: import('@/lib/themeTypes').Theme;
   isActive: boolean;
   onSelect: () => void;
-  onEdit: () => void;
+  onEdit?: () => void;
   onDuplicate: () => void;
   onDelete?: () => void;
   onExport: () => void;
@@ -381,13 +415,13 @@ function ThemeCard({ theme, isActive, onSelect, onEdit, onDuplicate, onDelete, o
 
   return (
     <div
-      className={`group relative rounded-lg border p-3 cursor-pointer transition-all hover:border-primary/50 ${
+      className={`group rounded-lg border cursor-pointer transition-all hover:border-primary/50 ${
         isActive ? 'border-primary ring-1 ring-primary/20' : 'border-border'
       }`}
       onClick={onSelect}
     >
       {/* Color preview strip */}
-      <div className="flex gap-1 mb-2">
+      <div className="flex gap-1 p-3 pb-0">
         {[c.background, c.primary, c.accent, c.sidebar, c.destructive].map((color, i) => (
           <div
             key={i}
@@ -397,21 +431,23 @@ function ThemeCard({ theme, isActive, onSelect, onEdit, onDuplicate, onDelete, o
         ))}
       </div>
 
-      {/* Name + status */}
-      <div className="flex items-center gap-1.5">
-        {theme.isDark ? <Moon className="size-3 text-muted-foreground" /> : <Sun className="size-3 text-muted-foreground" />}
+      {/* Name + status + actions */}
+      <div className="flex items-center gap-1 px-3 py-2">
+        {theme.darkColors ? (
+          <span className="flex items-center gap-0.5 text-muted-foreground"><Sun className="size-2.5" /><Moon className="size-2.5" /></span>
+        ) : theme.isDark ? <Moon className="size-3 text-muted-foreground" /> : <Sun className="size-3 text-muted-foreground" />}
         <span className="text-xs font-medium truncate flex-1">{theme.name}</span>
-        {isActive && <Check className="size-3 text-primary" />}
-      </div>
-
-      {/* Actions (on hover) */}
-      <div className="absolute top-1.5 right-1.5 hidden group-hover:flex gap-0.5">
-        <ActionBtn icon={<Pencil className="size-3" />} title="Edit" onClick={(e) => { e.stopPropagation(); onEdit(); }} />
-        <ActionBtn icon={<Copy className="size-3" />} title="Duplicate" onClick={(e) => { e.stopPropagation(); onDuplicate(); }} />
-        <ActionBtn icon={<Download className="size-3" />} title="Export" onClick={(e) => { e.stopPropagation(); onExport(); }} />
-        {onDelete && (
-          <ActionBtn icon={<Trash2 className="size-3" />} title="Delete" onClick={(e) => { e.stopPropagation(); onDelete(); }} destructive />
-        )}
+        <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+          {onEdit && (
+            <ActionBtn icon={<Pencil className="size-3" />} title="Edit" onClick={(e) => { e.stopPropagation(); onEdit(); }} />
+          )}
+          <ActionBtn icon={<Copy className="size-3" />} title="Duplicate" onClick={(e) => { e.stopPropagation(); onDuplicate(); }} />
+          <ActionBtn icon={<Download className="size-3" />} title="Export" onClick={(e) => { e.stopPropagation(); onExport(); }} />
+          {onDelete && (
+            <ActionBtn icon={<Trash2 className="size-3" />} title="Delete" onClick={(e) => { e.stopPropagation(); onDelete(); }} destructive />
+          )}
+        </div>
+        {isActive && <Check className="size-3 text-primary shrink-0" />}
       </div>
     </div>
   );

@@ -67,7 +67,7 @@ export function Sidebar() {
     useSchemaStore();
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const activeConfig = useConnectionStore((s) => s.activeConfig);
-  const { createTab, updateSql, executeQuery } = useQueryStore();
+  const { tabs, createTab, updateSql, executeQuery, setActiveTab } = useQueryStore();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedDbs, setExpandedDbs] = useState<Set<string>>(new Set());
@@ -113,6 +113,12 @@ export function Sidebar() {
 
   const handleTableClick = (db: string, tableName: string) => {
     if (!activeConnectionId) return;
+    // Reuse existing tab for same table + database
+    const existing = tabs.find((t) => t.table === tableName && t.database === db);
+    if (existing) {
+      setActiveTab(existing.id);
+      return;
+    }
     const sql = `SELECT * FROM \`${tableName}\` LIMIT 500`;
     const tabId = createTab(tableName, { editorVisible: false, database: db, table: tableName });
     updateSql(tabId, sql);

@@ -20,6 +20,9 @@ const ERDiagramView = lazy(() => import('@/components/er-diagram/ERDiagramView')
 const DashboardView = lazy(() => import('@/components/dashboard/DashboardView').then(m => ({ default: m.DashboardView })));
 const HealthDashboard = lazy(() => import('@/components/health/HealthDashboard').then(m => ({ default: m.HealthDashboard })));
 const ExplainView = lazy(() => import('@/components/profiler/ExplainView').then(m => ({ default: m.ExplainView })));
+const QueryBuilderView = lazy(() => import('@/components/query-builder/QueryBuilderView').then(m => ({ default: m.QueryBuilderView })));
+const SchemaMigrationView = lazy(() => import('@/components/migration/SchemaMigrationView').then(m => ({ default: m.SchemaMigrationView })));
+const AlertManager = lazy(() => import('@/components/alerts/AlertManager').then(m => ({ default: m.AlertManager })));
 
 const LazyFallback = () => <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">Loading...</div>;
 
@@ -102,7 +105,31 @@ export function PanelLayout() {
           </div>
         )}
 
-        {activeTab && !['er-diagram', 'dashboard', 'health', 'explain'].includes(activeTab.viewMode) && (
+        {activeTab && activeTab.viewMode === 'query-builder' && (
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <Suspense fallback={<LazyFallback />}>
+              <QueryBuilderView />
+            </Suspense>
+          </div>
+        )}
+
+        {activeTab && activeTab.viewMode === 'migration' && (
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <Suspense fallback={<LazyFallback />}>
+              <SchemaMigrationView />
+            </Suspense>
+          </div>
+        )}
+
+        {activeTab && activeTab.viewMode === 'alerts' && (
+          <div className="flex flex-1 flex-col overflow-hidden">
+            <Suspense fallback={<LazyFallback />}>
+              <AlertManager />
+            </Suspense>
+          </div>
+        )}
+
+        {activeTab && !['er-diagram', 'dashboard', 'health', 'explain', 'query-builder', 'migration', 'alerts'].includes(activeTab.viewMode) && (
           <div className="flex flex-1 flex-col overflow-hidden">
             {activeTab.editorVisible ? (
               <>

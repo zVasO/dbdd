@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button';
-import { X, Plus, GitBranch, LayoutDashboard, Activity, Search, Code2 } from 'lucide-react';
+import { X, Plus, GitBranch, LayoutDashboard, Activity, Search, Code2, Workflow, ArrowLeftRight, Bell } from 'lucide-react';
 import type { QueryTab } from '@/stores/queryStore';
 
 function TabIcon({ viewMode }: { viewMode: string }) {
@@ -8,6 +8,9 @@ function TabIcon({ viewMode }: { viewMode: string }) {
     case 'dashboard': return <LayoutDashboard className="size-3 text-muted-foreground" />;
     case 'health': return <Activity className="size-3 text-muted-foreground" />;
     case 'explain': return <Search className="size-3 text-muted-foreground" />;
+    case 'query-builder': return <Workflow className="size-3 text-muted-foreground" />;
+    case 'migration': return <ArrowLeftRight className="size-3 text-muted-foreground" />;
+    case 'alerts': return <Bell className="size-3 text-muted-foreground" />;
     default: return <Code2 className="size-3 text-muted-foreground" />;
   }
 }
@@ -37,6 +40,12 @@ export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTa
                 : 'text-muted-foreground hover:text-foreground'
             }`}
             onClick={() => onSelectTab(tab.id)}
+            onMouseDown={(e) => {
+              if (e.button === 1) {
+                e.preventDefault();
+                onCloseTab(tab.id);
+              }
+            }}
           >
             <TabIcon viewMode={tab.viewMode} />
             <span className="max-w-[120px] truncate">{tab.title}</span>
