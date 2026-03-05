@@ -3,6 +3,7 @@ import { format as formatSql } from 'sql-formatter';
 import { usePreferencesStore } from '@/stores/preferencesStore';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { useShortcutStore } from '@/stores/shortcutStore';
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 
@@ -30,6 +31,10 @@ const SQL_KEYWORDS = [
   'TRUE', 'FALSE', 'DEFAULT', 'CHECK', 'UNIQUE', 'CONSTRAINT',
   'IF', 'REPLACE', 'TEMPORARY', 'TEMP', 'EXPLAIN', 'ANALYZE',
   'VACUUM', 'REINDEX',
+  'SHOW', 'DESCRIBE', 'USE', 'MODIFY', 'ADD', 'COLUMN', 'RENAME',
+  'INTERVAL', 'ANY', 'SOME', 'ESCAPE', 'EXCEPT', 'INTERSECT',
+  'LATERAL', 'GROUPING', 'CUBE', 'ROLLUP', 'LOCK', 'UNLOCK',
+  'FORCE', 'IGNORE', 'STRAIGHT_JOIN', 'DUPLICATE',
 ];
 
 // Common SQL functions
@@ -73,6 +78,38 @@ const SQL_FUNCTIONS: { label: string; detail: string; insertText: string }[] = [
   { label: 'LEAD', detail: 'Window: next row', insertText: 'LEAD(${1:column}) OVER (${2:ORDER BY id})' },
   // Conditional
   { label: 'IFNULL', detail: 'Return alternative if null', insertText: 'IFNULL(${1:column}, ${2:default})' },
+  { label: 'IF', detail: 'Conditional: if/then/else (MySQL)', insertText: 'IF(${1:condition}, ${2:true_val}, ${3:false_val})' },
+  // String (additional)
+  { label: 'LEFT', detail: 'String: leftmost characters', insertText: 'LEFT(${1:str}, ${2:len})' },
+  { label: 'RIGHT', detail: 'String: rightmost characters', insertText: 'RIGHT(${1:str}, ${2:len})' },
+  { label: 'LPAD', detail: 'String: pad left', insertText: "LPAD(${1:str}, ${2:len}, '${3: }')" },
+  { label: 'RPAD', detail: 'String: pad right', insertText: "RPAD(${1:str}, ${2:len}, '${3: }')" },
+  { label: 'REVERSE', detail: 'String: reverse', insertText: 'REVERSE(${1:str})' },
+  { label: 'CHAR_LENGTH', detail: 'String: character length', insertText: 'CHAR_LENGTH(${1:str})' },
+  { label: 'POSITION', detail: 'String: find position', insertText: 'POSITION(${1:substr} IN ${2:str})' },
+  // Date (additional)
+  { label: 'DATE_FORMAT', detail: 'Date: format (MySQL)', insertText: "DATE_FORMAT(${1:date}, '${2:%Y-%m-%d}')" },
+  { label: 'DATEDIFF', detail: 'Date: difference in days', insertText: 'DATEDIFF(${1:date1}, ${2:date2})' },
+  { label: 'DATE_ADD', detail: 'Date: add interval (MySQL)', insertText: 'DATE_ADD(${1:date}, INTERVAL ${2:1} ${3:DAY})' },
+  { label: 'DATE_SUB', detail: 'Date: subtract interval (MySQL)', insertText: 'DATE_SUB(${1:date}, INTERVAL ${2:1} ${3:DAY})' },
+  { label: 'YEAR', detail: 'Date: extract year', insertText: 'YEAR(${1:date})' },
+  { label: 'MONTH', detail: 'Date: extract month', insertText: 'MONTH(${1:date})' },
+  { label: 'DAY', detail: 'Date: extract day', insertText: 'DAY(${1:date})' },
+  // JSON
+  { label: 'JSON_EXTRACT', detail: 'JSON: extract value', insertText: "JSON_EXTRACT(${1:column}, '${2:\\$.key}')" },
+  { label: 'JSON_OBJECT', detail: 'JSON: create object', insertText: "JSON_OBJECT('${1:key}', ${2:value})" },
+  { label: 'JSON_ARRAY', detail: 'JSON: create array', insertText: 'JSON_ARRAY(${1:values})' },
+  { label: 'JSON_ARRAYAGG', detail: 'JSON: aggregate into array', insertText: 'JSON_ARRAYAGG(${1:column})' },
+  // Window (additional)
+  { label: 'NTILE', detail: 'Window: distribute into buckets', insertText: 'NTILE(${1:4}) OVER (${2:ORDER BY id})' },
+  { label: 'FIRST_VALUE', detail: 'Window: first value in frame', insertText: 'FIRST_VALUE(${1:column}) OVER (${2:ORDER BY id})' },
+  { label: 'LAST_VALUE', detail: 'Window: last value in frame', insertText: 'LAST_VALUE(${1:column}) OVER (${2:ORDER BY id})' },
+  { label: 'NTH_VALUE', detail: 'Window: nth value in frame', insertText: 'NTH_VALUE(${1:column}, ${2:n}) OVER (${3:ORDER BY id})' },
+  // Misc
+  { label: 'GREATEST', detail: 'Return greatest value', insertText: 'GREATEST(${1:a}, ${2:b})' },
+  { label: 'LEAST', detail: 'Return smallest value', insertText: 'LEAST(${1:a}, ${2:b})' },
+  { label: 'ISNULL', detail: 'Check if null (MySQL)', insertText: 'ISNULL(${1:column})' },
+  { label: 'CONVERT', detail: 'Convert type (MySQL)', insertText: 'CONVERT(${1:expr}, ${2:type})' },
 ];
 
 // Data type suggestions
@@ -110,6 +147,26 @@ function parseAliases(sql: string): Record<string, string> {
   return aliases;
 }
 
+/**
+ * Parse table references from SQL text.
+ * Returns a map of table_name (lowercase) -> prefix to use (alias if set, else table name).
+ */
+function parseTablePrefixes(sql: string): Record<string, string> {
+  const refs: Record<string, string> = {};
+  const pattern = /(?:FROM|JOIN)\s+(\w+)(?:\s+(?:AS\s+)?(\w+))?/gi;
+  let match;
+  while ((match = pattern.exec(sql)) !== null) {
+    const table = match[1];
+    const alias = match[2];
+    if (alias && !KEYWORD_SET.has(alias.toUpperCase())) {
+      refs[table.toLowerCase()] = alias;
+    } else {
+      refs[table.toLowerCase()] = table;
+    }
+  }
+  return refs;
+}
+
 // Track if we already registered a provider (global — Monaco providers are global per language)
 let completionProviderRegistered = false;
 
@@ -133,15 +190,35 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
       editorRef.current = editor;
       monacoRef.current = monaco;
 
-      // Ctrl/Cmd + Enter — execute query
+      // Helper: convert ShortcutBinding → Monaco keybinding number
+      const toMonacoKeybinding = (id: string) => {
+        const binding = useShortcutStore.getState().getBinding(id);
+        let kb = 0;
+        for (const mod of binding.modifiers) {
+          if (mod === 'ctrl') kb |= monaco.KeyMod.CtrlCmd;
+          if (mod === 'shift') kb |= monaco.KeyMod.Shift;
+          if (mod === 'alt') kb |= monaco.KeyMod.Alt;
+          if (mod === 'meta') kb |= monaco.KeyMod.WinCtrl;
+        }
+        // Map key string to Monaco KeyCode
+        const keyMap: Record<string, number> = {
+          enter: monaco.KeyCode.Enter,
+          '/': monaco.KeyCode.Slash,
+          i: monaco.KeyCode.KeyI,
+        };
+        kb |= keyMap[binding.key.toLowerCase()] ?? 0;
+        return kb;
+      };
+
+      // Execute query
       editor.addCommand(
-        monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
+        toMonacoKeybinding('editor.execute'),
         () => onExecuteRef.current(),
       );
 
-      // Ctrl/Cmd + I — format SQL
+      // Format SQL
       editor.addCommand(
-        monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyI,
+        toMonacoKeybinding('editor.format'),
         () => {
           const model = editor.getModel();
           if (!model) return;
@@ -160,9 +237,9 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
         },
       );
 
-      // Ctrl/Cmd + / — toggle line comment
+      // Toggle line comment
       editor.addCommand(
-        monaco.KeyMod.CtrlCmd | monaco.KeyCode.Slash,
+        toMonacoKeybinding('editor.toggleComment'),
         () => {
           editor.trigger('keyboard', 'editor.action.commentLine', null);
         },
@@ -256,19 +333,24 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
               });
             }
 
-            // Columns from loaded structures (high priority)
+            // Columns from loaded structures — prefixed with alias or table name
+            const tablePrefixes = parseTablePrefixes(fullText);
             const seenCols = new Set<string>();
             for (const col of allColumns) {
               const key = `${col.name}__${col.table}`;
               if (seenCols.has(key)) continue;
               seenCols.add(key);
+              const prefix = tablePrefixes[col.table.toLowerCase()] || col.table;
+              const qualified = `${prefix}.${col.name}`;
+              const isReferenced = col.table.toLowerCase() in tablePrefixes;
               suggestions.push({
-                label: col.name,
+                label: qualified,
                 kind: monaco.languages.CompletionItemKind.Field,
                 detail: `${col.type} — ${col.table}`,
-                insertText: col.name,
+                insertText: qualified,
+                filterText: col.name,
                 range,
-                sortText: `0_${col.name}`,
+                sortText: isReferenced ? `0a_${col.name}` : `0b_${col.name}`,
               });
             }
 
