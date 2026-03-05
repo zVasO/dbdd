@@ -13,7 +13,7 @@ interface Props {
 export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTab }: Props) {
   return (
     <div
-      className="flex items-center border-b border-border bg-muted"
+      className="flex items-center overflow-x-auto border-b border-border bg-muted"
       style={{ height: 'var(--tab-height)' }}
     >
       {tabs.map((tab) => {

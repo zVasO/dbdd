@@ -13,6 +13,7 @@ import { ActivityBar } from './ActivityBar';
 import { CommandPalette } from './CommandPalette';
 import { OpenAnything } from './OpenAnything';
 import { PreferencesDialog } from './PreferencesDialog';
+import { CsvImportDialog } from '@/components/editor/CsvImportDialog';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 
 export function AppLayout() {
@@ -27,6 +28,7 @@ export function AppLayout() {
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
 
   const [prefsOpen, setPrefsOpen] = useState(false);
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
   const isDragging = useRef(false);
 
   useEffect(() => {
@@ -184,9 +186,10 @@ export function AppLayout() {
         dbType={activeConfig?.db_type}
         onDisconnect={disconnect}
       />
-      <CommandPalette onOpenPreferences={() => setPrefsOpen(true)} />
+      <CommandPalette onOpenPreferences={() => setPrefsOpen(true)} onOpenCsvImport={() => setCsvImportOpen(true)} />
       <OpenAnything />
       <PreferencesDialog open={prefsOpen} onOpenChange={setPrefsOpen} />
+      <CsvImportDialog open={csvImportOpen} onOpenChange={setCsvImportOpen} />
     </div>
   );
 }

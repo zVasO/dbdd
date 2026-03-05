@@ -5,15 +5,19 @@ import { EditorTabs } from '@/components/editor/EditorTabs';
 import { SqlEditor } from '@/components/editor/SqlEditor';
 import { EditorToolbar } from '@/components/editor/EditorToolbar';
 import { DataGrid } from '@/components/grid/DataGrid';
+import { TableStructureView } from '@/components/grid/TableStructureView';
 import { FilterBar } from '@/components/grid/FilterBar';
 import { ColumnFilter } from '@/components/grid/ColumnFilter';
 import { CodePreview } from '@/components/editor/CodePreview';
 import { Button } from '@/components/ui/button';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { cn } from '@/lib/utils';
+import { Table2, Columns3 } from 'lucide-react';
 import type { QueryResult } from '@/lib/types';
+import type { TabViewMode } from '@/stores/queryStore';
 
 export function PanelLayout() {
-  const { tabs, activeTabId, updateSql, executeQuery, createTab, closeTab, setActiveTab, setEditorVisible } = useQueryStore();
+  const { tabs, activeTabId, updateSql, executeQuery, createTab, closeTab, setActiveTab, setEditorVisible, setViewMode, setActiveResult } = useQueryStore();
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
@@ -50,7 +54,7 @@ export function PanelLayout() {
 
   return (
     <>
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <EditorTabs
           tabs={tabs}
           activeTabId={activeTabId}
@@ -84,6 +88,27 @@ export function PanelLayout() {
                     />
                   </div>
                   <div className="flex-1 flex flex-col overflow-hidden border-t border-border">
+                    {activeTab.results.length > 1 && (
+                      <div className="flex items-center gap-0.5 border-b border-border bg-muted/50 px-2 py-0.5">
+                        {activeTab.results.map((r, i) => (
+                          <button
+                            key={i}
+                            onClick={() => setActiveResult(activeTab.id, i)}
+                            className={cn(
+                              'rounded px-2 py-0.5 text-[10px] font-medium transition-colors',
+                              i === activeTab.activeResultIndex
+                                ? 'bg-primary/10 text-primary'
+                                : 'text-muted-foreground hover:text-foreground',
+                            )}
+                          >
+                            Result {i + 1}
+                            <span className="ml-1 text-muted-foreground">
+                              ({r.rows.length} rows)
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     {activeTab.result && (
                       <FilterBar
                         columns={activeTab.result.columns}
@@ -98,7 +123,7 @@ export function PanelLayout() {
               </>
             ) : (
               <>
-                {/* Editor hidden -- show toolbar with Create Query button */}
+                {/* Editor hidden -- show toolbar with Create Query + view toggle */}
                 <div
                   className="flex items-center gap-2 border-b border-border bg-muted px-3"
                   style={{ height: 'var(--toolbar-height)' }}
@@ -106,21 +131,59 @@ export function PanelLayout() {
                   <Button onClick={handleCreateQuery} size="xs">
                     Create Query
                   </Button>
+                  {activeTab.table && (
+                    <div className="ml-2 flex items-center rounded-md border border-border bg-background p-0.5">
+                      <button
+                        onClick={() => setViewMode(activeTab.id, 'data')}
+                        className={cn(
+                          'flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors',
+                          activeTab.viewMode === 'data'
+                            ? 'bg-primary/10 text-primary font-medium'
+                            : 'text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        <Table2 className="h-3 w-3" />
+                        Data
+                      </button>
+                      <button
+                        onClick={() => setViewMode(activeTab.id, 'structure')}
+                        className={cn(
+                          'flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors',
+                          activeTab.viewMode === 'structure'
+                            ? 'bg-primary/10 text-primary font-medium'
+                            : 'text-muted-foreground hover:text-foreground',
+                        )}
+                      >
+                        <Columns3 className="h-3 w-3" />
+                        Structure
+                      </button>
+                    </div>
+                  )}
                   {activeTab.isExecuting && (
                     <span className="text-xs text-muted-foreground">
                       Executing...
                     </span>
                   )}
                 </div>
-                {activeTab.result && (
-                  <FilterBar
-                    columns={activeTab.result.columns}
-                    onApply={handleFilterApply}
-                  />
+                {activeTab.viewMode === 'structure' && activeTab.database && activeTab.table ? (
+                  <div className="flex-1 overflow-hidden">
+                    <ErrorBoundary>
+                      <TableStructureView database={activeTab.database} table={activeTab.table} />
+                    </ErrorBoundary>
+                  </div>
+                ) : (
+                  <>
+                    {activeTab.result && (
+                      <FilterBar
+                        columns={activeTab.result.columns}
+                        onApply={handleFilterApply}
+                      />
+                    )}
+                    <div className="flex-1 overflow-hidden">
+                      {renderResult(activeTab)}
+                    </div>
+                  </>
                 )}
-                <div className="flex-1 overflow-hidden">
-                  {renderResult(activeTab)}
-                </div>
               </>
             )}
           </div>

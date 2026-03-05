@@ -49,6 +49,7 @@ pub fn run() {
             commands::connection::test_connection,
             commands::connection::list_saved_connections,
             commands::connection::delete_saved_connection,
+            commands::connection::ping_connection,
             commands::query::execute_query,
             commands::query::cancel_query,
             commands::query::get_query_history,
@@ -57,6 +58,9 @@ pub fn run() {
             commands::schema::list_schemas,
             commands::schema::list_tables,
             commands::schema::get_table_structure,
+            commands::files::open_sql_file,
+            commands::files::save_sql_file,
+            commands::files::import_csv_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

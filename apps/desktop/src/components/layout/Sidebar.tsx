@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useQueryStore } from '@/stores/queryStore';
@@ -37,8 +37,12 @@ import {
   Loader2,
   Search,
   Terminal,
+  Trash2,
+  Eraser,
+  Pencil,
   X,
 } from 'lucide-react';
+import { ipc } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
 import type { TableInfo, ColumnInfo } from '@/lib/types';
 
@@ -108,10 +112,44 @@ export function Sidebar() {
     );
   };
 
+  const handleTruncateTable = async (db: string, tableName: string) => {
+    if (!activeConnectionId) return;
+    if (!window.confirm(`Truncate table "${tableName}"? This will delete all rows.`)) return;
+    try {
+      await ipc.executeQuery(activeConnectionId, `TRUNCATE TABLE \`${tableName}\``);
+      loadTables(activeConnectionId, db);
+    } catch (err) {
+      alert(`Failed to truncate: ${err}`);
+    }
+  };
+
+  const handleDropTable = async (db: string, tableName: string) => {
+    if (!activeConnectionId) return;
+    if (!window.confirm(`DROP TABLE "${tableName}"? This action cannot be undone!`)) return;
+    try {
+      await ipc.executeQuery(activeConnectionId, `DROP TABLE \`${tableName}\``);
+      loadTables(activeConnectionId, db);
+    } catch (err) {
+      alert(`Failed to drop: ${err}`);
+    }
+  };
+
+  const handleRenameTable = async (db: string, tableName: string) => {
+    if (!activeConnectionId) return;
+    const newName = window.prompt(`Rename table "${tableName}" to:`, tableName);
+    if (!newName || newName === tableName) return;
+    try {
+      await ipc.executeQuery(activeConnectionId, `ALTER TABLE \`${tableName}\` RENAME TO \`${newName}\``);
+      loadTables(activeConnectionId, db);
+    } catch (err) {
+      alert(`Failed to rename: ${err}`);
+    }
+  };
+
   return (
     <TooltipProvider delayDuration={400}>
       <div
-        className="flex flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
+        className="flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
         style={{ width: 'var(--sidebar-width)' }}
       >
         <div className="flex items-center justify-between border-b border-sidebar-border px-3 py-2">
@@ -125,7 +163,7 @@ export function Sidebar() {
             <Search className="h-3 w-3 shrink-0 text-muted-foreground" />
             <input
               className="flex-1 bg-transparent text-xs text-sidebar-foreground placeholder:text-muted-foreground outline-none"
-              placeholder="Search tables..."
+              placeholder="Search tables & columns..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
@@ -144,38 +182,23 @@ export function Sidebar() {
                 No databases found
               </p>
             ) : (
-              (() => {
-                const filteredDatabases = searchQuery
-                  ? databases.filter((db) => {
-                      const dbMatch = db.name.toLowerCase().includes(searchQuery.toLowerCase());
-                      const tableMatch = tables[db.name]?.some((t) =>
-                        t.name.toLowerCase().includes(searchQuery.toLowerCase())
-                      );
-                      return dbMatch || tableMatch;
-                    })
-                  : databases;
-
-                return filteredDatabases.map((db) => (
-                  <DatabaseNode
-                    key={db.name}
-                    name={db.name}
-                    sizeBytes={db.size_bytes}
-                    expanded={expandedDbs.has(db.name) || (!!searchQuery && tables[db.name]?.some((t) =>
-                      t.name.toLowerCase().includes(searchQuery.toLowerCase())
-                    ))}
-                    onToggle={() => toggleDb(db.name)}
-                    tables={tables[db.name] ?? []}
-                    expandedTables={expandedTables}
-                    structures={structures}
-                    structureLoading={structureLoading}
-                    dbName={db.name}
-                    onToggleTable={toggleTable}
-                    onTableClick={handleTableClick}
-                    onColumnClick={handleColumnClick}
-                    selectedColumn={selectedColumn}
-                  />
-                ));
-              })()
+              <SearchableTree
+                databases={databases}
+                tables={tables}
+                structures={structures}
+                structureLoading={structureLoading}
+                searchQuery={searchQuery}
+                expandedDbs={expandedDbs}
+                expandedTables={expandedTables}
+                selectedColumn={selectedColumn}
+                onToggleDb={toggleDb}
+                onToggleTable={toggleTable}
+                onTableClick={handleTableClick}
+                onColumnClick={handleColumnClick}
+                onTruncateTable={handleTruncateTable}
+                onDropTable={handleDropTable}
+                onRenameTable={handleRenameTable}
+              />
             )}
           </div>
         </ScrollArea>
@@ -240,6 +263,208 @@ function PropertyRow({ label, value, highlight }: { label: string; value: string
   );
 }
 
+// ─── Highlight match ─────────────────────────────────────────────────────────
+
+function HighlightMatch({ text, query }: { text: string; query: string }) {
+  if (!query) return <>{text}</>;
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <span className="bg-primary/25 text-primary rounded-sm">{text.slice(idx, idx + query.length)}</span>
+      {text.slice(idx + query.length)}
+    </>
+  );
+}
+
+// ─── Searchable tree ─────────────────────────────────────────────────────────
+
+interface SearchableTreeProps {
+  databases: { name: string; size_bytes: number | null }[];
+  tables: Record<string, TableInfo[]>;
+  structures: Record<string, { columns: ColumnInfo[] }>;
+  structureLoading: Record<string, boolean>;
+  searchQuery: string;
+  expandedDbs: Set<string>;
+  expandedTables: Set<string>;
+  selectedColumn: ColumnInfo | null;
+  onToggleDb: (db: string) => void;
+  onToggleTable: (db: string, table: string) => void;
+  onTableClick: (db: string, table: string) => void;
+  onColumnClick: (column: ColumnInfo) => void;
+  onTruncateTable: (db: string, table: string) => void;
+  onDropTable: (db: string, table: string) => void;
+  onRenameTable: (db: string, table: string) => void;
+}
+
+function SearchableTree({
+  databases, tables, structures, structureLoading,
+  searchQuery, expandedDbs, expandedTables, selectedColumn,
+  onToggleDb, onToggleTable, onTableClick, onColumnClick,
+  onTruncateTable, onDropTable, onRenameTable,
+}: SearchableTreeProps) {
+  const q = searchQuery.toLowerCase().trim();
+
+  // Compute which tables have matching columns (from loaded structures)
+  const tableColumnMatches = useMemo(() => {
+    if (!q) return new Set<string>();
+    const matches = new Set<string>();
+    for (const [key, structure] of Object.entries(structures)) {
+      if (structure.columns.some((col) => col.name.toLowerCase().includes(q))) {
+        matches.add(key);
+      }
+    }
+    return matches;
+  }, [q, structures]);
+
+  // ─── Search mode: flat grouped results (tables first, then columns) ────────
+  const searchResults = useMemo(() => {
+    if (!q) return null;
+
+    const matchingTables: { db: string; table: TableInfo }[] = [];
+    const matchingColumns: { db: string; tableName: string; column: ColumnInfo }[] = [];
+
+    for (const db of databases) {
+      const dbTables = tables[db.name] ?? [];
+      for (const t of dbTables) {
+        if (t.name.toLowerCase().includes(q)) {
+          matchingTables.push({ db: db.name, table: t });
+        }
+        const key = `${db.name}.${t.name}`;
+        const cols = structures[key]?.columns;
+        if (cols) {
+          for (const col of cols) {
+            if (col.name.toLowerCase().includes(q)) {
+              matchingColumns.push({ db: db.name, tableName: t.name, column: col });
+            }
+          }
+        }
+      }
+    }
+
+    return { matchingTables, matchingColumns };
+  }, [q, databases, tables, structures]);
+
+  // ─── Normal tree mode (no search) ──────────────────────────────────────────
+  const filteredData = useMemo(() => {
+    if (q) return [];
+    return databases.map((db) => ({
+      db,
+      filteredTables: tables[db.name] ?? [],
+      hasMatch: true,
+    }));
+  }, [databases, tables, q]);
+
+  // Search mode: flat grouped list
+  if (searchResults) {
+    const { matchingTables, matchingColumns } = searchResults;
+
+    if (matchingTables.length === 0 && matchingColumns.length === 0) {
+      return (
+        <p className="px-3 py-4 text-center text-xs text-muted-foreground">
+          No results for &ldquo;{searchQuery}&rdquo;
+        </p>
+      );
+    }
+
+    return (
+      <div className="space-y-1">
+        {/* Tables section */}
+        {matchingTables.length > 0 && (
+          <div>
+            <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Tables
+              <span className="ml-1 font-normal">({matchingTables.length})</span>
+            </div>
+            {matchingTables.map(({ db, table }) => {
+              const isView = table.table_type === 'View';
+              const Icon = isView ? Eye : Table2;
+              return (
+                <button
+                  key={`${db}.${table.name}`}
+                  onClick={() => onTableClick(db, table.name)}
+                  className="flex w-full items-center gap-1.5 rounded-sm px-3 py-1 text-left text-xs hover:bg-sidebar-accent"
+                >
+                  <Icon className={cn('h-3.5 w-3.5 shrink-0', isView ? 'text-accent-foreground' : 'text-muted-foreground')} />
+                  <span className="truncate text-sidebar-foreground">
+                    <HighlightMatch text={table.name} query={q} />
+                  </span>
+                  <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{db}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Columns section */}
+        {matchingColumns.length > 0 && (
+          <div>
+            <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Columns
+              <span className="ml-1 font-normal">({matchingColumns.length})</span>
+            </div>
+            {matchingColumns.map(({ db, tableName, column }) => (
+              <button
+                key={`${db}.${tableName}.${column.name}`}
+                onClick={() => onColumnClick(column)}
+                className={cn(
+                  'flex w-full items-center gap-1.5 rounded-sm px-3 py-0.5 text-left text-[11px] hover:bg-sidebar-accent',
+                  selectedColumn?.name === column.name &&
+                    selectedColumn?.ordinal_position === column.ordinal_position &&
+                    'bg-sidebar-accent',
+                )}
+              >
+                {column.is_primary_key ? (
+                  <Key className="h-3 w-3 shrink-0 text-primary" />
+                ) : (
+                  <Columns3 className="h-3 w-3 shrink-0 text-muted-foreground" />
+                )}
+                <span className="truncate italic text-muted-foreground">
+                  <HighlightMatch text={column.name} query={q} />
+                </span>
+                <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[10px] text-muted-foreground">
+                  <span>{column.data_type}</span>
+                  <span className="text-muted-foreground/50">{tableName}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Normal tree mode
+  return (
+    <>
+      {filteredData.map(({ db, filteredTables }) => (
+        <DatabaseNode
+          key={db.name}
+          name={db.name}
+          sizeBytes={db.size_bytes}
+          expanded={expandedDbs.has(db.name)}
+          onToggle={() => onToggleDb(db.name)}
+          tables={filteredTables}
+          expandedTables={expandedTables}
+          structures={structures}
+          structureLoading={structureLoading}
+          dbName={db.name}
+          onToggleTable={onToggleTable}
+          onTableClick={onTableClick}
+          onColumnClick={onColumnClick}
+          selectedColumn={selectedColumn}
+          searchQuery=""
+          tableColumnMatches={tableColumnMatches}
+          onTruncateTable={onTruncateTable}
+          onDropTable={onDropTable}
+          onRenameTable={onRenameTable}
+        />
+      ))}
+    </>
+  );
+}
+
 // ─── Database node ────────────────────────────────────────────────────────────
 
 interface DatabaseNodeProps {
@@ -256,6 +481,11 @@ interface DatabaseNodeProps {
   onTableClick: (db: string, table: string) => void;
   onColumnClick: (column: ColumnInfo) => void;
   selectedColumn: ColumnInfo | null;
+  searchQuery: string;
+  tableColumnMatches: Set<string>;
+  onTruncateTable: (db: string, table: string) => void;
+  onDropTable: (db: string, table: string) => void;
+  onRenameTable: (db: string, table: string) => void;
 }
 
 function DatabaseNode({
@@ -272,6 +502,11 @@ function DatabaseNode({
   onTableClick,
   onColumnClick,
   selectedColumn,
+  searchQuery,
+  tableColumnMatches,
+  onTruncateTable,
+  onDropTable,
+  onRenameTable,
 }: DatabaseNodeProps) {
   return (
     <Collapsible open={expanded} onOpenChange={onToggle}>
@@ -284,7 +519,9 @@ function DatabaseNode({
             )}
           />
           <Database className="h-3.5 w-3.5 shrink-0 text-primary" />
-          <span className="truncate font-medium text-sidebar-foreground">{name}</span>
+          <span className="truncate font-medium text-sidebar-foreground">
+            <HighlightMatch text={name} query={searchQuery} />
+          </span>
           {sizeBytes != null && (
             <span className="ml-auto text-[10px] text-muted-foreground">
               {formatBytes(sizeBytes)}
@@ -299,18 +536,23 @@ function DatabaseNode({
         ) : (
           tables.map((table) => {
             const key = `${dbName}.${table.name}`;
+            const hasColumnMatch = tableColumnMatches.has(key);
             return (
               <TableNode
                 key={table.name}
                 table={table}
                 dbName={dbName}
-                expanded={expandedTables.has(key)}
+                expanded={expandedTables.has(key) || (!!searchQuery && hasColumnMatch)}
                 loading={structureLoading[key] ?? false}
                 columns={structures[key]?.columns}
                 onToggle={() => onToggleTable(dbName, table.name)}
                 onClick={() => onTableClick(dbName, table.name)}
                 onColumnClick={onColumnClick}
                 selectedColumn={selectedColumn}
+                searchQuery={searchQuery}
+                onTruncate={() => onTruncateTable(dbName, table.name)}
+                onDrop={() => onDropTable(dbName, table.name)}
+                onRename={() => onRenameTable(dbName, table.name)}
               />
             );
           })
@@ -332,6 +574,10 @@ interface TableNodeProps {
   onClick: () => void;
   onColumnClick: (column: ColumnInfo) => void;
   selectedColumn: ColumnInfo | null;
+  searchQuery: string;
+  onTruncate: () => void;
+  onDrop: () => void;
+  onRename: () => void;
 }
 
 function TableNode({
@@ -343,6 +589,10 @@ function TableNode({
   onClick,
   onColumnClick,
   selectedColumn,
+  onTruncate,
+  onDrop,
+  onRename,
+  searchQuery,
 }: TableNodeProps) {
   const isView = table.table_type === 'View';
   const TableIcon = isView ? Eye : Table2;
@@ -385,7 +635,9 @@ function TableNode({
                       isView ? 'text-accent-foreground' : 'text-muted-foreground',
                     )}
                   />
-                  <span className="truncate text-sidebar-foreground">{table.name}</span>
+                  <span className="truncate text-sidebar-foreground">
+                    <HighlightMatch text={table.name} query={searchQuery} />
+                  </span>
                   {table.row_count_estimate != null && (
                     <Badge variant="secondary" className="ml-auto h-4 px-1 text-[9px]">
                       ~{table.row_count_estimate.toLocaleString()}
@@ -430,23 +682,40 @@ function TableNode({
           }}>
             <Info className="mr-2 h-3.5 w-3.5" /> Copy DESCRIBE Query
           </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem onClick={onRename}>
+            <Pencil className="mr-2 h-3.5 w-3.5" /> Rename Table
+          </ContextMenuItem>
+          <ContextMenuItem onClick={onTruncate}>
+            <Eraser className="mr-2 h-3.5 w-3.5" /> Truncate Table
+          </ContextMenuItem>
+          <ContextMenuItem onClick={onDrop} className="text-destructive focus:text-destructive">
+            <Trash2 className="mr-2 h-3.5 w-3.5" /> Drop Table
+          </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
 
       <CollapsibleContent>
         {columns && columns.length > 0 && (
           <div className="ml-10 border-l border-sidebar-border">
-            {columns.map((col) => (
-              <ColumnNode
-                key={col.name}
-                column={col}
-                selected={
-                  selectedColumn?.name === col.name &&
-                  selectedColumn?.ordinal_position === col.ordinal_position
-                }
-                onClick={() => onColumnClick(col)}
-              />
-            ))}
+            {columns.map((col) => {
+              // When searching by column name, only show matching columns
+              if (searchQuery && !table.name.toLowerCase().includes(searchQuery) && !col.name.toLowerCase().includes(searchQuery)) {
+                return null;
+              }
+              return (
+                <ColumnNode
+                  key={col.name}
+                  column={col}
+                  selected={
+                    selectedColumn?.name === col.name &&
+                    selectedColumn?.ordinal_position === col.ordinal_position
+                  }
+                  onClick={() => onColumnClick(col)}
+                  searchQuery={searchQuery}
+                />
+              );
+            })}
           </div>
         )}
       </CollapsibleContent>
@@ -460,9 +729,10 @@ interface ColumnNodeProps {
   column: ColumnInfo;
   selected: boolean;
   onClick: () => void;
+  searchQuery?: string;
 }
 
-function ColumnNode({ column, selected, onClick }: ColumnNodeProps) {
+function ColumnNode({ column, selected, onClick, searchQuery = '' }: ColumnNodeProps) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -486,7 +756,7 @@ function ColumnNode({ column, selected, onClick }: ColumnNodeProps) {
                 : 'text-muted-foreground',
             )}
           >
-            {column.name}
+            <HighlightMatch text={column.name} query={searchQuery} />
           </span>
           <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
             {column.data_type}
