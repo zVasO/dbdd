@@ -12,114 +12,85 @@ interface Props {
   onExecute: () => void;
 }
 
-// SQL keywords
+// SQL keywords (single words only — no multi-word to avoid cursor issues)
 const SQL_KEYWORDS = [
   'SELECT', 'FROM', 'WHERE', 'INSERT', 'UPDATE', 'DELETE',
   'CREATE', 'ALTER', 'DROP', 'JOIN', 'LEFT', 'RIGHT', 'INNER',
   'OUTER', 'ON', 'AND', 'OR', 'NOT', 'IN', 'LIKE', 'BETWEEN',
-  'GROUP BY', 'ORDER BY', 'HAVING', 'LIMIT', 'OFFSET', 'AS',
+  'GROUP', 'ORDER', 'BY', 'HAVING', 'LIMIT', 'OFFSET', 'AS',
   'DISTINCT', 'NULL', 'IS', 'SET', 'VALUES', 'INTO', 'TABLE',
-  'INDEX', 'VIEW', 'DATABASE', 'SCHEMA', 'PRIMARY KEY',
-  'FOREIGN KEY', 'REFERENCES', 'CASCADE', 'UNION', 'ALL',
+  'INDEX', 'VIEW', 'DATABASE', 'SCHEMA', 'PRIMARY', 'FOREIGN',
+  'KEY', 'REFERENCES', 'CASCADE', 'UNION', 'ALL',
   'EXISTS', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'ASC',
   'DESC', 'TRUNCATE', 'GRANT', 'REVOKE', 'COMMIT', 'ROLLBACK',
   'BEGIN', 'TRANSACTION', 'CROSS', 'FULL', 'NATURAL', 'USING',
   'WITH', 'RECURSIVE', 'RETURNING', 'CONFLICT', 'DO', 'NOTHING',
-  'OVER', 'PARTITION BY', 'WINDOW', 'ROWS', 'RANGE', 'UNBOUNDED',
-  'PRECEDING', 'FOLLOWING', 'CURRENT ROW', 'FETCH', 'NEXT', 'ONLY',
+  'OVER', 'PARTITION', 'WINDOW', 'ROWS', 'RANGE', 'UNBOUNDED',
+  'PRECEDING', 'FOLLOWING', 'FETCH', 'NEXT', 'ONLY',
   'TRUE', 'FALSE', 'DEFAULT', 'CHECK', 'UNIQUE', 'CONSTRAINT',
   'IF', 'REPLACE', 'TEMPORARY', 'TEMP', 'EXPLAIN', 'ANALYZE',
   'VACUUM', 'REINDEX',
 ];
 
-// Common SQL functions by category
+// Common SQL functions
 const SQL_FUNCTIONS: { label: string; detail: string; insertText: string }[] = [
   // Aggregate
-  { label: 'COUNT', detail: 'Aggregate: count rows', insertText: 'COUNT($0)' },
-  { label: 'SUM', detail: 'Aggregate: sum values', insertText: 'SUM($0)' },
-  { label: 'AVG', detail: 'Aggregate: average value', insertText: 'AVG($0)' },
-  { label: 'MIN', detail: 'Aggregate: minimum value', insertText: 'MIN($0)' },
-  { label: 'MAX', detail: 'Aggregate: maximum value', insertText: 'MAX($0)' },
-  { label: 'ARRAY_AGG', detail: 'Aggregate: collect into array', insertText: 'ARRAY_AGG($0)' },
-  { label: 'STRING_AGG', detail: 'Aggregate: concatenate strings', insertText: 'STRING_AGG($1, $0)' },
-  { label: 'GROUP_CONCAT', detail: 'Aggregate: concatenate strings (MySQL)', insertText: 'GROUP_CONCAT($0)' },
+  { label: 'COUNT', detail: 'Aggregate: count rows', insertText: 'COUNT(${1:*})' },
+  { label: 'SUM', detail: 'Aggregate: sum values', insertText: 'SUM(${1:column})' },
+  { label: 'AVG', detail: 'Aggregate: average value', insertText: 'AVG(${1:column})' },
+  { label: 'MIN', detail: 'Aggregate: minimum value', insertText: 'MIN(${1:column})' },
+  { label: 'MAX', detail: 'Aggregate: maximum value', insertText: 'MAX(${1:column})' },
+  { label: 'STRING_AGG', detail: 'Aggregate: concatenate strings', insertText: "STRING_AGG(${1:column}, '${2:,}')" },
+  { label: 'GROUP_CONCAT', detail: 'Aggregate: concatenate (MySQL)', insertText: 'GROUP_CONCAT(${1:column})' },
   // String
-  { label: 'CONCAT', detail: 'String: concatenate', insertText: 'CONCAT($0)' },
-  { label: 'SUBSTRING', detail: 'String: extract substring', insertText: 'SUBSTRING($1 FROM $2 FOR $0)' },
-  { label: 'TRIM', detail: 'String: trim whitespace', insertText: 'TRIM($0)' },
-  { label: 'UPPER', detail: 'String: to uppercase', insertText: 'UPPER($0)' },
-  { label: 'LOWER', detail: 'String: to lowercase', insertText: 'LOWER($0)' },
-  { label: 'LENGTH', detail: 'String: character count', insertText: 'LENGTH($0)' },
-  { label: 'REPLACE', detail: 'String: replace substring', insertText: 'REPLACE($1, $2, $0)' },
-  { label: 'COALESCE', detail: 'Return first non-null', insertText: 'COALESCE($0)' },
-  { label: 'NULLIF', detail: 'Return null if equal', insertText: 'NULLIF($1, $0)' },
-  { label: 'CAST', detail: 'Type cast', insertText: 'CAST($1 AS $0)' },
-  { label: 'POSITION', detail: 'String: find position', insertText: 'POSITION($1 IN $0)' },
-  { label: 'LEFT', detail: 'String: left substring', insertText: 'LEFT($1, $0)' },
-  { label: 'RIGHT', detail: 'String: right substring', insertText: 'RIGHT($1, $0)' },
-  { label: 'LPAD', detail: 'String: left-pad', insertText: 'LPAD($1, $2, $0)' },
-  { label: 'RPAD', detail: 'String: right-pad', insertText: 'RPAD($1, $2, $0)' },
+  { label: 'CONCAT', detail: 'String: concatenate', insertText: 'CONCAT(${1:a}, ${2:b})' },
+  { label: 'SUBSTRING', detail: 'String: extract substring', insertText: 'SUBSTRING(${1:str}, ${2:start}, ${3:length})' },
+  { label: 'TRIM', detail: 'String: trim whitespace', insertText: 'TRIM(${1:column})' },
+  { label: 'UPPER', detail: 'String: to uppercase', insertText: 'UPPER(${1:column})' },
+  { label: 'LOWER', detail: 'String: to lowercase', insertText: 'LOWER(${1:column})' },
+  { label: 'LENGTH', detail: 'String: character count', insertText: 'LENGTH(${1:column})' },
+  { label: 'REPLACE', detail: 'String: replace substring', insertText: "REPLACE(${1:column}, '${2:old}', '${3:new}')" },
+  { label: 'COALESCE', detail: 'Return first non-null', insertText: 'COALESCE(${1:a}, ${2:b})' },
+  { label: 'NULLIF', detail: 'Return null if equal', insertText: 'NULLIF(${1:a}, ${2:b})' },
+  { label: 'CAST', detail: 'Type cast', insertText: 'CAST(${1:expr} AS ${2:type})' },
   // Date/time
   { label: 'NOW', detail: 'Date: current timestamp', insertText: 'NOW()' },
   { label: 'CURRENT_DATE', detail: 'Date: current date', insertText: 'CURRENT_DATE' },
   { label: 'CURRENT_TIMESTAMP', detail: 'Date: current timestamp', insertText: 'CURRENT_TIMESTAMP' },
-  { label: 'DATE', detail: 'Date: extract date', insertText: 'DATE($0)' },
-  { label: 'EXTRACT', detail: 'Date: extract part', insertText: 'EXTRACT($1 FROM $0)' },
-  { label: 'DATE_TRUNC', detail: 'Date: truncate to precision', insertText: "DATE_TRUNC('$1', $0)" },
-  { label: 'AGE', detail: 'Date: interval between dates', insertText: 'AGE($0)' },
-  { label: 'DATE_ADD', detail: 'Date: add interval (MySQL)', insertText: 'DATE_ADD($1, INTERVAL $0)' },
-  { label: 'DATE_SUB', detail: 'Date: subtract interval (MySQL)', insertText: 'DATE_SUB($1, INTERVAL $0)' },
-  { label: 'DATEDIFF', detail: 'Date: difference (MySQL)', insertText: 'DATEDIFF($1, $0)' },
+  { label: 'EXTRACT', detail: 'Date: extract part', insertText: 'EXTRACT(${1:YEAR} FROM ${2:column})' },
+  { label: 'DATE_TRUNC', detail: 'Date: truncate to precision', insertText: "DATE_TRUNC('${1:day}', ${2:column})" },
   // Numeric
-  { label: 'ABS', detail: 'Math: absolute value', insertText: 'ABS($0)' },
-  { label: 'CEIL', detail: 'Math: round up', insertText: 'CEIL($0)' },
-  { label: 'FLOOR', detail: 'Math: round down', insertText: 'FLOOR($0)' },
-  { label: 'ROUND', detail: 'Math: round', insertText: 'ROUND($1, $0)' },
-  { label: 'MOD', detail: 'Math: modulo', insertText: 'MOD($1, $0)' },
-  { label: 'POWER', detail: 'Math: exponentiation', insertText: 'POWER($1, $0)' },
-  { label: 'SQRT', detail: 'Math: square root', insertText: 'SQRT($0)' },
-  { label: 'RANDOM', detail: 'Math: random number', insertText: 'RANDOM()' },
+  { label: 'ABS', detail: 'Math: absolute value', insertText: 'ABS(${1:n})' },
+  { label: 'CEIL', detail: 'Math: round up', insertText: 'CEIL(${1:n})' },
+  { label: 'FLOOR', detail: 'Math: round down', insertText: 'FLOOR(${1:n})' },
+  { label: 'ROUND', detail: 'Math: round', insertText: 'ROUND(${1:n}, ${2:2})' },
+  { label: 'SQRT', detail: 'Math: square root', insertText: 'SQRT(${1:n})' },
   // Window
-  { label: 'ROW_NUMBER', detail: 'Window: row number', insertText: 'ROW_NUMBER() OVER ($0)' },
-  { label: 'RANK', detail: 'Window: rank', insertText: 'RANK() OVER ($0)' },
-  { label: 'DENSE_RANK', detail: 'Window: dense rank', insertText: 'DENSE_RANK() OVER ($0)' },
-  { label: 'LAG', detail: 'Window: previous row', insertText: 'LAG($1) OVER ($0)' },
-  { label: 'LEAD', detail: 'Window: next row', insertText: 'LEAD($1) OVER ($0)' },
-  { label: 'FIRST_VALUE', detail: 'Window: first value', insertText: 'FIRST_VALUE($1) OVER ($0)' },
-  { label: 'LAST_VALUE', detail: 'Window: last value', insertText: 'LAST_VALUE($1) OVER ($0)' },
-  { label: 'NTILE', detail: 'Window: distribute into buckets', insertText: 'NTILE($1) OVER ($0)' },
+  { label: 'ROW_NUMBER', detail: 'Window: row number', insertText: 'ROW_NUMBER() OVER (${1:ORDER BY id})' },
+  { label: 'RANK', detail: 'Window: rank', insertText: 'RANK() OVER (${1:ORDER BY id})' },
+  { label: 'DENSE_RANK', detail: 'Window: dense rank', insertText: 'DENSE_RANK() OVER (${1:ORDER BY id})' },
+  { label: 'LAG', detail: 'Window: previous row', insertText: 'LAG(${1:column}) OVER (${2:ORDER BY id})' },
+  { label: 'LEAD', detail: 'Window: next row', insertText: 'LEAD(${1:column}) OVER (${2:ORDER BY id})' },
   // Conditional
-  { label: 'IF', detail: 'Conditional (MySQL)', insertText: 'IF($1, $2, $0)' },
-  { label: 'IIF', detail: 'Conditional (SQLite)', insertText: 'IIF($1, $2, $0)' },
-  { label: 'IFNULL', detail: 'Return alternative if null', insertText: 'IFNULL($1, $0)' },
-  // JSON
-  { label: 'JSON_EXTRACT', detail: 'JSON: extract value', insertText: "JSON_EXTRACT($1, '$0')" },
-  { label: 'JSON_ARRAY', detail: 'JSON: create array', insertText: 'JSON_ARRAY($0)' },
-  { label: 'JSON_OBJECT', detail: 'JSON: create object', insertText: 'JSON_OBJECT($0)' },
-  { label: 'JSONB_EXTRACT_PATH', detail: 'JSON: extract path (PG)', insertText: "JSONB_EXTRACT_PATH($1, '$0')" },
+  { label: 'IFNULL', detail: 'Return alternative if null', insertText: 'IFNULL(${1:column}, ${2:default})' },
 ];
 
 // Data type suggestions
 const SQL_TYPES = [
   'INT', 'INTEGER', 'BIGINT', 'SMALLINT', 'TINYINT',
   'DECIMAL', 'NUMERIC', 'FLOAT', 'DOUBLE', 'REAL',
-  'VARCHAR', 'CHAR', 'TEXT', 'NVARCHAR', 'NCHAR',
-  'DATE', 'TIME', 'TIMESTAMP', 'DATETIME', 'INTERVAL',
+  'VARCHAR', 'CHAR', 'TEXT', 'NVARCHAR',
+  'DATE', 'TIME', 'TIMESTAMP', 'DATETIME',
   'BOOLEAN', 'BOOL',
-  'BLOB', 'BYTEA', 'BINARY', 'VARBINARY',
+  'BLOB', 'BYTEA', 'BINARY',
   'JSON', 'JSONB', 'XML',
   'UUID', 'SERIAL', 'BIGSERIAL',
-  'ARRAY', 'ENUM',
 ];
 
-/**
- * Find the table name/alias before a dot at the cursor position.
- * E.g., for "SELECT u.|" returns "u", for "SELECT users.|" returns "users".
- */
-function getTableBeforeDot(textBeforeCursor: string): string | null {
-  const match = textBeforeCursor.match(/(\w+)\.\s*$/);
-  return match ? match[1] : null;
-}
+const KEYWORD_SET = new Set([
+  ...SQL_KEYWORDS,
+  'ON', 'WHERE', 'AND', 'OR', 'SET',
+]);
 
 /**
  * Parse table aliases from the SQL text.
@@ -127,40 +98,45 @@ function getTableBeforeDot(textBeforeCursor: string): string | null {
  */
 function parseAliases(sql: string): Record<string, string> {
   const aliases: Record<string, string> = {};
-  // Match: FROM/JOIN table_name alias  or  FROM/JOIN table_name AS alias
   const pattern = /(?:FROM|JOIN)\s+(\w+)(?:\s+(?:AS\s+)?(\w+))?/gi;
   let match;
   while ((match = pattern.exec(sql)) !== null) {
     const table = match[1];
     const alias = match[2];
-    if (alias && !isKeyword(alias)) {
+    if (alias && !KEYWORD_SET.has(alias.toUpperCase())) {
       aliases[alias.toLowerCase()] = table.toLowerCase();
     }
   }
   return aliases;
 }
 
-function isKeyword(word: string): boolean {
-  const upper = word.toUpperCase();
-  return SQL_KEYWORDS.includes(upper) || ['ON', 'WHERE', 'AND', 'OR', 'SET', 'LEFT', 'RIGHT', 'INNER', 'OUTER', 'CROSS', 'NATURAL', 'FULL'].includes(upper);
-}
+// Track if we already registered a provider (global — Monaco providers are global per language)
+let completionProviderRegistered = false;
 
 export function SqlEditor({ value, onChange, onExecute }: Props) {
   const editorRef = useRef<any>(null);
-  const disposablesRef = useRef<any[]>([]);
+  const monacoRef = useRef<any>(null);
+  const disposableRef = useRef<any>(null);
   const fontSize = usePreferencesStore((s) => s.editorFontSize);
   const showLineNumbers = usePreferencesStore((s) => s.editorShowLineNumbers);
   const wordWrap = usePreferencesStore((s) => s.editorWordWrap);
   const theme = usePreferencesStore((s) => s.theme);
 
+  // Keep stable refs for callbacks used inside Monaco
+  const onExecuteRef = useRef(onExecute);
+  const onChangeRef = useRef(onChange);
+  useEffect(() => { onExecuteRef.current = onExecute; }, [onExecute]);
+  useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+
   const handleMount = useCallback(
     (editor: any, monaco: any) => {
       editorRef.current = editor;
+      monacoRef.current = monaco;
 
       // Ctrl/Cmd + Enter — execute query
       editor.addCommand(
         monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
-        () => onExecute(),
+        () => onExecuteRef.current(),
       );
 
       // Ctrl/Cmd + I — format SQL
@@ -177,9 +153,9 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
               keywordCase: 'upper',
             });
             editor.setValue(formatted);
-            onChange(formatted);
+            onChangeRef.current(formatted);
           } catch {
-            // If formatting fails, do nothing
+            // formatting failed
           }
         },
       );
@@ -192,147 +168,147 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
         },
       );
 
-      // Register schema-aware autocompletion provider
-      const completionDisposable = monaco.languages.registerCompletionItemProvider('sql', {
-        triggerCharacters: ['.', ' '],
-        provideCompletionItems: (model: any, position: any) => {
-          const word = model.getWordUntilPosition(position);
-          const range = {
-            startLineNumber: position.lineNumber,
-            endLineNumber: position.lineNumber,
-            startColumn: word.startColumn,
-            endColumn: word.endColumn,
-          };
+      // Register completion provider only once globally
+      if (!completionProviderRegistered) {
+        completionProviderRegistered = true;
 
-          // Get text before cursor for context analysis
-          const textBeforeCursor = model.getValueInRange({
-            startLineNumber: 1,
-            startColumn: 1,
-            endLineNumber: position.lineNumber,
-            endColumn: position.column,
-          });
+        disposableRef.current = monaco.languages.registerCompletionItemProvider('sql', {
+          triggerCharacters: ['.'],
+          provideCompletionItems: (model: any, position: any) => {
+            const word = model.getWordUntilPosition(position);
+            const range = {
+              startLineNumber: position.lineNumber,
+              endLineNumber: position.lineNumber,
+              startColumn: word.startColumn,
+              endColumn: word.endColumn,
+            };
 
-          const fullText = model.getValue();
-          const suggestions: any[] = [];
+            // Get the character before the current word to detect dot context
+            const lineContent = model.getLineContent(position.lineNumber);
+            const charBeforeWord = lineContent[word.startColumn - 2] || '';
 
-          // Get schema data
-          const schemaState = useSchemaStore.getState();
-          const dbType = useConnectionStore.getState().activeConfig?.db_type;
+            const fullText = model.getValue();
 
-          // All table names across all databases
-          const allTables: { name: string; database: string }[] = [];
-          for (const [db, tables] of Object.entries(schemaState.tables)) {
-            for (const t of tables) {
-              allTables.push({ name: t.name, database: db });
+            // Get schema data
+            const schemaState = useSchemaStore.getState();
+
+            // Collect all tables
+            const allTables: { name: string; database: string }[] = [];
+            for (const [db, tables] of Object.entries(schemaState.tables)) {
+              for (const t of tables) {
+                allTables.push({ name: t.name, database: db });
+              }
             }
-          }
 
-          // All column info from loaded structures
-          const allColumns: { name: string; table: string; type: string }[] = [];
-          for (const structure of Object.values(schemaState.structures)) {
-            for (const col of structure.columns) {
-              allColumns.push({
-                name: col.name,
-                table: structure.table_ref.table,
-                type: col.data_type,
+            // Collect all columns from loaded structures
+            const allColumns: { name: string; table: string; type: string }[] = [];
+            for (const structure of Object.values(schemaState.structures)) {
+              for (const col of structure.columns) {
+                allColumns.push({
+                  name: col.name,
+                  table: structure.table_ref.table,
+                  type: col.data_type,
+                });
+              }
+            }
+
+            // === DOT COMPLETION: table.column ===
+            if (charBeforeWord === '.') {
+              // Find the word before the dot
+              const textBeforeDot = lineContent.substring(0, word.startColumn - 2);
+              const tableMatch = textBeforeDot.match(/(\w+)\s*$/);
+              if (tableMatch) {
+                const prefix = tableMatch[1].toLowerCase();
+                const aliases = parseAliases(fullText);
+                const resolvedTable = aliases[prefix] || prefix;
+
+                const tableColumns = allColumns.filter(
+                  (c) => c.table.toLowerCase() === resolvedTable,
+                );
+
+                if (tableColumns.length > 0) {
+                  return {
+                    suggestions: tableColumns.map((col, i) => ({
+                      label: col.name,
+                      kind: monaco.languages.CompletionItemKind.Field,
+                      detail: `${col.type} — ${col.table}`,
+                      insertText: col.name,
+                      range,
+                      sortText: String(i).padStart(4, '0'),
+                    })),
+                  };
+                }
+              }
+            }
+
+            // === GENERAL COMPLETION ===
+            const suggestions: any[] = [];
+
+            // Tables (high priority)
+            for (const t of allTables) {
+              suggestions.push({
+                label: t.name,
+                kind: monaco.languages.CompletionItemKind.Struct,
+                detail: `Table — ${t.database}`,
+                insertText: t.name,
+                range,
+                sortText: `0_${t.name}`,
               });
             }
-          }
 
-          // Check if we're after a dot (table.column completion)
-          const tablePrefix = getTableBeforeDot(textBeforeCursor);
-          if (tablePrefix) {
-            const aliases = parseAliases(fullText);
-            const resolvedTable = aliases[tablePrefix.toLowerCase()] || tablePrefix.toLowerCase();
-
-            // Find columns for this table
-            const tableColumns = allColumns.filter(
-              (c) => c.table.toLowerCase() === resolvedTable,
-            );
-
-            if (tableColumns.length > 0) {
-              // Dot-triggered: only return columns for this table
-              return {
-                suggestions: tableColumns.map((col, i) => ({
-                  label: col.name,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  detail: `${col.type} — ${col.table}`,
-                  insertText: col.name,
-                  range,
-                  sortText: String(i).padStart(4, '0'),
-                })),
-              };
+            // Columns from loaded structures (high priority)
+            const seenCols = new Set<string>();
+            for (const col of allColumns) {
+              const key = `${col.name}__${col.table}`;
+              if (seenCols.has(key)) continue;
+              seenCols.add(key);
+              suggestions.push({
+                label: col.name,
+                kind: monaco.languages.CompletionItemKind.Field,
+                detail: `${col.type} — ${col.table}`,
+                insertText: col.name,
+                range,
+                sortText: `0_${col.name}`,
+              });
             }
-          }
 
-          // === Keywords ===
-          for (const kw of SQL_KEYWORDS) {
-            suggestions.push({
-              label: kw,
-              kind: monaco.languages.CompletionItemKind.Keyword,
-              insertText: kw,
-              range,
-              sortText: `2_${kw}`,
-            });
-          }
+            // Keywords
+            for (const kw of SQL_KEYWORDS) {
+              suggestions.push({
+                label: kw,
+                kind: monaco.languages.CompletionItemKind.Keyword,
+                insertText: kw,
+                range,
+                sortText: `2_${kw}`,
+              });
+            }
 
-          // === Functions (with snippet support) ===
-          for (const fn of SQL_FUNCTIONS) {
-            suggestions.push({
-              label: fn.label,
-              kind: monaco.languages.CompletionItemKind.Function,
-              detail: fn.detail,
-              insertText: fn.insertText,
-              insertTextRules: fn.insertText.includes('$')
-                ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
-                : undefined,
-              range,
-              sortText: `3_${fn.label}`,
-            });
-          }
+            // Functions (with snippets)
+            for (const fn of SQL_FUNCTIONS) {
+              suggestions.push({
+                label: fn.label,
+                kind: monaco.languages.CompletionItemKind.Function,
+                detail: fn.detail,
+                insertText: fn.insertText,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                range,
+                sortText: `3_${fn.label}`,
+              });
+            }
 
-          // === Tables ===
-          for (const t of allTables) {
-            suggestions.push({
-              label: t.name,
-              kind: monaco.languages.CompletionItemKind.Struct,
-              detail: `Table — ${t.database}`,
-              insertText: t.name,
-              range,
-              sortText: `1_${t.name}`,
-            });
-          }
+            // Databases
+            for (const db of schemaState.databases) {
+              suggestions.push({
+                label: db.name,
+                kind: monaco.languages.CompletionItemKind.Module,
+                detail: 'Database',
+                insertText: db.name,
+                range,
+                sortText: `4_${db.name}`,
+              });
+            }
 
-          // === Databases ===
-          for (const db of schemaState.databases) {
-            suggestions.push({
-              label: db.name,
-              kind: monaco.languages.CompletionItemKind.Module,
-              detail: 'Database',
-              insertText: db.name,
-              range,
-              sortText: `4_${db.name}`,
-            });
-          }
-
-          // === Columns (all, when not after a dot) ===
-          const seen = new Set<string>();
-          for (const col of allColumns) {
-            if (seen.has(col.name)) continue;
-            seen.add(col.name);
-            suggestions.push({
-              label: col.name,
-              kind: monaco.languages.CompletionItemKind.Field,
-              detail: `${col.type} — ${col.table}`,
-              insertText: col.name,
-              range,
-              sortText: `1_${col.name}`,
-            });
-          }
-
-          // === Data types (after CREATE, ALTER, CAST, AS) ===
-          const lastKeyword = textBeforeCursor.match(/\b(CREATE|ALTER|CAST|AS|RETURNS)\s+\w*$/i);
-          if (lastKeyword) {
+            // Data types
             for (const t of SQL_TYPES) {
               suggestions.push({
                 label: t,
@@ -340,27 +316,26 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
                 detail: 'Data type',
                 insertText: t,
                 range,
-                sortText: `0_${t}`,
+                sortText: `5_${t}`,
               });
             }
-          }
 
-          return { suggestions };
-        },
-      });
-
-      disposablesRef.current.push(completionDisposable);
+            return { suggestions };
+          },
+        });
+      }
     },
-    [onExecute, onChange],
+    [], // No deps — uses refs for callbacks
   );
 
-  // Cleanup completion provider on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      for (const d of disposablesRef.current) {
-        d.dispose();
+      if (disposableRef.current) {
+        disposableRef.current.dispose();
+        disposableRef.current = null;
+        completionProviderRegistered = false;
       }
-      disposablesRef.current = [];
     };
   }, []);
 
@@ -379,14 +354,14 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
           keywordCase: 'upper',
         });
         editor.setValue(formatted);
-        onChange(formatted);
+        onChangeRef.current(formatted);
       } catch {
-        // If formatting fails, do nothing
+        // formatting failed
       }
     };
     document.addEventListener('dataforge:format', handler);
     return () => document.removeEventListener('dataforge:format', handler);
-  }, [onChange]);
+  }, []);
 
   return (
     <Suspense
@@ -419,7 +394,7 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
           quickSuggestions: true,
           snippetSuggestions: 'inline',
           suggest: {
-            showKeywords: false, // We provide our own
+            showKeywords: false,
             insertMode: 'replace',
           },
         }}
