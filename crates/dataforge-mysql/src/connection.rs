@@ -47,15 +47,16 @@ impl DatabaseConnection for MySqlConnection {
             first_row
                 .columns_ref()
                 .iter()
-                .map(|col| ColumnMeta {
-                    name: col.name_str().to_string(),
-                    data_type: crate::type_mapping::map_mysql_type(
-                        &format!("{:?}", col.column_type()),
-                    ),
-                    native_type: format!("{:?}", col.column_type()),
-                    nullable: true,
-                    is_primary_key: false,
-                    max_length: None,
+                .map(|col| {
+                    let (data_type, native_type) = crate::type_mapping::map_column_meta(col);
+                    ColumnMeta {
+                        name: col.name_str().to_string(),
+                        data_type,
+                        native_type,
+                        nullable: true,
+                        is_primary_key: false,
+                        max_length: None,
+                    }
                 })
                 .collect()
         } else {

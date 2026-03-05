@@ -1,11 +1,16 @@
 import { useState } from 'react';
 import { useConnectionStore } from '@/stores/connectionStore';
-import type { ConnectionConfig, DatabaseType } from '@/lib/types';
+import type { ConnectionConfig, DatabaseType, SslMode, SshTunnelConfig, SshAuthMethod } from '@/lib/types';
 import { parseConnectionUrl } from '@/lib/connectionUrl';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from '@/components/ui/collapsible';
 import {
   Select,
   SelectTrigger,
@@ -13,7 +18,7 @@ import {
   SelectContent,
   SelectItem,
 } from '@/components/ui/select';
-import { X } from 'lucide-react';
+import { X, ChevronRight, Shield, Globe } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const COLORS = [
@@ -46,6 +51,17 @@ export function ConnectionForm({ onCancel }: Props) {
   const [environment, setEnvironment] = useState<ConnectionConfig['environment']>(null);
 
   const [urlInput, setUrlInput] = useState('');
+  const [sslMode, setSslMode] = useState<SslMode>('disable');
+  const [sshEnabled, setSshEnabled] = useState(false);
+  const [sshForm, setSshForm] = useState({
+    host: '',
+    port: 22,
+    username: '',
+    authMethod: 'Password' as 'Password' | 'PrivateKey' | 'Agent',
+    keyPath: '',
+    sshPassword: '',
+  });
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [form, setForm] = useState({
     name: '',
@@ -94,6 +110,24 @@ export function ConnectionForm({ onCancel }: Props) {
     }
   };
 
+  const buildSshTunnel = (): SshTunnelConfig | null => {
+    if (!sshEnabled) return null;
+    let auth_method: SshAuthMethod;
+    if (sshForm.authMethod === 'PrivateKey') {
+      auth_method = { type: 'PrivateKey', key_path: sshForm.keyPath };
+    } else if (sshForm.authMethod === 'Agent') {
+      auth_method = { type: 'Agent' };
+    } else {
+      auth_method = { type: 'Password' };
+    }
+    return {
+      host: sshForm.host,
+      port: sshForm.port,
+      username: sshForm.username,
+      auth_method,
+    };
+  };
+
   const buildConfig = (): ConnectionConfig => ({
     id: crypto.randomUUID(),
     name: form.name,
@@ -102,8 +136,8 @@ export function ConnectionForm({ onCancel }: Props) {
     port: form.port,
     username: form.username,
     database: form.database || null,
-    ssl_mode: 'disable',
-    ssh_tunnel: null,
+    ssl_mode: sslMode,
+    ssh_tunnel: buildSshTunnel(),
     color: color,
     environment: environment,
     pool_size: null,
@@ -133,7 +167,7 @@ export function ConnectionForm({ onCancel }: Props) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="space-y-1.5">
-        <label className="text-xs font-medium text-muted-foreground">Import from URL</label>
+        <Label>Import from URL</Label>
         <div className="flex gap-2">
           <Input
             placeholder="postgres://user:pass@host:5432/db"
@@ -181,7 +215,7 @@ export function ConnectionForm({ onCancel }: Props) {
           </Select>
         </div>
         <div className="space-y-1.5">
-          <label className="text-xs font-medium">Color</label>
+          <Label>Color</Label>
           <div className="flex gap-1.5">
             {COLORS.map((c) => (
               <button
@@ -189,7 +223,7 @@ export function ConnectionForm({ onCancel }: Props) {
                 type="button"
                 onClick={() => setColor(c.value)}
                 className={cn(
-                  'h-5 w-5 rounded-full border-2 transition-transform hover:scale-110',
+                  'h-5 w-5 cursor-pointer rounded-full border-2 transition-transform hover:scale-110',
                   color === c.value ? 'border-foreground scale-110' : 'border-transparent'
                 )}
                 style={{ backgroundColor: c.value }}
@@ -200,7 +234,7 @@ export function ConnectionForm({ onCancel }: Props) {
               <button
                 type="button"
                 onClick={() => setColor(null)}
-                className="h-5 w-5 rounded-full border border-dashed border-muted-foreground flex items-center justify-center"
+                className="h-5 w-5 cursor-pointer rounded-full border border-dashed border-muted-foreground flex items-center justify-center"
                 title="Clear color"
               >
                 <X className="h-3 w-3 text-muted-foreground" />
@@ -209,7 +243,7 @@ export function ConnectionForm({ onCancel }: Props) {
           </div>
         </div>
         <div className="space-y-1.5">
-          <label className="text-xs font-medium">Environment</label>
+          <Label>Environment</Label>
           <div className="flex gap-1.5">
             {ENVIRONMENTS.map((env) => (
               <button
@@ -217,7 +251,7 @@ export function ConnectionForm({ onCancel }: Props) {
                 type="button"
                 onClick={() => setEnvironment(environment === env.value ? null : env.value)}
                 className={cn(
-                  'rounded-full px-2.5 py-0.5 text-[10px] font-medium transition-colors',
+                  'cursor-pointer rounded-full px-2.5 py-0.5 text-[10px] font-medium transition-colors',
                   environment === env.value
                     ? `${env.color} text-white`
                     : 'bg-muted text-muted-foreground hover:bg-muted/80'
@@ -272,6 +306,122 @@ export function ConnectionForm({ onCancel }: Props) {
           />
         </div>
       </div>
+
+      {/* Advanced: SSL & SSH */}
+      <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+        <CollapsibleTrigger className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors py-1">
+          <ChevronRight className={cn('h-3 w-3 transition-transform', advancedOpen && 'rotate-90')} />
+          Advanced Settings
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="mt-2 space-y-4 rounded-md border border-border p-3">
+            {/* SSL */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5 text-xs font-medium">
+                <Shield className="h-3 w-3" />
+                SSL / TLS
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label>SSL Mode</Label>
+                  <Select value={sslMode} onValueChange={(v) => setSslMode(v as SslMode)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="disable">Disabled</SelectItem>
+                      <SelectItem value="prefer">Prefer</SelectItem>
+                      <SelectItem value="require">Require</SelectItem>
+                      <SelectItem value="verify_ca">Verify CA</SelectItem>
+                      <SelectItem value="verify_full">Verify Full</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* SSH Tunnel */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-medium">
+                  <Globe className="h-3 w-3" />
+                  SSH Tunnel
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSshEnabled(!sshEnabled)}
+                  className={cn(
+                    'relative inline-flex h-5 w-9 items-center rounded-full transition-colors',
+                    sshEnabled ? 'bg-primary' : 'bg-muted-foreground/30'
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform',
+                      sshEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                    )}
+                  />
+                </button>
+              </div>
+              {sshEnabled && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <Label>SSH Host</Label>
+                    <Input
+                      value={sshForm.host}
+                      onChange={(e) => setSshForm((p) => ({ ...p, host: e.target.value }))}
+                      placeholder="ssh.example.com"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>SSH Port</Label>
+                    <Input
+                      type="number"
+                      value={sshForm.port}
+                      onChange={(e) => setSshForm((p) => ({ ...p, port: parseInt(e.target.value) || 22 }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>SSH Username</Label>
+                    <Input
+                      value={sshForm.username}
+                      onChange={(e) => setSshForm((p) => ({ ...p, username: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Auth Method</Label>
+                    <Select
+                      value={sshForm.authMethod}
+                      onValueChange={(v) => setSshForm((p) => ({ ...p, authMethod: v as typeof p.authMethod }))}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Password">Password</SelectItem>
+                        <SelectItem value="PrivateKey">Private Key</SelectItem>
+                        <SelectItem value="Agent">SSH Agent</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {sshForm.authMethod === 'PrivateKey' && (
+                    <div className="col-span-2 space-y-1.5">
+                      <Label>Private Key Path</Label>
+                      <Input
+                        value={sshForm.keyPath}
+                        onChange={(e) => setSshForm((p) => ({ ...p, keyPath: e.target.value }))}
+                        placeholder="~/.ssh/id_rsa"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
 
       {error && (
         <p className="text-sm text-destructive">{error}</p>

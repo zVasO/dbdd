@@ -15,6 +15,7 @@ import type { RowInsert } from '@/stores/changeStore';
 import { Button } from '@/components/ui/button';
 import { QuickLook } from './QuickLook';
 import { usePreferencesStore } from '@/stores/preferencesStore';
+import { useShortcutStore, matchesBinding } from '@/stores/shortcutStore';
 
 interface Props {
   result: QueryResult;
@@ -723,12 +724,13 @@ export function DataGrid({ result, database, table }: Props) {
   // ─── Keyboard ──────────────────────────────────────────────────────────────
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+    const { getBinding } = useShortcutStore.getState();
+    if (matchesBinding(e, getBinding('grid.copy'))) {
       e.preventDefault();
       copySelection();
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+    if (matchesBinding(e, getBinding('grid.selectAll'))) {
       e.preventDefault();
       setSelectedCells(new Set());
       setLastSelectedCellKey(null);
@@ -737,12 +739,12 @@ export function DataGrid({ result, database, table }: Props) {
       setSelectedRows(all);
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+    if (matchesBinding(e, getBinding('grid.paste'))) {
       e.preventDefault();
       handlePasteRows();
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key === 'd') {
+    if (matchesBinding(e, getBinding('grid.duplicate'))) {
       e.preventDefault();
       if (selectedRows.size === 1 && database && table) {
         handleDuplicateRow([...selectedRows][0]);
@@ -756,8 +758,8 @@ export function DataGrid({ result, database, table }: Props) {
       else setSelectedRows(new Set());
       return;
     }
-    // Space → Quick Look
-    if (e.key === ' ' && !editingCell) {
+    // Quick Look
+    if (matchesBinding(e, getBinding('grid.quickLook')) && !editingCell) {
       e.preventDefault();
       if (selectedRows.size === 1) {
         const rowIdx = [...selectedRows][0];

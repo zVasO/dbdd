@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Play, Loader2, AlertTriangle } from 'lucide-react';
+import { Play, Loader2, AlertTriangle, List, GitFork } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { ipc } from '@/lib/ipc';
 import { PlanNodeCard, type PlanNode } from '@/components/profiler/PlanNodeCard';
+import { ExplainTreeView } from '@/components/profiler/ExplainTreeView';
 import type { QueryResult, CellValue } from '@/lib/types';
 
 interface ExplainViewProps {
@@ -179,6 +180,7 @@ export function ExplainView({ query }: ExplainViewProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [executionTime, setExecutionTime] = useState<number | null>(null);
+  const [viewMode, setViewMode] = useState<'cards' | 'tree'>('tree');
 
   const runExplain = useCallback(async () => {
     if (!activeConnectionId || !activeConfig || !query.trim()) return;
@@ -262,6 +264,31 @@ export function ExplainView({ query }: ExplainViewProps) {
             {totalPlanTime.toFixed(2)}ms plan time
           </Badge>
         )}
+
+        {plan && (
+          <div className="ml-auto flex items-center rounded-md border border-border bg-background p-0.5">
+            <button
+              onClick={() => setViewMode('tree')}
+              className={cn(
+                'flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors',
+                viewMode === 'tree' ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <GitFork className="h-3 w-3" />
+              Tree
+            </button>
+            <button
+              onClick={() => setViewMode('cards')}
+              className={cn(
+                'flex items-center gap-1 rounded px-2 py-0.5 text-xs transition-colors',
+                viewMode === 'cards' ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <List className="h-3 w-3" />
+              Cards
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Content */}
@@ -287,7 +314,8 @@ export function ExplainView({ query }: ExplainViewProps) {
             </div>
           )}
 
-          {plan && <PlanNodeCard node={plan} />}
+          {plan && viewMode === 'cards' && <PlanNodeCard node={plan} />}
+          {plan && viewMode === 'tree' && <ExplainTreeView plan={plan} totalTime={totalPlanTime ?? undefined} />}
         </div>
       </ScrollArea>
     </div>

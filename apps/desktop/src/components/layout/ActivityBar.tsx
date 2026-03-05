@@ -45,7 +45,7 @@ export function ActivityBar() {
     <Collapsible open={expanded} onOpenChange={toggleExpanded}>
       {/* Collapsed summary bar -- always visible */}
       <CollapsibleTrigger asChild>
-        <button className="flex w-full items-center gap-2 border-t border-border bg-muted/50 px-3 py-1 text-[11px] text-muted-foreground hover:bg-muted/80">
+        <button className="flex w-full items-center gap-2 border-t border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground hover:bg-muted/80">
           <Terminal className="h-3 w-3 shrink-0" />
           <span className="font-medium">Activity</span>
 
@@ -95,7 +95,7 @@ export function ActivityBar() {
       {/* Expanded panel */}
       <CollapsibleContent>
         <div className="border-t border-border bg-muted/30" style={{ maxHeight: '200px' }}>
-          <div className="flex items-center justify-between border-b border-border/50 px-3 py-1">
+          <div className="flex items-center justify-between border-b border-border px-3 py-1">
             <div className="flex items-center gap-1">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mr-2">
                 Query Log
@@ -156,7 +156,7 @@ export function ActivityBar() {
                   : `No ${filter} queries`}
               </p>
             ) : (
-              <div className="divide-y divide-border/30">
+              <div className="divide-y divide-border">
                 {filteredEntries.map((entry) => (
                   <ActivityRow key={entry.id} entry={entry} />
                 ))}
