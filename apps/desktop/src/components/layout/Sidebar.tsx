@@ -46,6 +46,21 @@ import { ipc } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
 import type { TableInfo, ColumnInfo } from '@/lib/types';
 
+/** Safely convert data_type to string - backend may return objects like {Varchar: 255} */
+function formatDataType(dt: unknown): string {
+  if (typeof dt === 'string') return dt;
+  if (dt && typeof dt === 'object') {
+    const entries = Object.entries(dt as Record<string, unknown>);
+    if (entries.length === 1) {
+      const [key, val] = entries[0];
+      if (val === null || val === undefined) return key.toLowerCase();
+      return `${key.toLowerCase()}(${val})`;
+    }
+    return JSON.stringify(dt);
+  }
+  return String(dt ?? '');
+}
+
 export function Sidebar() {
   const { sidebarOpen } = useUIStore();
   const { databases, tables, structures, structureLoading, loadTables, loadTableStructure } =
@@ -231,8 +246,8 @@ function ColumnProperties({ column, onClose }: { column: ColumnInfo; onClose: ()
       <Separator />
       <div className="space-y-1.5 px-3 py-2 text-[11px]">
         <PropertyRow label="Name" value={column.name} highlight />
-        <PropertyRow label="Type" value={column.data_type} />
-        <PropertyRow label="Mapped" value={column.mapped_type} />
+        <PropertyRow label="Type" value={formatDataType(column.data_type)} />
+        <PropertyRow label="Mapped" value={formatDataType(column.mapped_type)} />
         <PropertyRow label="Nullable" value={column.nullable ? 'Yes' : 'No'} />
         <PropertyRow label="Primary Key" value={column.is_primary_key ? 'Yes' : 'No'} />
         <PropertyRow label="Position" value={String(column.ordinal_position)} />
@@ -424,7 +439,7 @@ function SearchableTree({
                   <HighlightMatch text={column.name} query={q} />
                 </span>
                 <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[10px] text-muted-foreground">
-                  <span>{column.data_type}</span>
+                  <span>{formatDataType(column.data_type)}</span>
                   <span className="text-muted-foreground/50">{tableName}</span>
                 </span>
               </button>
@@ -759,7 +774,7 @@ function ColumnNode({ column, selected, onClick, searchQuery = '' }: ColumnNodeP
             <HighlightMatch text={column.name} query={searchQuery} />
           </span>
           <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-            {column.data_type}
+            {formatDataType(column.data_type)}
           </span>
           {column.nullable && (
             <span className="text-[9px] text-muted-foreground/60">?</span>
@@ -769,7 +784,7 @@ function ColumnNode({ column, selected, onClick, searchQuery = '' }: ColumnNodeP
       <TooltipContent side="right" className="text-xs">
         <p>
           <span className="font-medium">{column.name}</span>{' '}
-          <span className="text-muted-foreground">{column.data_type}</span>
+          <span className="text-muted-foreground">{formatDataType(column.data_type)}</span>
         </p>
         <p className="text-muted-foreground">
           {column.nullable ? 'Nullable' : 'Not null'}
