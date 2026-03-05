@@ -1,6 +1,16 @@
 import { Button } from '@/components/ui/button';
-import { X, Plus } from 'lucide-react';
+import { X, Plus, GitBranch, LayoutDashboard, Activity, Search, Code2 } from 'lucide-react';
 import type { QueryTab } from '@/stores/queryStore';
+
+function TabIcon({ viewMode }: { viewMode: string }) {
+  switch (viewMode) {
+    case 'er-diagram': return <GitBranch className="size-3 text-muted-foreground" />;
+    case 'dashboard': return <LayoutDashboard className="size-3 text-muted-foreground" />;
+    case 'health': return <Activity className="size-3 text-muted-foreground" />;
+    case 'explain': return <Search className="size-3 text-muted-foreground" />;
+    default: return <Code2 className="size-3 text-muted-foreground" />;
+  }
+}
 
 interface Props {
   tabs: QueryTab[];
@@ -28,6 +38,7 @@ export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTa
             }`}
             onClick={() => onSelectTab(tab.id)}
           >
+            <TabIcon viewMode={tab.viewMode} />
             <span className="max-w-[120px] truncate">{tab.title}</span>
             {tab.isExecuting && (
               <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />

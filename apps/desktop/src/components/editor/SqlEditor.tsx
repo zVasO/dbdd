@@ -381,7 +381,7 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
         options={{
           minimap: { enabled: false },
           fontSize,
-          fontFamily: 'var(--font-mono)',
+          fontFamily: "'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
           lineNumbers: showLineNumbers ? 'on' : 'off',
           scrollBeyondLastLine: false,
           wordWrap: wordWrap ? 'on' : 'off',
@@ -395,7 +395,7 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
           snippetSuggestions: 'inline',
           suggest: {
             showKeywords: false,
-            insertMode: 'replace',
+            insertMode: 'insert',
           },
         }}
       />

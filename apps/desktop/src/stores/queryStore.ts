@@ -5,7 +5,7 @@ import { useConnectionStore } from './connectionStore';
 import { saveSession } from '../lib/sessionRecovery';
 import type { QueryResult, QueryHistoryEntry } from '../lib/types';
 
-export type TabViewMode = 'data' | 'structure';
+export type TabViewMode = 'data' | 'structure' | 'er-diagram' | 'dashboard' | 'explain' | 'diff' | 'health';
 
 export interface QueryTab {
   id: string;
