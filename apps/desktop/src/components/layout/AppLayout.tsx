@@ -72,9 +72,18 @@ export function AppLayout() {
 
   useEffect(() => {
     if (activeConnectionId) {
-      loadDatabases(activeConnectionId);
+      loadDatabases(activeConnectionId).then(() => {
+        // Auto-load tables for the configured database (or first available)
+        // so autocomplete works immediately without expanding the sidebar
+        const { databases } = useSchemaStore.getState();
+        const targetDb = activeConfig?.database
+          || databases[0]?.name;
+        if (targetDb) {
+          useSchemaStore.getState().loadTables(activeConnectionId, targetDb);
+        }
+      });
     }
-  }, [activeConnectionId, loadDatabases]);
+  }, [activeConnectionId, loadDatabases, activeConfig?.database]);
 
   // Re-render when shortcut overrides change
   const _shortcutOverrides = useShortcutStore((s) => s.overrides);
