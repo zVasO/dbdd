@@ -129,10 +129,12 @@ const KEYWORD_SET = new Set([
   'ON', 'WHERE', 'AND', 'OR', 'SET',
 ]);
 
-/**
- * Parse table aliases from the SQL text.
- * Returns a map of alias -> table name.
- */
+// --- SQL context detection & parsing helpers ---
+
+type SqlContext =
+  | 'select' | 'from' | 'condition' | 'order_group'
+  | 'set' | 'ddl' | 'after_table' | 'general';
+
 function parseAliases(sql: string): Record<string, string> {
   const aliases: Record<string, string> = {};
   const pattern = /(?:FROM|JOIN)\s+(\w+)(?:\s+(?:AS\s+)?(\w+))?/gi;
@@ -147,10 +149,6 @@ function parseAliases(sql: string): Record<string, string> {
   return aliases;
 }
 
-/**
- * Parse table references from SQL text.
- * Returns a map of table_name (lowercase) -> prefix to use (alias if set, else table name).
- */
 function parseTablePrefixes(sql: string): Record<string, string> {
   const refs: Record<string, string> = {};
   const pattern = /(?:FROM|JOIN)\s+(\w+)(?:\s+(?:AS\s+)?(\w+))?/gi;
@@ -166,6 +164,71 @@ function parseTablePrefixes(sql: string): Record<string, string> {
   }
   return refs;
 }
+
+function detectSqlContext(textBeforeCursor: string): SqlContext {
+  const cleaned = textBeforeCursor
+    .replace(/'[^']*'/g, "''")
+    .replace(/--[^\n]*/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .trimEnd();
+  const upper = cleaned.toUpperCase();
+
+  // Directly after a keyword (keyword is the last token)
+  if (/\b(?:SELECT|SELECT\s+DISTINCT)\s*$/i.test(cleaned)) return 'select';
+  if (/\b(?:FROM|JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|INNER\s+JOIN|CROSS\s+JOIN|FULL\s+(?:OUTER\s+)?JOIN|NATURAL\s+JOIN|INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s*$/i.test(cleaned)) return 'from';
+  if (/\b(?:WHERE|AND|OR|HAVING|ON|NOT)\s*$/i.test(cleaned)) return 'condition';
+  if (/\b(?:ORDER\s+BY|GROUP\s+BY)\s*$/i.test(cleaned)) return 'order_group';
+  if (/\bSET\s*$/i.test(cleaned)) return 'set';
+  if (/\b(?:CREATE|ALTER|DROP)\s*$/i.test(cleaned)) return 'ddl';
+
+  // After comma → determine which clause we're continuing
+  if (cleaned.endsWith(',')) {
+    const selectIdx = upper.lastIndexOf('SELECT');
+    const fromIdx = upper.lastIndexOf(' FROM');
+    const orderIdx = Math.max(upper.lastIndexOf('ORDER BY'), upper.lastIndexOf('ORDER  BY'));
+    const groupIdx = Math.max(upper.lastIndexOf('GROUP BY'), upper.lastIndexOf('GROUP  BY'));
+    const setIdx = upper.lastIndexOf(' SET');
+    const max = Math.max(selectIdx, fromIdx, orderIdx, groupIdx, setIdx);
+    if (max === fromIdx && fromIdx > -1) return 'from';
+    if (max === orderIdx && orderIdx > -1) return 'order_group';
+    if (max === groupIdx && groupIdx > -1) return 'order_group';
+    if (max === setIdx && setIdx > -1) return 'set';
+    if (max === selectIdx && selectIdx > -1) return 'select';
+    return 'select';
+  }
+
+  // After a table reference → suggest next clause keywords
+  if (/\b(?:FROM|JOIN)\s+\w+(?:\s+(?:AS\s+)?\w+)?\s*$/i.test(cleaned)) return 'after_table';
+
+  // After a complete condition → suggest AND/OR/clause keywords
+  if (/(?:=|<>|!=|>=|<=|>|<)\s*(?:'[^']*'|\d+|\w+(?:\.\w+)?)\s*$/i.test(cleaned)) return 'after_table';
+  if (/\b(?:IS\s+(?:NOT\s+)?NULL|LIKE\s+'[^']*'|IN\s*\([^)]*\))\s*$/i.test(cleaned)) return 'after_table';
+
+  // Start of statement
+  if (/(?:^|;\s*)$/i.test(cleaned)) return 'general';
+
+  return 'general';
+}
+
+// Clause-level keyword snippets (compound keywords)
+const CLAUSE_SNIPPETS: { label: string; insertText: string; detail: string }[] = [
+  { label: 'WHERE', insertText: 'WHERE ', detail: 'Filter rows' },
+  { label: 'AND', insertText: 'AND ', detail: 'Additional condition' },
+  { label: 'OR', insertText: 'OR ', detail: 'Alternative condition' },
+  { label: 'JOIN', insertText: 'JOIN ${1:table} ON ${2:condition}', detail: 'Inner join' },
+  { label: 'LEFT JOIN', insertText: 'LEFT JOIN ${1:table} ON ${2:condition}', detail: 'Left outer join' },
+  { label: 'RIGHT JOIN', insertText: 'RIGHT JOIN ${1:table} ON ${2:condition}', detail: 'Right outer join' },
+  { label: 'INNER JOIN', insertText: 'INNER JOIN ${1:table} ON ${2:condition}', detail: 'Inner join' },
+  { label: 'CROSS JOIN', insertText: 'CROSS JOIN ${1:table}', detail: 'Cross join' },
+  { label: 'FULL OUTER JOIN', insertText: 'FULL OUTER JOIN ${1:table} ON ${2:condition}', detail: 'Full outer join' },
+  { label: 'ORDER BY', insertText: 'ORDER BY ${1:column}', detail: 'Sort results' },
+  { label: 'GROUP BY', insertText: 'GROUP BY ${1:column}', detail: 'Group rows' },
+  { label: 'HAVING', insertText: 'HAVING ${1:condition}', detail: 'Filter groups' },
+  { label: 'LIMIT', insertText: 'LIMIT ${1:10}', detail: 'Limit rows' },
+  { label: 'OFFSET', insertText: 'OFFSET ${1:0}', detail: 'Skip rows' },
+  { label: 'UNION', insertText: 'UNION\nSELECT ', detail: 'Combine results' },
+  { label: 'UNION ALL', insertText: 'UNION ALL\nSELECT ', detail: 'Combine results (with duplicates)' },
+];
 
 // Track if we already registered a provider (global — Monaco providers are global per language)
 let completionProviderRegistered = false;
@@ -318,88 +381,162 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
               }
             }
 
-            // === GENERAL COMPLETION ===
+            // === CONTEXT-AWARE COMPLETION ===
+            const textBeforeCursor = model.getValueInRange({
+              startLineNumber: 1,
+              startColumn: 1,
+              endLineNumber: position.lineNumber,
+              endColumn: word.startColumn,
+            });
+            const context = detectSqlContext(textBeforeCursor);
             const suggestions: any[] = [];
-
-            // Tables (high priority)
-            for (const t of allTables) {
-              suggestions.push({
-                label: t.name,
-                kind: monaco.languages.CompletionItemKind.Struct,
-                detail: `Table — ${t.database}`,
-                insertText: t.name,
-                range,
-                sortText: `0_${t.name}`,
-              });
-            }
-
-            // Columns from loaded structures — prefixed with alias or table name
             const tablePrefixes = parseTablePrefixes(fullText);
-            const seenCols = new Set<string>();
-            for (const col of allColumns) {
-              const key = `${col.name}__${col.table}`;
-              if (seenCols.has(key)) continue;
-              seenCols.add(key);
-              const prefix = tablePrefixes[col.table.toLowerCase()] || col.table;
-              const qualified = `${prefix}.${col.name}`;
-              const isReferenced = col.table.toLowerCase() in tablePrefixes;
-              suggestions.push({
-                label: qualified,
-                kind: monaco.languages.CompletionItemKind.Field,
-                detail: `${col.type} — ${col.table}`,
-                insertText: qualified,
-                filterText: col.name,
-                range,
-                sortText: isReferenced ? `0a_${col.name}` : `0b_${col.name}`,
-              });
+            const hasRefs = Object.keys(tablePrefixes).length > 0;
+
+            const showColumns = context === 'select' || context === 'condition'
+              || context === 'order_group' || context === 'set' || context === 'general';
+            const showTables = context === 'from' || context === 'general';
+            const showFunctions = context === 'select' || context === 'condition' || context === 'general';
+            const showClauseSnippets = context === 'after_table' || context === 'general';
+            const showDatabases = context === 'from' || context === 'general';
+            const showTypes = context === 'ddl' || context === 'general';
+
+            // --- Columns (prefixed with alias or table name) ---
+            if (showColumns) {
+              const relevantCols = hasRefs
+                ? allColumns.filter(c => c.table.toLowerCase() in tablePrefixes)
+                : allColumns;
+              const seenCols = new Set<string>();
+              for (const col of relevantCols) {
+                const key = `${col.name}__${col.table}`;
+                if (seenCols.has(key)) continue;
+                seenCols.add(key);
+                const prefix = tablePrefixes[col.table.toLowerCase()] || col.table;
+                const qualified = `${prefix}.${col.name}`;
+                suggestions.push({
+                  label: qualified,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  detail: `${col.type} — ${col.table}`,
+                  insertText: qualified,
+                  filterText: col.name,
+                  range,
+                  sortText: '0a',
+                });
+              }
             }
 
-            // Keywords
-            for (const kw of SQL_KEYWORDS) {
-              suggestions.push({
-                label: kw,
-                kind: monaco.languages.CompletionItemKind.Keyword,
-                insertText: kw,
-                range,
-                sortText: `2_${kw}`,
-              });
+            // --- Tables ---
+            if (showTables) {
+              for (const t of allTables) {
+                suggestions.push({
+                  label: t.name,
+                  kind: monaco.languages.CompletionItemKind.Struct,
+                  detail: `Table — ${t.database}`,
+                  insertText: t.name,
+                  range,
+                  sortText: context === 'from' ? '0a' : '2a',
+                });
+              }
             }
 
-            // Functions (with snippets)
-            for (const fn of SQL_FUNCTIONS) {
-              suggestions.push({
-                label: fn.label,
-                kind: monaco.languages.CompletionItemKind.Function,
-                detail: fn.detail,
-                insertText: fn.insertText,
-                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                range,
-                sortText: `3_${fn.label}`,
-              });
+            // --- Functions ---
+            if (showFunctions) {
+              for (const fn of SQL_FUNCTIONS) {
+                suggestions.push({
+                  label: fn.label,
+                  kind: monaco.languages.CompletionItemKind.Function,
+                  detail: fn.detail,
+                  insertText: fn.insertText,
+                  insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                  range,
+                  sortText: context === 'select' ? '0b' : '1b',
+                });
+              }
             }
 
-            // Databases
-            for (const db of schemaState.databases) {
-              suggestions.push({
-                label: db.name,
-                kind: monaco.languages.CompletionItemKind.Module,
-                detail: 'Database',
-                insertText: db.name,
-                range,
-                sortText: `4_${db.name}`,
-              });
+            // --- Clause snippets (JOIN, WHERE, ORDER BY, etc.) ---
+            if (showClauseSnippets) {
+              for (const cs of CLAUSE_SNIPPETS) {
+                suggestions.push({
+                  label: cs.label,
+                  kind: monaco.languages.CompletionItemKind.Snippet,
+                  detail: cs.detail,
+                  insertText: cs.insertText,
+                  insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                  range,
+                  sortText: context === 'after_table' ? '0a' : '1a',
+                });
+              }
             }
 
-            // Data types
-            for (const t of SQL_TYPES) {
-              suggestions.push({
-                label: t,
-                kind: monaco.languages.CompletionItemKind.TypeParameter,
-                detail: 'Data type',
-                insertText: t,
-                range,
-                sortText: `5_${t}`,
-              });
+            // --- Context-specific keywords ---
+            if (context === 'select') {
+              for (const kw of ['DISTINCT', 'CASE', 'AS', '*']) {
+                suggestions.push({
+                  label: kw, kind: monaco.languages.CompletionItemKind.Keyword,
+                  insertText: kw, range, sortText: '0c',
+                });
+              }
+            }
+            if (context === 'condition') {
+              for (const kw of ['NOT', 'IN', 'LIKE', 'BETWEEN', 'EXISTS', 'IS', 'NULL', 'IS NULL', 'IS NOT NULL', 'TRUE', 'FALSE']) {
+                suggestions.push({
+                  label: kw, kind: monaco.languages.CompletionItemKind.Keyword,
+                  insertText: kw, range, sortText: '1a',
+                });
+              }
+            }
+            if (context === 'order_group') {
+              for (const kw of ['ASC', 'DESC']) {
+                suggestions.push({
+                  label: kw, kind: monaco.languages.CompletionItemKind.Keyword,
+                  insertText: kw, range, sortText: '1a',
+                });
+              }
+            }
+            if (context === 'ddl') {
+              for (const kw of ['TABLE', 'INDEX', 'VIEW', 'DATABASE', 'SCHEMA', 'COLUMN']) {
+                suggestions.push({
+                  label: kw, kind: monaco.languages.CompletionItemKind.Keyword,
+                  insertText: kw, range, sortText: '0a',
+                });
+              }
+              for (const t of SQL_TYPES) {
+                suggestions.push({
+                  label: t, kind: monaco.languages.CompletionItemKind.TypeParameter,
+                  detail: 'Data type', insertText: t, range, sortText: '1a',
+                });
+              }
+            }
+
+            // --- Databases ---
+            if (showDatabases) {
+              for (const db of schemaState.databases) {
+                suggestions.push({
+                  label: db.name,
+                  kind: monaco.languages.CompletionItemKind.Module,
+                  detail: 'Database',
+                  insertText: db.name,
+                  range,
+                  sortText: context === 'from' ? '0b' : '3a',
+                });
+              }
+            }
+
+            // --- General fallback: all keywords + types (low priority) ---
+            if (context === 'general') {
+              for (const kw of SQL_KEYWORDS) {
+                suggestions.push({
+                  label: kw, kind: monaco.languages.CompletionItemKind.Keyword,
+                  insertText: kw, range, sortText: '4a',
+                });
+              }
+              for (const t of SQL_TYPES) {
+                suggestions.push({
+                  label: t, kind: monaco.languages.CompletionItemKind.TypeParameter,
+                  detail: 'Data type', insertText: t, range, sortText: '5a',
+                });
+              }
             }
 
             return { suggestions };
