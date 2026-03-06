@@ -20,6 +20,7 @@ import { AiChatPanel } from '@/components/ai/AiChatPanel';
 import { SnippetPalette } from '@/components/snippets/SnippetPalette';
 import { useAIStore } from '@/stores/aiStore';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
+import { ConnectionDialog } from '@/components/connection/ConnectionDialog';
 import { ImportDialog } from '@/components/import-export/ImportDialog';
 import { ExportDialog } from '@/components/import-export/ExportDialog';
 import { DataGeneratorDialog } from '@/components/data-gen/DataGeneratorDialog';
@@ -44,6 +45,7 @@ export function AppLayout() {
   const [csvImportOpen, setCsvImportOpen] = useState(false);
   const [snippetPaletteOpen, setSnippetPaletteOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [connectionDialogOpen, setConnectionDialogOpen] = useState(false);
   const settingsOpen = useUIStore((s) => s.settingsOpen);
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
   const isDragging = useRef(false);
@@ -72,16 +74,23 @@ export function AppLayout() {
 
   useEffect(() => {
     if (activeConnectionId) {
+      // Clear stale schema from previous connection before loading new one
+      useSchemaStore.getState().reset();
+      useChangeStore.getState().discard();
       loadDatabases(activeConnectionId).then(() => {
-        // Auto-load tables for the configured database (or first available)
-        // so autocomplete works immediately without expanding the sidebar
-        const { databases } = useSchemaStore.getState();
+        // Auto-select the configured database (or first available)
+        const { databases, setActiveDatabase } = useSchemaStore.getState();
         const targetDb = activeConfig?.database
           || databases[0]?.name;
         if (targetDb) {
+          setActiveDatabase(targetDb);
           useSchemaStore.getState().loadTables(activeConnectionId, targetDb);
         }
       });
+    } else {
+      // No active connection — clear everything
+      useSchemaStore.getState().reset();
+      useChangeStore.getState().discard();
     }
   }, [activeConnectionId, loadDatabases, activeConfig?.database]);
 
@@ -175,7 +184,7 @@ export function AppLayout() {
   return (
     <div className="flex h-full flex-col bg-background">
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar />
+        <Sidebar onOpenConnectionDialog={() => setConnectionDialogOpen(true)} />
         {sidebarOpen && (
           <div
             className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/30 active:bg-primary/50 transition-colors"
@@ -195,8 +204,9 @@ export function AppLayout() {
         connected={!!activeConnectionId}
         dbType={activeConfig?.db_type}
         onDisconnect={disconnect}
+        onOpenConnectionDialog={() => setConnectionDialogOpen(true)}
       />
-      <CommandPalette onOpenPreferences={() => setPrefsOpen(true)} onOpenCsvImport={() => setCsvImportOpen(true)} />
+      <CommandPalette onOpenPreferences={() => setPrefsOpen(true)} onOpenCsvImport={() => setCsvImportOpen(true)} onOpenConnectionDialog={() => setConnectionDialogOpen(true)} />
       <OpenAnything />
       <PreferencesDialog open={prefsOpen} onOpenChange={setPrefsOpen} onOpenSettings={() => setSettingsOpen(true)} />
       <CsvImportDialog open={csvImportOpen} onOpenChange={setCsvImportOpen} />
@@ -218,6 +228,7 @@ export function AppLayout() {
       <ExportDialog />
       <DataGeneratorDialog />
       <ShareDialog open={shareDialogOpen} onOpenChange={setShareDialogOpen} />
+      <ConnectionDialog open={connectionDialogOpen} onOpenChange={setConnectionDialogOpen} />
       <NotesPanel />
     </div>
   );

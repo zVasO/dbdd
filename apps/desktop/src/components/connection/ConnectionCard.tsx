@@ -72,7 +72,7 @@ export function ConnectionCard({ connection }: Props) {
             <Button
               variant="default"
               size="sm"
-              onClick={() => handleConnect()}
+              onClick={(e) => { e.stopPropagation(); handleConnect(); }}
               disabled={loading}
             >
               {loading ? 'Connecting...' : 'Connect'}
@@ -81,7 +81,7 @@ export function ConnectionCard({ connection }: Props) {
               variant="ghost"
               size="sm"
               className="text-destructive hover:text-destructive-foreground hover:bg-destructive"
-              onClick={() => deleteConnection(connection.config.id)}
+              onClick={(e) => { e.stopPropagation(); deleteConnection(connection.config.id); }}
             >
               Delete
             </Button>

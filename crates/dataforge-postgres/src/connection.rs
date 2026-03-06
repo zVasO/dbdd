@@ -25,13 +25,40 @@ impl PostgresConnection {
     }
 }
 
+fn url_encode(s: &str) -> String {
+    let mut encoded = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => encoded.push(ch),
+            _ => {
+                for b in ch.to_string().as_bytes() {
+                    encoded.push_str(&format!("%{:02X}", b));
+                }
+            }
+        }
+    }
+    encoded
+}
+
 fn build_connection_url(config: &ConnectionConfig, password: Option<&str>) -> String {
-    let user = &config.username;
-    let pass = password.unwrap_or("");
+    let user = url_encode(&config.username);
+    let pass = url_encode(password.unwrap_or(""));
     let host = &config.host;
     let port = config.port;
     let db = config.database.as_deref().unwrap_or("postgres");
-    format!("postgres://{}:{}@{}:{}/{}", user, pass, host, port, db)
+
+    let sslmode = match config.ssl_mode {
+        dataforge_core::models::connection::SslMode::Disable => "disable",
+        dataforge_core::models::connection::SslMode::Prefer => "prefer",
+        dataforge_core::models::connection::SslMode::Require => "require",
+        dataforge_core::models::connection::SslMode::VerifyCa => "verify-ca",
+        dataforge_core::models::connection::SslMode::VerifyFull => "verify-full",
+    };
+
+    format!(
+        "postgres://{}:{}@{}:{}/{}?sslmode={}",
+        user, pass, host, port, db, sslmode
+    )
 }
 
 fn pg_value_to_cell(row: &PgRow, index: usize) -> CellValue {

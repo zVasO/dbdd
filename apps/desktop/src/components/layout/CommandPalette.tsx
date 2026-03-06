@@ -29,6 +29,7 @@ import {
   Database,
   TableProperties,
   Users,
+  Plug,
 } from 'lucide-react';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 import { useAIStore } from '@/stores/aiStore';
@@ -40,9 +41,10 @@ import { useShortcutStore, formatBinding } from '@/stores/shortcutStore';
 interface CommandPaletteProps {
   onOpenPreferences?: () => void;
   onOpenCsvImport?: () => void;
+  onOpenConnectionDialog?: () => void;
 }
 
-export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPaletteProps) {
+export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConnectionDialog }: CommandPaletteProps) {
   const open = useUIStore((s) => s.commandPaletteOpen);
   const setOpen = useUIStore((s) => s.setCommandPaletteOpen);
   const sc = useShortcutStore((s) => s.getBinding);
@@ -368,6 +370,14 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport }: CommandPa
               heading="Connection"
               className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground"
             >
+              {onOpenConnectionDialog && (
+                <CommandItem
+                  onSelect={() => runAndClose(() => onOpenConnectionDialog())}
+                  icon={<Plug className="h-4 w-4" />}
+                >
+                  Manage Connections
+                </CommandItem>
+              )}
               <CommandItem
                 onSelect={handleDisconnect}
                 icon={<Unplug className="h-4 w-4" />}

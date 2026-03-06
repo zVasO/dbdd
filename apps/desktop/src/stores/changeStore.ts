@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useConnectionStore } from './connectionStore';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -9,6 +10,7 @@ export type CellValue = string | number | boolean | null;
 export interface CellEdit {
   type: 'edit';
   id: string;
+  connectionId: string | null;
   table: string;
   database: string;
   rowIndex: number;
@@ -21,6 +23,7 @@ export interface CellEdit {
 export interface RowInsert {
   type: 'insert';
   id: string;
+  connectionId: string | null;
   table: string;
   database: string;
   values: Record<string, CellValue>;
@@ -29,6 +32,7 @@ export interface RowInsert {
 export interface RowDelete {
   type: 'delete';
   id: string;
+  connectionId: string | null;
   table: string;
   database: string;
   rowIndex: number;
@@ -93,7 +97,7 @@ interface ChangeState {
   safeModeLevel: SafeModeLevel;
   previewOpen: boolean;
 
-  addChange: (change: Omit<CellEdit, 'id'> | Omit<RowInsert, 'id'> | Omit<RowDelete, 'id'>) => void;
+  addChange: (change: Omit<CellEdit, 'id' | 'connectionId'> | Omit<RowInsert, 'id' | 'connectionId'> | Omit<RowDelete, 'id' | 'connectionId'>) => void;
   undo: () => void;
   redo: () => void;
   discard: () => void;
@@ -105,6 +109,8 @@ interface ChangeState {
   generateSql: () => string[];
   hasPendingChanges: () => boolean;
   pendingCount: () => number;
+  /** Get pending changes scoped to the active connection */
+  pendingForActiveConnection: () => Change[];
 }
 
 /**
@@ -133,7 +139,8 @@ export const useChangeStore = create<ChangeState>((set, get) => ({
     }
 
     const id = crypto.randomUUID();
-    const full = { ...change, id } as Change;
+    const connectionId = useConnectionStore.getState().activeConnectionId;
+    const full = { ...change, id, connectionId } as Change;
 
     set((s) => {
       const next = s.pending;
@@ -233,14 +240,20 @@ export const useChangeStore = create<ChangeState>((set, get) => ({
   },
 
   generateSql: () => {
-    return get().pending.map(generateSqlForChange);
+    return get().pendingForActiveConnection().map(generateSqlForChange);
   },
 
   hasPendingChanges: () => {
-    return get().pending.length > 0;
+    return get().pendingForActiveConnection().length > 0;
   },
 
   pendingCount: () => {
-    return get().pending.length;
+    return get().pendingForActiveConnection().length;
+  },
+
+  pendingForActiveConnection: () => {
+    const connId = useConnectionStore.getState().activeConnectionId;
+    if (!connId) return get().pending;
+    return get().pending.filter((c) => c.connectionId === connId);
   },
 }));

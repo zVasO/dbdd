@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useQueryStore } from '@/stores/queryStore';
@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/context-menu';
 import {
   ChevronRight,
+  ChevronDown,
   Copy,
   Database,
   Hash,
@@ -41,6 +42,9 @@ import {
   Eraser,
   Pencil,
   X,
+  Check,
+  Layers,
+  Plus,
 } from 'lucide-react';
 import { ipc } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
@@ -61,9 +65,13 @@ function formatDataType(dt: unknown): string {
   return String(dt ?? '');
 }
 
-export function Sidebar() {
+interface SidebarProps {
+  onOpenConnectionDialog?: () => void;
+}
+
+export function Sidebar({ onOpenConnectionDialog }: SidebarProps = {}) {
   const { sidebarOpen } = useUIStore();
-  const { databases, tables, structures, structureLoading, loadTables, loadTableStructure } =
+  const { databases, tables, structures, structureLoading, loadTables, loadTableStructure, activeDatabase, setActiveDatabase } =
     useSchemaStore();
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const activeConfig = useConnectionStore((s) => s.activeConfig);
@@ -73,8 +81,36 @@ export function Sidebar() {
   const [expandedDbs, setExpandedDbs] = useState<Set<string>>(new Set());
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set());
   const [selectedColumn, setSelectedColumn] = useState<ColumnInfo | null>(null);
+  const [dbSelectorOpen, setDbSelectorOpen] = useState(false);
+  const dbSelectorRef = useRef<HTMLDivElement>(null);
+
+  // Close DB selector on outside click
+  useEffect(() => {
+    if (!dbSelectorOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (dbSelectorRef.current && !dbSelectorRef.current.contains(e.target as Node)) {
+        setDbSelectorOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [dbSelectorOpen]);
 
   if (!sidebarOpen) return null;
+
+  const handleSelectDatabase = (dbName: string | null) => {
+    setActiveDatabase(dbName);
+    setDbSelectorOpen(false);
+    // Auto-load tables when selecting a database
+    if (dbName && activeConnectionId && !tables[dbName]) {
+      loadTables(activeConnectionId, dbName);
+    }
+  };
+
+  // Databases to show in the tree — scoped by activeDatabase
+  const visibleDatabases = activeDatabase
+    ? databases.filter((db) => db.name === activeDatabase)
+    : databases;
 
   const toggleDb = (dbName: string) => {
     setExpandedDbs((prev) => {
@@ -167,18 +203,104 @@ export function Sidebar() {
     }
   };
 
+  // Determine the active DB info for display
+  const activeDbInfo = databases.find((db) => db.name === activeDatabase);
+  const activeTables = activeDatabase ? (tables[activeDatabase] ?? []) : [];
+
   return (
     <TooltipProvider delayDuration={400}>
       <div
         className="flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
         style={{ width: 'var(--sidebar-width)' }}
       >
-        <div className="flex items-center justify-between border-b border-sidebar-border px-3 py-2">
-          <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            {activeConfig?.name || 'Explorer'}
-          </span>
+        {/* Database selector */}
+        <div className="relative border-b border-sidebar-border" ref={dbSelectorRef}>
+          <div className="flex items-center">
+          <button
+            onClick={() => setDbSelectorOpen(!dbSelectorOpen)}
+            className="flex flex-1 min-w-0 items-center gap-2 px-3 py-2 text-left hover:bg-sidebar-accent/50 transition-colors"
+          >
+            <Database className="h-3.5 w-3.5 shrink-0 text-primary" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-xs font-medium text-sidebar-foreground">
+                {activeDatabase ?? 'All Databases'}
+              </div>
+              {activeDatabase && activeDbInfo?.size_bytes != null && (
+                <div className="text-[10px] text-muted-foreground">
+                  {formatBytes(activeDbInfo.size_bytes)}
+                  {activeTables.length > 0 && ` \u00b7 ${activeTables.length} tables`}
+                </div>
+              )}
+              {!activeDatabase && databases.length > 0 && (
+                <div className="text-[10px] text-muted-foreground">
+                  {databases.length} database{databases.length !== 1 ? 's' : ''}
+                </div>
+              )}
+            </div>
+            <ChevronDown className={cn(
+              'h-3 w-3 shrink-0 text-muted-foreground transition-transform duration-200',
+              dbSelectorOpen && 'rotate-180',
+            )} />
+          </button>
+          {onOpenConnectionDialog && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={onOpenConnectionDialog}
+                  className="flex h-full shrink-0 items-center px-2 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50 transition-colors"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="text-xs">
+                Add connection
+              </TooltipContent>
+            </Tooltip>
+          )}
+          </div>
+
+          {/* Dropdown */}
+          {dbSelectorOpen && (
+            <div className="absolute left-0 right-0 top-full z-50 max-h-64 overflow-y-auto border-b border-border bg-popover shadow-lg">
+              {/* "All Databases" option */}
+              <button
+                onClick={() => handleSelectDatabase(null)}
+                className={cn(
+                  'flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent transition-colors',
+                  !activeDatabase && 'bg-accent',
+                )}
+              >
+                <Layers className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                <span className="flex-1 text-left">All Databases</span>
+                {!activeDatabase && <Check className="h-3 w-3 text-primary" />}
+              </button>
+
+              <Separator />
+
+              {databases.map((db) => (
+                <button
+                  key={db.name}
+                  onClick={() => handleSelectDatabase(db.name)}
+                  className={cn(
+                    'flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent transition-colors',
+                    activeDatabase === db.name && 'bg-accent',
+                  )}
+                >
+                  <Database className="h-3.5 w-3.5 shrink-0 text-primary/70" />
+                  <span className="min-w-0 flex-1 truncate text-left">{db.name}</span>
+                  {db.size_bytes != null && (
+                    <span className="shrink-0 text-[10px] text-muted-foreground">
+                      {formatBytes(db.size_bytes)}
+                    </span>
+                  )}
+                  {activeDatabase === db.name && <Check className="h-3 w-3 shrink-0 text-primary" />}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
+        {/* Search */}
         <div className="border-b border-sidebar-border px-2 py-1.5">
           <div className="flex items-center gap-1.5 rounded-sm bg-sidebar-accent/50 px-2 py-1">
             <Search className="h-3 w-3 shrink-0 text-muted-foreground" />
@@ -198,13 +320,43 @@ export function Sidebar() {
 
         <ScrollArea className="flex-1">
           <div className="py-1">
-            {databases.length === 0 ? (
+            {/* Single-database mode: flat table list */}
+            {activeDatabase && !searchQuery ? (
+              activeTables.length === 0 ? (
+                <p className="px-3 py-4 text-center text-xs text-muted-foreground">
+                  No tables in {activeDatabase}
+                </p>
+              ) : (
+                activeTables.map((table) => {
+                  const key = `${activeDatabase}.${table.name}`;
+                  return (
+                    <TableNode
+                      key={table.name}
+                      table={table}
+                      dbName={activeDatabase}
+                      expanded={expandedTables.has(key)}
+                      loading={structureLoading[key] ?? false}
+                      columns={structures[key]?.columns}
+                      onToggle={() => toggleTable(activeDatabase, table.name)}
+                      onClick={() => handleTableClick(activeDatabase, table.name)}
+                      onColumnClick={handleColumnClick}
+                      selectedColumn={selectedColumn}
+                      searchQuery=""
+                      onTruncate={() => handleTruncateTable(activeDatabase, table.name)}
+                      onDrop={() => handleDropTable(activeDatabase, table.name)}
+                      onRename={() => handleRenameTable(activeDatabase, table.name)}
+                      flat
+                    />
+                  );
+                })
+              )
+            ) : visibleDatabases.length === 0 ? (
               <p className="px-3 py-4 text-center text-xs text-muted-foreground">
                 No databases found
               </p>
             ) : (
               <SearchableTree
-                databases={databases}
+                databases={visibleDatabases}
                 tables={tables}
                 structures={structures}
                 structureLoading={structureLoading}
@@ -599,6 +751,8 @@ interface TableNodeProps {
   onTruncate: () => void;
   onDrop: () => void;
   onRename: () => void;
+  /** Render without database-level indentation (flat mode) */
+  flat?: boolean;
 }
 
 function TableNode({
@@ -614,6 +768,7 @@ function TableNode({
   onDrop,
   onRename,
   searchQuery,
+  flat,
 }: TableNodeProps) {
   const isView = table.table_type === 'View';
   const TableIcon = isView ? Eye : Table2;
@@ -622,7 +777,7 @@ function TableNode({
     <Collapsible open={expanded}>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div className="flex items-center pl-5">
+          <div className={cn("flex items-center", flat ? "pl-2" : "pl-5")}>
             {/* Expand/collapse chevron */}
             <button
               onClick={(e) => {
@@ -718,7 +873,7 @@ function TableNode({
 
       <CollapsibleContent>
         {columns && columns.length > 0 && (
-          <div className="ml-10 border-l border-sidebar-border">
+          <div className={cn("border-l border-sidebar-border", flat ? "ml-7" : "ml-10")}>
             {columns.map((col) => {
               // When searching by column name, only show matching columns
               if (searchQuery && !table.name.toLowerCase().includes(searchQuery) && !col.name.toLowerCase().includes(searchQuery)) {

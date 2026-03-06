@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useActivityStore, type ActivityEntry } from '@/stores/activityStore';
+import { useConnectionStore } from '@/stores/connectionStore';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -28,8 +29,15 @@ import { cn } from '@/lib/utils';
 type FilterType = 'all' | 'success' | 'error' | 'running';
 
 export function ActivityBar() {
-  const { entries, expanded, toggleExpanded, clear } = useActivityStore();
+  const { entries: allEntries, expanded, toggleExpanded, clear } = useActivityStore();
+  const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const [filter, setFilter] = useState<FilterType>('all');
+
+  // Filter entries by active connection
+  const entries = useMemo(() => {
+    if (!activeConnectionId) return allEntries;
+    return allEntries.filter((e) => e.connectionId === activeConnectionId);
+  }, [allEntries, activeConnectionId]);
 
   const lastEntry = entries[0];
   const runningCount = entries.filter((e) => e.status === 'running').length;
