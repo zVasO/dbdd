@@ -66,7 +66,7 @@ impl DatabaseType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum SslMode {
     #[default]
     Disable,

@@ -5,7 +5,7 @@ import { WelcomePage } from "@/pages/WelcomePage";
 import { WorkspacePage } from "@/pages/WorkspacePage";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { TitleBar } from "@/components/layout/TitleBar";
-import { loadSession, clearSession } from "@/lib/sessionRecovery";
+import { loadSession } from "@/lib/sessionRecovery";
 import { ipc } from "@/lib/ipc";
 // Initialize theme store on import (applies saved theme to DOM)
 import "@/stores/themeStore";
@@ -19,41 +19,48 @@ function App() {
       const session = loadSession();
       if (!session || session.tabs.length === 0) return;
 
-      if (session.connectionId) {
-        // Ensure saved connections are loaded before looking up
-        await useConnectionStore.getState().loadSavedConnections();
-        const { savedConnections } = useConnectionStore.getState();
-        const saved = savedConnections.find(
-          (c) => c.config.id === session.connectionId
-        );
+      // Collect unique connectionIds from saved tabs
+      const connectionIds = new Set(
+        session.tabs
+          .map((t) => t.connectionId)
+          .filter((id): id is string => !!id)
+      );
+
+      // Load saved connections
+      await useConnectionStore.getState().loadSavedConnections();
+      const { savedConnections } = useConnectionStore.getState();
+
+      // Try to reconnect to each saved connection
+      for (const connId of connectionIds) {
+        const saved = savedConnections.find((c) => c.config.id === connId);
         if (saved) {
           try {
             await useConnectionStore.getState().connect(saved.config);
-            useQueryStore.getState().restoreTabs(session.tabs, session.activeTabId);
           } catch {
-            // Connection failed — still restore tabs for the SQL content
-            useQueryStore.getState().restoreTabs(session.tabs, session.activeTabId);
+            // Connection failed — tabs will still be restored with their connectionId
           }
-          return;
         }
       }
 
-      // No connection to restore, just restore tabs
-      useQueryStore.getState().restoreTabs(session.tabs, session.activeTabId);
+      // Restore all tabs across all connections
+      useQueryStore.getState().restoreTabs(session.tabs, session.activeTabIds);
     }
     restore();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keep-alive: ping the active connection every 30 seconds
+  // Keep-alive: ping all active connections every 30 seconds
+  const activeConnections = useConnectionStore((s) => s.activeConnections);
   useEffect(() => {
-    if (!activeConnectionId) return;
+    if (activeConnections.length === 0) return;
     const interval = setInterval(() => {
-      ipc.pingConnection(activeConnectionId).catch(() => {
-        // Connection lost — silently ignore; user will see errors on next action
-      });
+      for (const conn of activeConnections) {
+        ipc.pingConnection(conn.connectionId).catch(() => {
+          // Connection lost — silently ignore
+        });
+      }
     }, 30_000);
     return () => clearInterval(interval);
-  }, [activeConnectionId]);
+  }, [activeConnections]);
 
   return (
     <ErrorBoundary>
