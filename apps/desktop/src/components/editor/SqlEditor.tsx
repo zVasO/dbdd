@@ -391,28 +391,21 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
             const context = detectSqlContext(textBeforeCursor);
             const suggestions: any[] = [];
             const tablePrefixes = parseTablePrefixes(fullText);
-            const hasRefs = Object.keys(tablePrefixes).length > 0;
 
-            const showColumns = context === 'select' || context === 'condition'
-              || context === 'order_group' || context === 'set' || context === 'general';
-            const showTables = context === 'from' || context === 'general';
-            const showFunctions = context === 'select' || context === 'condition' || context === 'general';
-            const showClauseSnippets = context === 'after_table' || context === 'general';
-            const showDatabases = context === 'from' || context === 'general';
-            const showTypes = context === 'ddl' || context === 'general';
+            const isColumnCtx = context === 'select' || context === 'condition'
+              || context === 'order_group' || context === 'set';
+            const isTableCtx = context === 'from';
 
-            // --- Columns (prefixed with alias or table name) ---
-            if (showColumns) {
-              const relevantCols = hasRefs
-                ? allColumns.filter(c => c.table.toLowerCase() in tablePrefixes)
-                : allColumns;
+            // --- Columns (always present — Monaco fuzzy-matches on user input) ---
+            {
               const seenCols = new Set<string>();
-              for (const col of relevantCols) {
+              for (const col of allColumns) {
                 const key = `${col.name}__${col.table}`;
                 if (seenCols.has(key)) continue;
                 seenCols.add(key);
                 const prefix = tablePrefixes[col.table.toLowerCase()] || col.table;
                 const qualified = `${prefix}.${col.name}`;
+                const isReferenced = col.table.toLowerCase() in tablePrefixes;
                 suggestions.push({
                   label: qualified,
                   kind: monaco.languages.CompletionItemKind.Field,
@@ -420,123 +413,83 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
                   insertText: qualified,
                   filterText: col.name,
                   range,
-                  sortText: '0a',
+                  sortText: isColumnCtx
+                    ? (isReferenced ? '0a' : '0c')
+                    : (isReferenced ? '1a' : '1c'),
                 });
               }
             }
 
-            // --- Tables ---
-            if (showTables) {
-              for (const t of allTables) {
-                suggestions.push({
-                  label: t.name,
-                  kind: monaco.languages.CompletionItemKind.Struct,
-                  detail: `Table — ${t.database}`,
-                  insertText: t.name,
-                  range,
-                  sortText: context === 'from' ? '0a' : '2a',
-                });
-              }
+            // --- Tables (always present — Monaco fuzzy-matches on user input) ---
+            for (const t of allTables) {
+              suggestions.push({
+                label: t.name,
+                kind: monaco.languages.CompletionItemKind.Struct,
+                detail: `Table — ${t.database}`,
+                insertText: t.name,
+                range,
+                sortText: isTableCtx ? '0a' : '2a',
+              });
             }
 
-            // --- Functions ---
-            if (showFunctions) {
-              for (const fn of SQL_FUNCTIONS) {
-                suggestions.push({
-                  label: fn.label,
-                  kind: monaco.languages.CompletionItemKind.Function,
-                  detail: fn.detail,
-                  insertText: fn.insertText,
-                  insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                  range,
-                  sortText: context === 'select' ? '0b' : '1b',
-                });
-              }
+            // --- Functions (always — prioritized in select/condition) ---
+            for (const fn of SQL_FUNCTIONS) {
+              suggestions.push({
+                label: fn.label,
+                kind: monaco.languages.CompletionItemKind.Function,
+                detail: fn.detail,
+                insertText: fn.insertText,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                range,
+                sortText: (context === 'select' || context === 'condition') ? '0b' : '3a',
+              });
             }
 
-            // --- Clause snippets (JOIN, WHERE, ORDER BY, etc.) ---
-            if (showClauseSnippets) {
-              for (const cs of CLAUSE_SNIPPETS) {
-                suggestions.push({
-                  label: cs.label,
-                  kind: monaco.languages.CompletionItemKind.Snippet,
-                  detail: cs.detail,
-                  insertText: cs.insertText,
-                  insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                  range,
-                  sortText: context === 'after_table' ? '0a' : '1a',
-                });
-              }
+            // --- Clause snippets (always — prioritized after table) ---
+            for (const cs of CLAUSE_SNIPPETS) {
+              suggestions.push({
+                label: cs.label,
+                kind: monaco.languages.CompletionItemKind.Snippet,
+                detail: cs.detail,
+                insertText: cs.insertText,
+                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                range,
+                sortText: context === 'after_table' ? '0a' : '2b',
+              });
             }
 
-            // --- Context-specific keywords ---
-            if (context === 'select') {
-              for (const kw of ['DISTINCT', 'CASE', 'AS', '*']) {
-                suggestions.push({
-                  label: kw, kind: monaco.languages.CompletionItemKind.Keyword,
-                  insertText: kw, range, sortText: '0c',
-                });
-              }
-            }
-            if (context === 'condition') {
-              for (const kw of ['NOT', 'IN', 'LIKE', 'BETWEEN', 'EXISTS', 'IS', 'NULL', 'IS NULL', 'IS NOT NULL', 'TRUE', 'FALSE']) {
-                suggestions.push({
-                  label: kw, kind: monaco.languages.CompletionItemKind.Keyword,
-                  insertText: kw, range, sortText: '1a',
-                });
-              }
-            }
-            if (context === 'order_group') {
-              for (const kw of ['ASC', 'DESC']) {
-                suggestions.push({
-                  label: kw, kind: monaco.languages.CompletionItemKind.Keyword,
-                  insertText: kw, range, sortText: '1a',
-                });
-              }
-            }
-            if (context === 'ddl') {
-              for (const kw of ['TABLE', 'INDEX', 'VIEW', 'DATABASE', 'SCHEMA', 'COLUMN']) {
-                suggestions.push({
-                  label: kw, kind: monaco.languages.CompletionItemKind.Keyword,
-                  insertText: kw, range, sortText: '0a',
-                });
-              }
-              for (const t of SQL_TYPES) {
-                suggestions.push({
-                  label: t, kind: monaco.languages.CompletionItemKind.TypeParameter,
-                  detail: 'Data type', insertText: t, range, sortText: '1a',
-                });
-              }
+            // --- Keywords (always — priority depends on context) ---
+            for (const kw of SQL_KEYWORDS) {
+              let priority = '4a';
+              if (context === 'select' && ['DISTINCT', 'CASE', 'AS'].includes(kw)) priority = '0c';
+              else if (context === 'condition' && ['NOT', 'IN', 'LIKE', 'BETWEEN', 'EXISTS', 'IS', 'NULL', 'TRUE', 'FALSE'].includes(kw)) priority = '0b';
+              else if (context === 'order_group' && ['ASC', 'DESC'].includes(kw)) priority = '0b';
+              else if (context === 'ddl' && ['TABLE', 'INDEX', 'VIEW', 'DATABASE', 'SCHEMA', 'COLUMN'].includes(kw)) priority = '0a';
+              suggestions.push({
+                label: kw, kind: monaco.languages.CompletionItemKind.Keyword,
+                insertText: kw, range, sortText: priority,
+              });
             }
 
-            // --- Databases ---
-            if (showDatabases) {
-              for (const db of schemaState.databases) {
-                suggestions.push({
-                  label: db.name,
-                  kind: monaco.languages.CompletionItemKind.Module,
-                  detail: 'Database',
-                  insertText: db.name,
-                  range,
-                  sortText: context === 'from' ? '0b' : '3a',
-                });
-              }
+            // --- Databases (always) ---
+            for (const db of schemaState.databases) {
+              suggestions.push({
+                label: db.name,
+                kind: monaco.languages.CompletionItemKind.Module,
+                detail: 'Database',
+                insertText: db.name,
+                range,
+                sortText: isTableCtx ? '0b' : '3b',
+              });
             }
 
-            // --- General fallback: all keywords + types (low priority) ---
-            if (context === 'general') {
-              for (const kw of SQL_KEYWORDS) {
-                suggestions.push({
-                  label: kw, kind: monaco.languages.CompletionItemKind.Keyword,
-                  insertText: kw, range, sortText: '4a',
-                });
-              }
-              for (const t of SQL_TYPES) {
-                suggestions.push({
-                  label: t, kind: monaco.languages.CompletionItemKind.TypeParameter,
-                  detail: 'Data type', insertText: t, range, sortText: '5a',
-                });
-              }
+            // --- Data types (always) ---
+            for (const t of SQL_TYPES) {
+              suggestions.push({
+                label: t, kind: monaco.languages.CompletionItemKind.TypeParameter,
+                detail: 'Data type', insertText: t, range,
+                sortText: context === 'ddl' ? '0b' : '5a',
+              });
             }
 
             return { suggestions };
@@ -613,8 +566,10 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
           quickSuggestions: true,
           snippetSuggestions: 'inline',
           suggest: {
-            showKeywords: false,
+            showKeywords: true,
             insertMode: 'insert',
+            filterGraceful: true,
+            showIcons: true,
           },
         }}
       />
