@@ -43,6 +43,9 @@ impl DriverRegistry {
         #[cfg(feature = "mysql")]
         factories.insert(DatabaseType::Mysql, Arc::new(MySqlDriverFactoryAdapter));
 
+        #[cfg(feature = "postgres")]
+        factories.insert(DatabaseType::Postgres, Arc::new(PostgresDriverFactoryAdapter));
+
         Self { factories }
     }
 
@@ -76,5 +79,33 @@ impl DatabaseDriverFactory for MySqlDriverFactoryAdapter {
 
     fn dialect(&self) -> Arc<dyn QueryDialect> {
         dataforge_mysql::MySqlDriverFactory.dialect()
+    }
+}
+
+#[cfg(feature = "postgres")]
+struct PostgresDriverFactoryAdapter;
+
+#[cfg(feature = "postgres")]
+#[async_trait]
+impl DatabaseDriverFactory for PostgresDriverFactoryAdapter {
+    async fn create_connection(
+        &self,
+        config: &ConnectionConfig,
+        password: Option<&str>,
+    ) -> Result<Arc<dyn DatabaseConnection>> {
+        dataforge_postgres::PostgresDriverFactory
+            .create_connection(config, password)
+            .await
+    }
+
+    fn create_schema_inspector(
+        &self,
+        conn: Arc<dyn DatabaseConnection>,
+    ) -> Arc<dyn SchemaInspector> {
+        dataforge_postgres::PostgresDriverFactory.create_schema_inspector(conn)
+    }
+
+    fn dialect(&self) -> Arc<dyn QueryDialect> {
+        dataforge_postgres::PostgresDriverFactory.dialect()
     }
 }
