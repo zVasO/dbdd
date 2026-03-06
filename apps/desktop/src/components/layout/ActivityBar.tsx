@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react';
 import { useActivityStore, type ActivityEntry } from '@/stores/activityStore';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -94,8 +93,8 @@ export function ActivityBar() {
 
       {/* Expanded panel */}
       <CollapsibleContent>
-        <div className="border-t border-border bg-muted/30" style={{ maxHeight: '200px' }}>
-          <div className="flex items-center justify-between border-b border-border px-3 py-1">
+        <div className="flex flex-col border-t border-border bg-muted/30" style={{ maxHeight: '200px' }}>
+          <div className="flex shrink-0 items-center justify-between border-b border-border px-3 py-1">
             <div className="flex items-center gap-1">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mr-2">
                 Query Log
@@ -148,7 +147,7 @@ export function ActivityBar() {
             )}
           </div>
 
-          <ScrollArea style={{ maxHeight: '168px' }}>
+          <div className="min-h-0 flex-1 overflow-y-auto">
             {filteredEntries.length === 0 ? (
               <p className="px-3 py-3 text-center text-[11px] text-muted-foreground">
                 {entries.length === 0
@@ -162,7 +161,7 @@ export function ActivityBar() {
                 ))}
               </div>
             )}
-          </ScrollArea>
+          </div>
         </div>
       </CollapsibleContent>
     </Collapsible>
