@@ -411,7 +411,7 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
                   kind: monaco.languages.CompletionItemKind.Field,
                   detail: `${col.type} — ${col.table}`,
                   insertText: qualified,
-                  filterText: col.name,
+                  filterText: `${prefix} ${col.name}`,
                   range,
                   sortText: isColumnCtx
                     ? (isReferenced ? '0a' : '0c')
