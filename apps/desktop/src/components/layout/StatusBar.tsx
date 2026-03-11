@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useQueryStore } from '@/stores/queryStore';
+import { useResultStore } from '@/stores/resultStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useChangeStore } from '@/stores/changeStore';
 import { usePreferencesStore } from '@/stores/preferencesStore';
@@ -22,6 +23,7 @@ export function StatusBar({ connected, dbType, onDisconnect, onOpenConnectionDia
   const activeTabId = useQueryStore((s) => s.activeTabId);
   const tabs = useQueryStore((s) => s.tabs);
   const activeTab = tabs.find((t) => t.id === activeTabId);
+  const tabResult = useResultStore((s) => activeTab ? s.results[activeTab.id] : undefined);
   const toggleTheme = useUIStore((s) => s.toggleTheme);
   const theme = usePreferencesStore((s) => s.theme);
   const pendingCount = useChangeStore((s) => s.pendingCount());
@@ -150,10 +152,10 @@ export function StatusBar({ connected, dbType, onDisconnect, onOpenConnectionDia
         </div>
       )}
       <div className="flex items-center gap-4">
-        {activeTab?.result && (
+        {tabResult && tabResult.rowCount > 0 && (
           <>
-            <span>{activeTab.result.rows.length} rows</span>
-            <span>{activeTab.result.execution_time_ms}ms</span>
+            <span>{tabResult.totalRows} rows</span>
+            <span>{tabResult.executionTimeMs ?? 0}ms</span>
           </>
         )}
         {activeTab?.isExecuting && <span>Executing...</span>}

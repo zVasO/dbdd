@@ -56,25 +56,31 @@ export function DashboardView({ connectionId }: DashboardViewProps) {
     return () => observer.disconnect();
   }, []);
 
-  // Auto-refresh timers
+  // Auto-refresh: single 1s scheduler tick checks all widgets,
+  // preventing a thundering herd of simultaneous IPC calls
+  const lastRefreshRef = useRef<Record<string, number>>({});
   useEffect(() => {
     if (!dashboard || !connectionId) return;
 
-    const timers: ReturnType<typeof setInterval>[] = [];
+    const hasRefreshableWidgets = dashboard.widgets.some(
+      (w) => w.config.refreshInterval && w.config.refreshInterval > 0,
+    );
+    if (!hasRefreshableWidgets) return;
 
-    for (const widget of dashboard.widgets) {
-      const interval = widget.config.refreshInterval;
-      if (interval && interval > 0) {
-        const timer = setInterval(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      for (const widget of dashboard.widgets) {
+        const intervalMs = (widget.config.refreshInterval ?? 0) * 1000;
+        if (intervalMs <= 0) continue;
+        const lastRun = lastRefreshRef.current[widget.id] ?? 0;
+        if (now - lastRun >= intervalMs) {
+          lastRefreshRef.current[widget.id] = now;
           executeWidgetQuery(dashboard.id, widget.id, connectionId);
-        }, interval * 1000);
-        timers.push(timer);
+        }
       }
-    }
+    }, 1000);
 
-    return () => {
-      timers.forEach(clearInterval);
-    };
+    return () => clearInterval(timer);
   }, [dashboard, connectionId, executeWidgetQuery]);
 
   const handleLayoutChange = useCallback(

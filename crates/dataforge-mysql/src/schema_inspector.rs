@@ -67,18 +67,18 @@ impl SchemaInspector for MySqlSchemaInspector {
     }
 
     async fn list_tables(&self, database: &str, _schema: Option<&str>) -> Result<Vec<TableInfo>> {
-        let sql = format!(
-            "SELECT TABLE_NAME AS name, \
+        let sql = "SELECT TABLE_NAME AS name, \
              TABLE_TYPE AS table_type, \
              TABLE_ROWS AS row_count_estimate, \
              DATA_LENGTH + INDEX_LENGTH AS size_bytes, \
              TABLE_COMMENT AS comment \
              FROM information_schema.TABLES \
-             WHERE TABLE_SCHEMA = '{}' \
-             ORDER BY TABLE_NAME",
-            database.replace('\'', "\\'")
-        );
-        let result = self.conn.execute(&sql).await?;
+             WHERE TABLE_SCHEMA = ? \
+             ORDER BY TABLE_NAME";
+        let result = self
+            .conn
+            .execute_with_params(sql, &[CellValue::Text(database.to_string())])
+            .await?;
 
         let mut tables = Vec::new();
         for row in &result.rows {
@@ -125,18 +125,22 @@ impl SchemaInspector for MySqlSchemaInspector {
         let db = table.database.as_deref().ok_or_else(|| {
             DataForgeError::SchemaInspection("Database name required for MySQL".to_string())
         })?;
-        let escaped_db = db.replace('\'', "\\'");
-        let escaped_table = table.table.replace('\'', "\\'");
 
-        let col_sql = format!(
-            "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE = 'YES', \
+        let col_sql = "SELECT COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE = 'YES', \
              COLUMN_DEFAULT, ORDINAL_POSITION, COLUMN_COMMENT, COLUMN_KEY = 'PRI' \
              FROM information_schema.COLUMNS \
-             WHERE TABLE_SCHEMA = '{}' AND TABLE_NAME = '{}' \
-             ORDER BY ORDINAL_POSITION",
-            escaped_db, escaped_table
-        );
-        let col_result = self.conn.execute(&col_sql).await?;
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
+             ORDER BY ORDINAL_POSITION";
+        let col_result = self
+            .conn
+            .execute_with_params(
+                col_sql,
+                &[
+                    CellValue::Text(db.to_string()),
+                    CellValue::Text(table.table.clone()),
+                ],
+            )
+            .await?;
 
         let columns: Vec<ColumnInfo> = col_result
             .rows

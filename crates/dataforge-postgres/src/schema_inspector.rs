@@ -29,7 +29,6 @@ impl SchemaInspector for PostgresSchemaInspector {
                  pg_encoding_to_char(d.encoding) AS encoding \
                  FROM pg_database d \
                  WHERE d.datistemplate = false \
-                 AND d.datname NOT IN ('postgres') \
                  ORDER BY d.datname",
             )
             .await?;
@@ -92,20 +91,22 @@ impl SchemaInspector for PostgresSchemaInspector {
         schema: Option<&str>,
     ) -> Result<Vec<TableInfo>> {
         let schema_name = schema.unwrap_or("public");
-        let sql = format!(
-            "SELECT t.table_name AS name, \
-             t.table_type, \
-             COALESCE(s.n_live_tup, 0) AS row_count_estimate, \
-             pg_total_relation_size(quote_ident(t.table_schema) || '.' || quote_ident(t.table_name))::bigint AS size_bytes, \
-             obj_description((quote_ident(t.table_schema) || '.' || quote_ident(t.table_name))::regclass) AS comment \
-             FROM information_schema.tables t \
-             LEFT JOIN pg_stat_user_tables s \
-               ON s.schemaname = t.table_schema AND s.relname = t.table_name \
-             WHERE t.table_schema = '{}' \
-             ORDER BY t.table_name",
-            schema_name.replace('\'', "''")
-        );
-        let result = self.conn.execute(&sql).await?;
+        // Use pg_catalog directly instead of information_schema + pg_total_relation_size()
+        // pg_class.relpages * 8192 gives a fast size estimate without per-table syscalls
+        let sql = "SELECT c.relname AS name, \
+             CASE c.relkind WHEN 'v' THEN 'VIEW' WHEN 'm' THEN 'VIEW' ELSE 'BASE TABLE' END AS table_type, \
+             c.reltuples::bigint AS row_count_estimate, \
+             (c.relpages::bigint * 8192) AS size_bytes, \
+             obj_description(c.oid) AS comment \
+             FROM pg_catalog.pg_class c \
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = $1 \
+             AND c.relkind IN ('r', 'v', 'm', 'p') \
+             ORDER BY c.relname";
+        let result = self
+            .conn
+            .execute_with_params(sql, &[CellValue::Text(schema_name.to_string())])
+            .await?;
 
         let mut tables = Vec::new();
         for row in &result.rows {
@@ -126,11 +127,15 @@ impl SchemaInspector for PostgresSchemaInspector {
                 TableType::Table
             };
             let row_count_estimate = match &row.cells[2] {
-                CellValue::Integer(n) => Some(*n as u64),
+                CellValue::Integer(n) => {
+                    if *n < 0 { None } else { Some(*n as u64) }
+                }
                 _ => None,
             };
             let size_bytes = match &row.cells[3] {
-                CellValue::Integer(n) => Some(*n as u64),
+                CellValue::Integer(n) => {
+                    if *n <= 0 { None } else { Some(*n as u64) }
+                }
                 _ => None,
             };
             let comment = match &row.cells[4] {
@@ -150,34 +155,33 @@ impl SchemaInspector for PostgresSchemaInspector {
 
     async fn get_table_structure(&self, table: &TableRef) -> Result<TableStructure> {
         let schema_name = table.schema.as_deref().unwrap_or("public");
-        let escaped_schema = schema_name.replace('\'', "''");
-        let escaped_table = table.table.replace('\'', "''");
 
-        // Columns
-        let col_sql = format!(
-            "SELECT c.column_name, c.data_type, c.is_nullable = 'YES' AS nullable, \
-             c.column_default, c.ordinal_position::int, \
-             pgd.description AS comment, \
-             CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END AS is_primary_key \
-             FROM information_schema.columns c \
-             LEFT JOIN pg_catalog.pg_statio_all_tables st \
-               ON st.schemaname = c.table_schema AND st.relname = c.table_name \
-             LEFT JOIN pg_catalog.pg_description pgd \
-               ON pgd.objoid = st.relid AND pgd.objsubid = c.ordinal_position \
-             LEFT JOIN ( \
-               SELECT kcu.column_name \
-               FROM information_schema.table_constraints tc \
-               JOIN information_schema.key_column_usage kcu \
-                 ON tc.constraint_name = kcu.constraint_name \
-                 AND tc.table_schema = kcu.table_schema \
-               WHERE tc.constraint_type = 'PRIMARY KEY' \
-                 AND tc.table_schema = '{}' AND tc.table_name = '{}' \
-             ) pk ON pk.column_name = c.column_name \
-             WHERE c.table_schema = '{}' AND c.table_name = '{}' \
-             ORDER BY c.ordinal_position",
-            escaped_schema, escaped_table, escaped_schema, escaped_table
-        );
-        let col_result = self.conn.execute(&col_sql).await?;
+        // Single query using pg_catalog (much faster than information_schema)
+        let col_sql = "SELECT a.attname AS name, \
+             format_type(a.atttypid, a.atttypmod) AS data_type, \
+             NOT a.attnotnull AS nullable, \
+             pg_get_expr(d.adbin, d.adrelid) AS default_value, \
+             a.attnum AS ordinal_position, \
+             col_description(c.oid, a.attnum) AS comment, \
+             COALESCE(i.indisprimary, false) AS is_primary_key \
+             FROM pg_catalog.pg_attribute a \
+             JOIN pg_catalog.pg_class c ON c.oid = a.attrelid \
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+             LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum \
+             LEFT JOIN pg_catalog.pg_index i ON i.indrelid = a.attrelid AND i.indisprimary AND a.attnum = ANY(i.indkey) \
+             WHERE n.nspname = $1 AND c.relname = $2 \
+             AND a.attnum > 0 AND NOT a.attisdropped \
+             ORDER BY a.attnum";
+        let col_result = self
+            .conn
+            .execute_with_params(
+                col_sql,
+                &[
+                    CellValue::Text(schema_name.to_string()),
+                    CellValue::Text(table.table.clone()),
+                ],
+            )
+            .await?;
 
         let columns: Vec<ColumnInfo> = col_result
             .rows

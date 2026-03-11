@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useQueryStore } from '@/stores/queryStore';
@@ -69,13 +69,18 @@ interface SidebarProps {
   onOpenConnectionDialog?: () => void;
 }
 
-export function Sidebar({ onOpenConnectionDialog }: SidebarProps = {}) {
-  const { sidebarOpen } = useUIStore();
-  const { databases, tables, structures, structureLoading, loadTables, loadTableStructure, activeDatabase, setActiveDatabase } =
-    useSchemaStore();
+export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: SidebarProps = {}) {
+  const sidebarOpen = useUIStore((s) => s.sidebarOpen);
+  const databases = useSchemaStore((s) => s.databases);
+  const tables = useSchemaStore((s) => s.tables);
+  const structures = useSchemaStore((s) => s.structures);
+  const structureLoading = useSchemaStore((s) => s.structureLoading);
+  const activeDatabase = useSchemaStore((s) => s.activeDatabase);
+  const { loadTables, loadTableStructure, setActiveDatabase } = useSchemaStore.getState();
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const activeConfig = useConnectionStore((s) => s.activeConfig);
-  const { tabs, createTab, updateSql, executeQuery, setActiveTab } = useQueryStore();
+  const tabs = useQueryStore((s) => s.tabs);
+  const { createTab, updateSql, executeQuery, setActiveTab } = useQueryStore.getState();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedDbs, setExpandedDbs] = useState<Set<string>>(new Set());
@@ -318,7 +323,7 @@ export function Sidebar({ onOpenConnectionDialog }: SidebarProps = {}) {
           </div>
         </div>
 
-        <ScrollArea className="flex-1">
+        <ScrollArea className="flex-1 overflow-hidden">
           <div className="py-1">
             {/* Single-database mode: flat table list */}
             {activeDatabase && !searchQuery ? (
@@ -383,7 +388,7 @@ export function Sidebar({ onOpenConnectionDialog }: SidebarProps = {}) {
       </div>
     </TooltipProvider>
   );
-}
+});
 
 // ─── Column properties panel ──────────────────────────────────────────────────
 

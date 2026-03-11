@@ -1,10 +1,11 @@
 import { useCallback, useMemo, lazy, Suspense } from 'react';
 import { useQueryStore } from '@/stores/queryStore';
+import { useResultStore, type TabResult } from '@/stores/resultStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { EditorTabs } from '@/components/editor/EditorTabs';
 import { SqlEditor } from '@/components/editor/SqlEditor';
 import { EditorToolbar } from '@/components/editor/EditorToolbar';
-import { DataGrid } from '@/components/grid/DataGrid';
+import { DataGrid, type SortRequest } from '@/components/grid/DataGrid';
 import { TableStructureView } from '@/components/grid/TableStructureView';
 import { FilterBar } from '@/components/grid/FilterBar';
 import { ColumnFilter } from '@/components/grid/ColumnFilter';
@@ -14,7 +15,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { cn } from '@/lib/utils';
 import { Table2, Columns3 } from 'lucide-react';
 import type { QueryResult } from '@/lib/types';
-import type { TabViewMode } from '@/stores/queryStore';
+import type { QueryTab, TabViewMode } from '@/stores/queryStore';
 
 const ERDiagramView = lazy(() => import('@/components/er-diagram/ERDiagramView').then(m => ({ default: m.ERDiagramView })));
 const DashboardView = lazy(() => import('@/components/dashboard/DashboardView').then(m => ({ default: m.DashboardView })));
@@ -29,9 +30,13 @@ const ProcessList = lazy(() => import('@/components/admin/ProcessList').then(m =
 const LazyFallback = () => <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">Loading...</div>;
 
 export function PanelLayout() {
-  const { tabs, activeTabId, updateSql, executeQuery, createTab, closeTab, setActiveTab, setEditorVisible, setViewMode, setActiveResult } = useQueryStore();
+  const tabs = useQueryStore((s) => s.tabs);
+  const activeTabId = useQueryStore((s) => s.activeTabId);
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const activeTab = tabs.find((t) => t.id === activeTabId);
+  const tabResult = useResultStore((s) => activeTab ? s.results[activeTab.id] : undefined);
+
+  const { updateSql, executeQuery, createTab, closeTab, setActiveTab, setEditorVisible, setViewMode, setActiveResult } = useQueryStore.getState();
 
   const handleCreateQuery = () => {
     if (activeTab) {
@@ -45,6 +50,26 @@ export function PanelLayout() {
     if (!activeConnectionId || !activeTab?.table || !activeTab?.database) return;
     const base = `SELECT * FROM \`${activeTab.table}\``;
     const sql = whereClause ? `${base} WHERE ${whereClause} LIMIT 500` : `${base} LIMIT 500`;
+    updateSql(activeTab.id, sql);
+    executeQuery(activeConnectionId, activeTab.id);
+  }, [activeConnectionId, activeTab, updateSql, executeQuery]);
+
+  const buildTableSql = (tableName: string, sorts: SortRequest[]): string => {
+    // Preserve existing WHERE clause from current SQL
+    const currentSql = activeTab?.sql ?? '';
+    const whereMatch = currentSql.match(/WHERE\s+(.+?)(?:\s+ORDER\s+BY|\s+LIMIT|$)/i);
+    const whereClause = whereMatch ? ` WHERE ${whereMatch[1].trim()}` : '';
+
+    const orderByClause = sorts.length > 0
+      ? ` ORDER BY ${sorts.map((s) => `\`${s.column}\` ${s.direction.toUpperCase()}`).join(', ')}`
+      : '';
+
+    return `SELECT * FROM \`${tableName}\`${whereClause}${orderByClause} LIMIT 500`;
+  };
+
+  const handleServerSort = useCallback((sorts: SortRequest[]) => {
+    if (!activeConnectionId || !activeTab?.table || !activeTab?.database) return;
+    const sql = buildTableSql(activeTab.table, sorts);
     updateSql(activeTab.id, sql);
     executeQuery(activeConnectionId, activeTab.id);
   }, [activeConnectionId, activeTab, updateSql, executeQuery]);
@@ -172,35 +197,35 @@ export function PanelLayout() {
                     />
                   </div>
                   <div className="flex-1 flex flex-col overflow-hidden border-t border-border">
-                    {activeTab.results.length > 1 && (
+                    {(tabResult?.allColumnarResults.length ?? 0) > 1 && (
                       <div className="flex items-center gap-0.5 border-b border-border bg-muted/50 px-2 py-0.5">
-                        {activeTab.results.map((r, i) => (
+                        {tabResult!.allColumnarResults.map((r, i) => (
                           <button
                             key={i}
                             onClick={() => setActiveResult(activeTab.id, i)}
                             className={cn(
                               'rounded px-2 py-0.5 text-[10px] font-medium transition-colors',
-                              i === activeTab.activeResultIndex
+                              i === tabResult!.activeResultIndex
                                 ? 'bg-primary/10 text-primary'
                                 : 'text-muted-foreground hover:text-foreground',
                             )}
                           >
                             Result {i + 1}
                             <span className="ml-1 text-muted-foreground">
-                              ({r.rows.length} rows)
+                              ({r.row_count} rows)
                             </span>
                           </button>
                         ))}
                       </div>
                     )}
-                    {activeTab.result && (
+                    {tabResult && tabResult.columns.length > 0 && (
                       <FilterBar
-                        columns={activeTab.result.columns}
+                        columns={tabResult.columns}
                         onApply={handleFilterApply}
                       />
                     )}
                     <div className="flex-1 overflow-hidden">
-                      {renderResult(activeTab)}
+                      {renderResult(activeTab, tabResult, handleServerSort)}
                     </div>
                   </div>
                 </div>
@@ -257,14 +282,14 @@ export function PanelLayout() {
                   </div>
                 ) : (
                   <>
-                    {activeTab.result && (
+                    {tabResult && tabResult.columns.length > 0 && (
                       <FilterBar
-                        columns={activeTab.result.columns}
+                        columns={tabResult.columns}
                         onApply={handleFilterApply}
                       />
                     )}
                     <div className="flex-1 overflow-hidden">
-                      {renderResult(activeTab)}
+                      {renderResult(activeTab, tabResult, handleServerSort)}
                     </div>
                   </>
                 )}
@@ -273,30 +298,40 @@ export function PanelLayout() {
           </div>
         )}
       </div>
-      {activeTab?.result && (
-        <ColumnFilter columns={activeTab.result.columns} />
+      {tabResult && tabResult.columns.length > 0 && (
+        <ColumnFilter columns={tabResult.columns} />
       )}
       <CodePreview />
     </>
   );
 }
 
-function renderResult(tab: { error: string | null; result: QueryResult | null; isExecuting: boolean; database?: string; table?: string }) {
-  if (tab.error) {
+function renderResult(tab: QueryTab, tabResult: TabResult | undefined, onServerSort?: (sorts: SortRequest[]) => void) {
+  if (tabResult?.error) {
     return (
       <div className="p-4 text-sm text-destructive">
-        {tab.error}
+        {tabResult.error}
       </div>
     );
   }
-  if (tab.result) {
+  const allResults = tabResult ? useResultStore.getState().getAllResults(tab.id) : [];
+  const activeQueryResult = allResults[tabResult?.activeResultIndex ?? 0] ?? null;
+  if (activeQueryResult) {
+    const isReloading = tabResult?.isExecuting ?? tab.isExecuting;
     return (
       <ErrorBoundary>
-        <DataGrid result={tab.result} database={tab.database} table={tab.table} />
+        <div className="relative h-full">
+          <DataGrid result={activeQueryResult} database={tab.database} table={tab.table} onServerSort={tab.table ? onServerSort : undefined} />
+          {isReloading && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/40">
+              <p className="text-sm text-muted-foreground">Loading...</p>
+            </div>
+          )}
+        </div>
       </ErrorBoundary>
     );
   }
-  if (tab.isExecuting) {
+  if (tab.isExecuting || tabResult?.isExecuting) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <p className="text-sm">Loading...</p>

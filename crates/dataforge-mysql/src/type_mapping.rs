@@ -1,7 +1,49 @@
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
 use mysql_async::consts::ColumnType;
 
 use dataforge_core::models::query::CellValue;
 use dataforge_core::models::types::DataType;
+
+static MYSQL_TYPE_MAP: LazyLock<HashMap<&'static str, DataType>> = LazyLock::new(|| {
+    HashMap::from([
+        ("tinyint", DataType::SmallInt),
+        ("smallint", DataType::SmallInt),
+        ("mediumint", DataType::Integer),
+        ("int", DataType::Integer),
+        ("integer", DataType::Integer),
+        ("bigint", DataType::BigInt),
+        ("float", DataType::Float),
+        ("double", DataType::Double),
+        ("real", DataType::Double),
+        ("decimal", DataType::Decimal { precision: None, scale: None }),
+        ("numeric", DataType::Decimal { precision: None, scale: None }),
+        ("dec", DataType::Decimal { precision: None, scale: None }),
+        ("bit", DataType::Boolean),
+        ("bool", DataType::Boolean),
+        ("boolean", DataType::Boolean),
+        ("char", DataType::Char(None)),
+        ("varchar", DataType::Varchar(None)),
+        ("tinytext", DataType::Text),
+        ("text", DataType::Text),
+        ("mediumtext", DataType::Text),
+        ("longtext", DataType::Text),
+        ("tinyblob", DataType::Blob),
+        ("blob", DataType::Blob),
+        ("mediumblob", DataType::Blob),
+        ("longblob", DataType::Blob),
+        ("binary", DataType::Blob),
+        ("varbinary", DataType::Blob),
+        ("date", DataType::Date),
+        ("time", DataType::Time),
+        ("datetime", DataType::Timestamp),
+        ("timestamp", DataType::Timestamp),
+        ("year", DataType::Integer),
+        ("json", DataType::Json),
+        ("set", DataType::Text),
+    ])
+});
 
 /// Map a mysql_async Column to our DataType + native type string (with size info).
 pub fn map_column_meta(col: &mysql_async::Column) -> (DataType, String) {
@@ -77,33 +119,20 @@ pub fn map_mysql_type(native_type: &str) -> DataType {
     let lower = native_type.to_lowercase();
     let base = lower.split('(').next().unwrap_or(&lower).trim();
 
-    match base {
-        "tinyint" | "smallint" => DataType::SmallInt,
-        "mediumint" | "int" | "integer" => DataType::Integer,
-        "bigint" => DataType::BigInt,
-        "float" => DataType::Float,
-        "double" | "real" => DataType::Double,
-        "decimal" | "numeric" | "dec" => DataType::Decimal {
-            precision: None,
-            scale: None,
-        },
-        "bit" | "bool" | "boolean" => DataType::Boolean,
-        "char" => DataType::Char(None),
-        "varchar" => DataType::Varchar(None),
-        "tinytext" | "text" | "mediumtext" | "longtext" => DataType::Text,
-        "tinyblob" | "blob" | "mediumblob" | "longblob" | "binary" | "varbinary" => DataType::Blob,
-        "date" => DataType::Date,
-        "time" => DataType::Time,
-        "datetime" | "timestamp" => DataType::Timestamp,
-        "year" => DataType::Integer,
-        "json" => DataType::Json,
-        "enum" => DataType::Enum {
+    // O(1) lookup via static HashMap instead of match-chain with to_lowercase per call
+    if let Some(dt) = MYSQL_TYPE_MAP.get(base) {
+        return dt.clone();
+    }
+
+    // Special cases that need constructed values
+    if base == "enum" {
+        return DataType::Enum {
             name: String::new(),
             values: vec![],
-        },
-        "set" => DataType::Text,
-        _ => DataType::Unknown(native_type.to_string()),
+        };
     }
+
+    DataType::Unknown(native_type.to_string())
 }
 
 pub fn mysql_value_to_cell(row: &mysql_async::Row, index: usize) -> CellValue {
@@ -135,10 +164,12 @@ pub fn mysql_value_to_cell(row: &mysql_async::Row, index: usize) -> CellValue {
 }
 
 fn hex_preview(bytes: &[u8], max_chars: usize) -> String {
+    use std::fmt::Write;
     let max_bytes = max_chars / 2;
-    bytes
-        .iter()
-        .take(max_bytes)
-        .map(|b| format!("{:02x}", b))
-        .collect()
+    let take = bytes.len().min(max_bytes);
+    let mut s = String::with_capacity(take * 2);
+    for b in bytes.iter().take(take) {
+        write!(s, "{:02x}", b).unwrap();
+    }
+    s
 }

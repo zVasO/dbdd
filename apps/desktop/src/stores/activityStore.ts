@@ -51,23 +51,23 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   },
 
   logSuccess: (id: string, durationMs: number, rowCount: number | null) => {
-    set((state) => ({
-      entries: state.entries.map((entry) =>
-        entry.id === id
-          ? { ...entry, status: 'success' as const, durationMs, rowCount }
-          : entry
-      ),
-    }));
+    set((state) => {
+      const idx = state.entries.findIndex((e) => e.id === id);
+      if (idx === -1) return state;
+      const entries = [...state.entries];
+      entries[idx] = { ...entries[idx], status: 'success' as const, durationMs, rowCount };
+      return { entries };
+    });
   },
 
   logError: (id: string, durationMs: number, error: string) => {
-    set((state) => ({
-      entries: state.entries.map((entry) =>
-        entry.id === id
-          ? { ...entry, status: 'error' as const, durationMs, error }
-          : entry
-      ),
-    }));
+    set((state) => {
+      const idx = state.entries.findIndex((e) => e.id === id);
+      if (idx === -1) return state;
+      const entries = [...state.entries];
+      entries[idx] = { ...entries[idx], status: 'error' as const, durationMs, error };
+      return { entries };
+    });
   },
 
   toggleExpanded: () => {

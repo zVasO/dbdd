@@ -94,7 +94,7 @@ export function SettingsPage({ onClose }: Props) {
 
 function SettingsHeader({ onClose, title }: { onClose: () => void; title: string }) {
   return (
-    <div className="flex items-center h-10 px-4 border-b border-border shrink-0 bg-card" data-tauri-drag-region>
+    <div className="flex items-center h-10 px-4 border-b border-border shrink-0 bg-card">
       <h1 className="text-sm font-semibold flex-1">{title}</h1>
       <Button variant="ghost" size="icon-xs" onClick={onClose}>
         <X className="size-4" />
