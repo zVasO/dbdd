@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 type Modifier = 'meta' | 'ctrl' | 'shift' | 'alt';
 
@@ -10,9 +10,15 @@ interface Shortcut {
 }
 
 export function useKeyboardShortcuts(shortcuts: Shortcut[]) {
+  // Store shortcuts in a ref so the event listener never needs re-binding
+  const shortcutsRef = useRef(shortcuts);
+  useEffect(() => {
+    shortcutsRef.current = shortcuts;
+  }, [shortcuts]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      for (const shortcut of shortcuts) {
+      for (const shortcut of shortcutsRef.current) {
         // Exact modifier matching: all required modifiers must be pressed,
         // and no extra modifiers should be pressed
         const modMatch =
@@ -40,5 +46,5 @@ export function useKeyboardShortcuts(shortcuts: Shortcut[]) {
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [shortcuts]);
+  }, []); // Mount once — never re-binds
 }

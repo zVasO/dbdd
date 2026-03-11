@@ -14,12 +14,20 @@ impl MySqlConnection {
         config: &dataforge_core::models::connection::ConnectionConfig,
         password: Option<&str>,
     ) -> Result<Self> {
+        let pool_opts = mysql_async::PoolOpts::default()
+            .with_constraints(
+                mysql_async::PoolConstraints::new(2, 20).unwrap(),
+            );
+
         let opts = mysql_async::OptsBuilder::default()
             .ip_or_hostname(&config.host)
             .tcp_port(config.port)
             .user(Some(&config.username))
             .pass(password)
-            .db_name(config.database.as_deref());
+            .db_name(config.database.as_deref())
+            .conn_ttl(std::time::Duration::from_secs(300))
+            .wait_timeout(Some(10))
+            .pool_opts(pool_opts);
 
         let pool = mysql_async::Pool::new(opts);
 
@@ -63,15 +71,15 @@ impl DatabaseConnection for MySqlConnection {
             vec![]
         };
 
-        let rows: Vec<Row> = result
-            .iter()
-            .map(|row| {
-                let cells: Vec<CellValue> = (0..row.len())
-                    .map(|i| crate::type_mapping::mysql_value_to_cell(row, i))
-                    .collect();
-                Row { cells }
-            })
-            .collect();
+        let col_count = result.first().map(|r| r.len()).unwrap_or(0);
+        let mut rows: Vec<Row> = Vec::with_capacity(result.len());
+        for row in &result {
+            let mut cells: Vec<CellValue> = Vec::with_capacity(col_count);
+            for i in 0..row.len() {
+                cells.push(crate::type_mapping::mysql_value_to_cell(row, i));
+            }
+            rows.push(Row { cells });
+        }
 
         let row_count = rows.len() as u64;
 
@@ -89,12 +97,88 @@ impl DatabaseConnection for MySqlConnection {
 
     async fn execute_with_params(
         &self,
-        _sql: &str,
-        _params: &[CellValue],
+        sql: &str,
+        params: &[CellValue],
     ) -> Result<QueryResult> {
-        Err(DataForgeError::NotSupported(
-            "Parameterized queries not yet implemented".to_string(),
-        ))
+        use mysql_async::prelude::*;
+
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .map_err(|e| DataForgeError::Connection(e.to_string()))?;
+
+        let mysql_params: Vec<mysql_async::Value> = params
+            .iter()
+            .map(|p| match p {
+                CellValue::Null => mysql_async::Value::NULL,
+                CellValue::Integer(n) => mysql_async::Value::Int(*n),
+                CellValue::Float(n) => mysql_async::Value::Double(*n),
+                CellValue::Boolean(b) => mysql_async::Value::Int(if *b { 1 } else { 0 }),
+                CellValue::Text(s) => mysql_async::Value::Bytes(s.as_bytes().to_vec()),
+                CellValue::DateTime(s) | CellValue::Date(s) | CellValue::Time(s) => {
+                    mysql_async::Value::Bytes(s.as_bytes().to_vec())
+                }
+                CellValue::Uuid(s) => mysql_async::Value::Bytes(s.as_bytes().to_vec()),
+                CellValue::Json(v) => {
+                    mysql_async::Value::Bytes(serde_json::to_string(v).unwrap_or_default().into_bytes())
+                }
+                CellValue::Bytes { preview, .. } => {
+                    mysql_async::Value::Bytes(preview.as_bytes().to_vec())
+                }
+                CellValue::Array(items) => {
+                    mysql_async::Value::Bytes(serde_json::to_string(items).unwrap_or_default().into_bytes())
+                }
+            })
+            .collect();
+
+        let result: Vec<mysql_async::Row> = conn
+            .exec(sql, mysql_async::Params::Positional(mysql_params))
+            .await
+            .map_err(|e| DataForgeError::QueryExecution(e.to_string()))?;
+
+        let columns = if let Some(first_row) = result.first() {
+            first_row
+                .columns_ref()
+                .iter()
+                .map(|col| {
+                    let (data_type, native_type) = crate::type_mapping::map_column_meta(col);
+                    ColumnMeta {
+                        name: col.name_str().to_string(),
+                        data_type,
+                        native_type,
+                        nullable: true,
+                        is_primary_key: false,
+                        max_length: None,
+                    }
+                })
+                .collect()
+        } else {
+            vec![]
+        };
+
+        let col_count = result.first().map(|r| r.len()).unwrap_or(0);
+        let mut rows: Vec<Row> = Vec::with_capacity(result.len());
+        for row in &result {
+            let mut cells: Vec<CellValue> = Vec::with_capacity(col_count);
+            for i in 0..row.len() {
+                cells.push(crate::type_mapping::mysql_value_to_cell(row, i));
+            }
+            rows.push(Row { cells });
+        }
+
+        let row_count = rows.len() as u64;
+
+        Ok(QueryResult {
+            query_id: Uuid::new_v4(),
+            columns,
+            rows,
+            total_rows: Some(row_count),
+            affected_rows: None,
+            execution_time_ms: 0,
+            warnings: vec![],
+            result_type: ResultType::Select,
+        })
     }
 
     async fn cancel_query(&self, _query_id: &Uuid) -> Result<()> {

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tauri::State;
 use uuid::Uuid;
 
@@ -10,12 +12,14 @@ pub async fn list_databases(
     state: State<'_, AppState>,
     connection_id: Uuid,
 ) -> Result<Vec<DatabaseInfo>, String> {
-    let active = state
-        .connection_manager
-        .get(&connection_id)
-        .ok_or("Not connected")?;
-    active
-        .schema_inspector
+    let inspector = {
+        let active = state
+            .connection_manager
+            .get(&connection_id)
+            .ok_or("Not connected")?;
+        Arc::clone(&active.schema_inspector)
+    };
+    inspector
         .list_databases()
         .await
         .map_err(|e| e.to_string())
@@ -27,12 +31,14 @@ pub async fn list_schemas(
     connection_id: Uuid,
     database: String,
 ) -> Result<Vec<SchemaInfo>, String> {
-    let active = state
-        .connection_manager
-        .get(&connection_id)
-        .ok_or("Not connected")?;
-    active
-        .schema_inspector
+    let inspector = {
+        let active = state
+            .connection_manager
+            .get(&connection_id)
+            .ok_or("Not connected")?;
+        Arc::clone(&active.schema_inspector)
+    };
+    inspector
         .list_schemas(&database)
         .await
         .map_err(|e| e.to_string())
@@ -50,15 +56,17 @@ pub async fn list_tables(
             .schema_cache
             .get_tables(&connection_id, &database, schema.as_deref())
     {
-        return Ok(cached);
+        return Ok(cached.as_ref().clone());
     }
 
-    let active = state
-        .connection_manager
-        .get(&connection_id)
-        .ok_or("Not connected")?;
-    let tables = active
-        .schema_inspector
+    let inspector = {
+        let active = state
+            .connection_manager
+            .get(&connection_id)
+            .ok_or("Not connected")?;
+        Arc::clone(&active.schema_inspector)
+    };
+    let tables = inspector
         .list_tables(&database, schema.as_deref())
         .await
         .map_err(|e| e.to_string())?;
@@ -76,12 +84,14 @@ pub async fn get_table_structure(
     connection_id: Uuid,
     table_ref: TableRef,
 ) -> Result<TableStructure, String> {
-    let active = state
-        .connection_manager
-        .get(&connection_id)
-        .ok_or("Not connected")?;
-    active
-        .schema_inspector
+    let inspector = {
+        let active = state
+            .connection_manager
+            .get(&connection_id)
+            .ok_or("Not connected")?;
+        Arc::clone(&active.schema_inspector)
+    };
+    inspector
         .get_table_structure(&table_ref)
         .await
         .map_err(|e| e.to_string())

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use aes_gcm::{
-    aead::{Aead, KeyInit},
+    aead::Aead,
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -39,10 +39,7 @@ pub fn load_or_create_key(app_data_dir: &Path) -> Result<[u8; 32]> {
 }
 
 /// Encrypt a password using AES-256-GCM. Returns (ciphertext_b64, nonce_b64).
-pub fn encrypt(key: &[u8; 32], plaintext: &str) -> Result<(String, String)> {
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|e| DataForgeError::Config(format!("Cipher init error: {e}")))?;
-
+pub fn encrypt(cipher: &Aes256Gcm, plaintext: &str) -> Result<(String, String)> {
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
@@ -55,10 +52,7 @@ pub fn encrypt(key: &[u8; 32], plaintext: &str) -> Result<(String, String)> {
 }
 
 /// Decrypt a password using AES-256-GCM.
-pub fn decrypt(key: &[u8; 32], ciphertext_b64: &str, nonce_b64: &str) -> Result<String> {
-    let cipher = Aes256Gcm::new_from_slice(key)
-        .map_err(|e| DataForgeError::Config(format!("Cipher init error: {e}")))?;
-
+pub fn decrypt(cipher: &Aes256Gcm, ciphertext_b64: &str, nonce_b64: &str) -> Result<String> {
     let ciphertext = B64
         .decode(ciphertext_b64)
         .map_err(|e| DataForgeError::Config(format!("Invalid ciphertext: {e}")))?;

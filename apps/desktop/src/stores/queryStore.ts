@@ -2,8 +2,9 @@ import { create } from 'zustand';
 import { ipc } from '../lib/ipc';
 import { useActivityStore } from './activityStore';
 import { useConnectionStore } from './connectionStore';
+import { useResultStore } from './resultStore';
 import { saveSession } from '../lib/sessionRecovery';
-import type { QueryResult, QueryHistoryEntry } from '../lib/types';
+import type { QueryResult, QueryHistoryEntry, ColumnarResult } from '../lib/types';
 
 export type TabViewMode = 'data' | 'structure' | 'er-diagram' | 'dashboard' | 'explain' | 'diff' | 'health' | 'query-builder' | 'migration' | 'alerts' | 'table-designer' | 'processes';
 
@@ -12,9 +13,6 @@ export interface QueryTab {
   connectionId: string | null;
   title: string;
   sql: string;
-  result: QueryResult | null;
-  results: QueryResult[];
-  activeResultIndex: number;
   isExecuting: boolean;
   error: string | null;
   editorVisible: boolean;
@@ -92,9 +90,6 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       connectionId: connId,
       title: title ?? `Query ${connectionTabs.length + 1}`,
       sql: '',
-      result: null,
-      results: [],
-      activeResultIndex: 0,
       isExecuting: false,
       error: null,
       editorVisible: opts?.editorVisible ?? true,
@@ -125,6 +120,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       ? { ...activeTabIds, [connId]: newActiveId ?? '' }
       : activeTabIds;
     set({ allTabs: newAllTabs, activeTabIds: newActiveTabIds });
+    useResultStore.getState().clearResult(id);
     get()._syncVisibleTabs();
   },
 
@@ -137,39 +133,43 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   },
 
   updateSql: (tabId, sql) => {
-    set((s) => ({
-      allTabs: s.allTabs.map((t) => (t.id === tabId ? { ...t, sql } : t)),
-    }));
-    get()._syncVisibleTabs();
+    set((s) => {
+      // Only update the sql field — no need to recompute tabs/activeTabId
+      // since tab identity and visibility don't change on sql edits
+      const allTabs = s.allTabs.map((t) => (t.id === tabId ? { ...t, sql } : t));
+      const tabs = s.tabs.map((t) => (t.id === tabId ? { ...t, sql } : t));
+      return { allTabs, tabs };
+    });
   },
 
   setEditorVisible: (tabId, visible) => {
-    set((s) => ({
-      allTabs: s.allTabs.map((t) =>
+    const connId = getActiveConnectionId();
+    set((s) => {
+      const allTabs = s.allTabs.map((t) =>
         t.id === tabId ? { ...t, editorVisible: visible } : t,
-      ),
-    }));
-    get()._syncVisibleTabs();
+      );
+      const tabs = computeVisibleTabs(allTabs, connId);
+      const activeTabId = (connId && s.activeTabIds[connId]) || null;
+      const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
+      return { allTabs, tabs, activeTabId: validActive };
+    });
   },
 
   setViewMode: (tabId, mode) => {
-    set((s) => ({
-      allTabs: s.allTabs.map((t) =>
+    const connId = getActiveConnectionId();
+    set((s) => {
+      const allTabs = s.allTabs.map((t) =>
         t.id === tabId ? { ...t, viewMode: mode } : t,
-      ),
-    }));
-    get()._syncVisibleTabs();
+      );
+      const tabs = computeVisibleTabs(allTabs, connId);
+      const activeTabId = (connId && s.activeTabIds[connId]) || null;
+      const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
+      return { allTabs, tabs, activeTabId: validActive };
+    });
   },
 
   setActiveResult: (tabId, index) => {
-    set((s) => ({
-      allTabs: s.allTabs.map((t) => {
-        if (t.id !== tabId) return t;
-        const result = t.results[index] ?? null;
-        return { ...t, activeResultIndex: index, result };
-      }),
-    }));
-    get()._syncVisibleTabs();
+    useResultStore.getState().setActiveResultIndex(tabId, index);
   },
 
   executeQuery: async (connectionId, tabId) => {
@@ -180,14 +180,20 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     const activityId = activity.logStart(tab.sql, connectionId);
     const startTime = performance.now();
 
-    set((s) => ({
-      allTabs: s.allTabs.map((t) =>
+    useResultStore.getState().setExecuting(tabId);
+
+    set((s) => {
+      const connId = getActiveConnectionId();
+      const allTabs = s.allTabs.map((t) =>
         t.id === tabId
-          ? { ...t, isExecuting: true, error: null, result: null, results: [], activeResultIndex: 0 }
+          ? { ...t, isExecuting: true, error: null }
           : t,
-      ),
-    }));
-    get()._syncVisibleTabs();
+      );
+      const tabs = computeVisibleTabs(allTabs, connId);
+      const activeTabId = (connId && s.activeTabIds[connId]) || null;
+      const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
+      return { allTabs, tabs, activeTabId: validActive };
+    });
 
     // Split into multiple statements for batch execution
     const statements = tab.sql.split(/;\s*/).map((s) => s.trim()).filter(Boolean);
@@ -209,42 +215,55 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         } else {
           useActivityStore.getState().logSuccess(activityId, durationMs, totalRows);
         }
-        set((s) => ({
-          allTabs: s.allTabs.map((t) =>
+        useResultStore.getState().setResults(tabId, results, errors.length > 0 ? errors.join('\n') : null);
+
+        set((s) => {
+          const connId = getActiveConnectionId();
+          const allTabs = s.allTabs.map((t) =>
             t.id === tabId
-              ? {
-                  ...t,
-                  isExecuting: false,
-                  results,
-                  result: results[0] ?? null,
-                  activeResultIndex: 0,
-                  error: errors.length > 0 ? errors.join('\n') : null,
-                }
+              ? { ...t, isExecuting: false, error: errors.length > 0 ? errors.join('\n') : null }
               : t,
-          ),
-        }));
+          );
+          const tabs = computeVisibleTabs(allTabs, connId);
+          const activeTabId = (connId && s.activeTabIds[connId]) || null;
+          const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
+          return { allTabs, tabs, activeTabId: validActive };
+        });
       } else {
-        const result = await ipc.executeQuery(connectionId, tab.sql);
+        const result = await ipc.executeQueryColumnar(connectionId, tab.sql);
         const durationMs = Math.round(performance.now() - startTime);
-        useActivityStore.getState().logSuccess(activityId, durationMs, result.rows.length);
-        set((s) => ({
-          allTabs: s.allTabs.map((t) =>
-            t.id === tabId ? { ...t, isExecuting: false, result, results: [result], activeResultIndex: 0 } : t,
-          ),
-        }));
+        useActivityStore.getState().logSuccess(activityId, durationMs, result.row_count);
+        useResultStore.getState().setColumnarResult(tabId, result);
+
+        set((s) => {
+          const connId = getActiveConnectionId();
+          const allTabs = s.allTabs.map((t) =>
+            t.id === tabId ? { ...t, isExecuting: false } : t,
+          );
+          const tabs = computeVisibleTabs(allTabs, connId);
+          const activeTabId = (connId && s.activeTabIds[connId]) || null;
+          const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
+          return { allTabs, tabs, activeTabId: validActive };
+        });
       }
     } catch (e) {
       const durationMs = Math.round(performance.now() - startTime);
       useActivityStore.getState().logError(activityId, durationMs, String(e));
-      set((s) => ({
-        allTabs: s.allTabs.map((t) =>
+      useResultStore.getState().setError(tabId, String(e));
+
+      set((s) => {
+        const connId = getActiveConnectionId();
+        const allTabs = s.allTabs.map((t) =>
           t.id === tabId
             ? { ...t, isExecuting: false, error: String(e) }
             : t,
-        ),
-      }));
+        );
+        const tabs = computeVisibleTabs(allTabs, connId);
+        const activeTabId = (connId && s.activeTabIds[connId]) || null;
+        const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
+        return { allTabs, tabs, activeTabId: validActive };
+      });
     }
-    get()._syncVisibleTabs();
   },
 
   cancelQuery: async (connectionId, queryId) => {
@@ -260,9 +279,6 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     const restored: QueryTab[] = tabs.map((t) => ({
       ...t,
       connectionId: t.connectionId ?? null,
-      result: null,
-      results: [],
-      activeResultIndex: 0,
       isExecuting: false,
       error: null,
       viewMode: 'data' as TabViewMode,
@@ -280,10 +296,24 @@ useConnectionStore.subscribe((state, prevState) => {
 });
 
 // Auto-save session on tab changes (debounced)
+// Uses a reference-equality check on allTabs first to avoid
+// expensive JSON.stringify on every keystroke
 let _saveTimeout: ReturnType<typeof setTimeout> | null = null;
+let _lastTabsRef: QueryTab[] | null = null;
+let _lastTabSnapshot = '';
 useQueryStore.subscribe((state) => {
+  // Fast path: if allTabs reference hasn't changed, skip entirely
+  if (state.allTabs === _lastTabsRef) return;
+  _lastTabsRef = state.allTabs;
+
+  // Debounce first, then snapshot — avoids JSON.stringify on every mutation
   if (_saveTimeout) clearTimeout(_saveTimeout);
   _saveTimeout = setTimeout(() => {
+    const snapshot = JSON.stringify(
+      state.allTabs.map((t) => [t.id, t.connectionId, t.title, t.sql, t.editorVisible, t.database, t.table]),
+    );
+    if (snapshot === _lastTabSnapshot) return;
+    _lastTabSnapshot = snapshot;
     saveSession(state.allTabs, state.activeTabIds);
   }, 1000);
 });

@@ -35,7 +35,6 @@ interface MonitoringState {
   alertHistory: AlertEvent[];
   isPolling: boolean;
   pollIntervalMs: number;
-  pollingTimer: ReturnType<typeof setInterval> | null;
 
   startPolling: (connectionId: string, dbType: string) => void;
   stopPolling: () => void;
@@ -116,6 +115,8 @@ function evaluateRule(rule: AlertRule, value: number): boolean {
 
 // === Store ===
 
+let _pollingTimer: ReturnType<typeof setTimeout> | null = null;
+
 export const useMonitoringStore = create<MonitoringState>((set, get) => ({
   metrics: {},
   previousValues: {},
@@ -123,18 +124,19 @@ export const useMonitoringStore = create<MonitoringState>((set, get) => ({
   alertHistory: [],
   isPolling: false,
   pollIntervalMs: 2000,
-  pollingTimer: null,
 
   startPolling: (connectionId, dbType) => {
-    const state = get();
     // Stop any existing polling first
-    if (state.pollingTimer) {
-      clearInterval(state.pollingTimer);
+    if (_pollingTimer) {
+      clearTimeout(_pollingTimer);
+      _pollingTimer = null;
     }
 
     set({ isPolling: true, metrics: {}, previousValues: {} });
 
-    const poll = async () => {
+    // Use setTimeout chain to prevent overlapping polls:
+    // next poll starts only after the previous one completes
+    const schedulePoll = async () => {
       try {
         if (dbType === 'mysql') {
           await pollMySQL(connectionId);
@@ -143,22 +145,24 @@ export const useMonitoringStore = create<MonitoringState>((set, get) => ({
         }
       } catch {
         // Silently ignore poll failures — connection may have dropped
+      } finally {
+        // Schedule next poll after completion (not on a fixed interval)
+        if (get().isPolling) {
+          _pollingTimer = setTimeout(schedulePoll, get().pollIntervalMs);
+        }
       }
     };
 
     // Initial poll
-    poll();
-
-    const timer = setInterval(poll, get().pollIntervalMs);
-    set({ pollingTimer: timer });
+    schedulePoll();
   },
 
   stopPolling: () => {
-    const { pollingTimer } = get();
-    if (pollingTimer) {
-      clearInterval(pollingTimer);
+    if (_pollingTimer) {
+      clearTimeout(_pollingTimer);
+      _pollingTimer = null;
     }
-    set({ isPolling: false, pollingTimer: null });
+    set({ isPolling: false });
   },
 
   addAlertRule: (rule) => {
@@ -220,9 +224,12 @@ function checkAlerts(metricName: string, value: number) {
         timestamp: Date.now(),
         acknowledged: false,
       };
-      useMonitoringStore.setState((s) => ({
-        alertHistory: [event, ...s.alertHistory].slice(0, 200),
-      }));
+      useMonitoringStore.setState((s) => {
+        const history = s.alertHistory.length >= 200
+          ? [event, ...s.alertHistory.slice(0, 199)]
+          : [event, ...s.alertHistory];
+        return { alertHistory: history };
+      });
     }
   }
 }

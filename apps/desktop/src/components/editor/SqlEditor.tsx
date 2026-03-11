@@ -1,5 +1,4 @@
 import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
-import { format as formatSql } from 'sql-formatter';
 import { usePreferencesStore } from '@/stores/preferencesStore';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
@@ -237,16 +236,65 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
   const disposableRef = useRef<any>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Schema completion cache — only rebuild when schema store changes
+  const schemaVersionRef = useRef(0);
+  const cachedSchemaVersionRef = useRef(-1);
+  const suggestionsCacheRef = useRef<{ allTables: { name: string; database: string }[]; allColumns: { name: string; table: string; type: string }[] }>({ allTables: [], allColumns: [] });
   const fontSize = usePreferencesStore((s) => s.editorFontSize);
   const showLineNumbers = usePreferencesStore((s) => s.editorShowLineNumbers);
   const wordWrap = usePreferencesStore((s) => s.editorWordWrap);
   const theme = usePreferencesStore((s) => s.theme);
+
+  // Subscribe to schema changes to invalidate completion cache
+  useEffect(() => {
+    return useSchemaStore.subscribe(() => { schemaVersionRef.current++; });
+  }, []);
 
   // Keep stable refs for callbacks used inside Monaco
   const onExecuteRef = useRef(onExecute);
   const onChangeRef = useRef(onChange);
   useEffect(() => { onExecuteRef.current = onExecute; }, [onExecute]);
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+
+  // Sync external value changes into Monaco (e.g. tab switch, file load)
+  const lastExternalValueRef = useRef(value);
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (editor && value !== lastExternalValueRef.current) {
+      lastExternalValueRef.current = value;
+      const model = editor.getModel();
+      if (model && model.getValue() !== value) {
+        model.setValue(value);
+      }
+    }
+  }, [value]);
+
+  // Debounced onChange — sync to store every 150ms instead of every keystroke
+  const handleChange = useCallback((val: string | undefined) => {
+    const text = val || '';
+    lastExternalValueRef.current = text;
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      onChangeRef.current(text);
+    }, 150);
+  }, []);
+
+  // Flush pending changes on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        // Flush the last value
+        const editor = editorRef.current;
+        if (editor) {
+          const model = editor.getModel();
+          if (model) onChangeRef.current(model.getValue());
+        }
+      }
+    };
+  }, []);
 
   const handleMount = useCallback(
     (editor: any, monaco: any) => {
@@ -273,21 +321,30 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
         return kb;
       };
 
-      // Execute query
+      // Execute query — flush pending changes first so store has latest SQL
       editor.addCommand(
         toMonacoKeybinding('editor.execute'),
-        () => onExecuteRef.current(),
+        () => {
+          if (debounceRef.current) {
+            clearTimeout(debounceRef.current);
+            debounceRef.current = null;
+          }
+          const model = editor.getModel();
+          if (model) onChangeRef.current(model.getValue());
+          onExecuteRef.current();
+        },
       );
 
-      // Format SQL
+      // Format SQL (lazy-loaded to avoid bundling on initial load)
       editor.addCommand(
         toMonacoKeybinding('editor.format'),
-        () => {
+        async () => {
           const model = editor.getModel();
           if (!model) return;
           const val = model.getValue();
           try {
-            const formatted = formatSql(val, {
+            const { format } = await import('sql-formatter');
+            const formatted = format(val, {
               language: 'sql',
               tabWidth: 2,
               keywordCase: 'upper',
@@ -312,6 +369,9 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
       if (!completionProviderRegistered) {
         completionProviderRegistered = true;
 
+        // Build a fast lookup: table name -> columns
+        const columnsByTableRef = { current: new Map<string, { name: string; table: string; type: string }[]>() };
+
         disposableRef.current = monaco.languages.registerCompletionItemProvider('sql', {
           triggerCharacters: ['.'],
           provideCompletionItems: (model: any, position: any) => {
@@ -323,48 +383,52 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
               endColumn: word.endColumn,
             };
 
-            // Get the character before the current word to detect dot context
             const lineContent = model.getLineContent(position.lineNumber);
             const charBeforeWord = lineContent[word.startColumn - 2] || '';
 
-            const fullText = model.getValue();
+            // Refresh schema cache only when changed
+            if (schemaVersionRef.current !== cachedSchemaVersionRef.current) {
+              const schemaState = useSchemaStore.getState();
 
-            // Get schema data
-            const schemaState = useSchemaStore.getState();
-
-            // Collect all tables
-            const allTables: { name: string; database: string }[] = [];
-            for (const [db, tables] of Object.entries(schemaState.tables)) {
-              for (const t of tables) {
-                allTables.push({ name: t.name, database: db });
+              const freshTables: { name: string; database: string }[] = [];
+              for (const [db, tables] of Object.entries(schemaState.tables)) {
+                for (const t of tables) {
+                  freshTables.push({ name: t.name, database: db });
+                }
               }
+
+              const freshColumns: { name: string; table: string; type: string }[] = [];
+              const byTable = new Map<string, { name: string; table: string; type: string }[]>();
+              for (const structure of Object.values(schemaState.structures)) {
+                const tableLower = structure.table_ref.table.toLowerCase();
+                const cols: { name: string; table: string; type: string }[] = [];
+                for (const col of structure.columns) {
+                  const entry = { name: col.name, table: structure.table_ref.table, type: col.data_type };
+                  freshColumns.push(entry);
+                  cols.push(entry);
+                }
+                byTable.set(tableLower, cols);
+              }
+
+              suggestionsCacheRef.current = { allTables: freshTables, allColumns: freshColumns };
+              columnsByTableRef.current = byTable;
+              cachedSchemaVersionRef.current = schemaVersionRef.current;
             }
 
-            // Collect all columns from loaded structures
-            const allColumns: { name: string; table: string; type: string }[] = [];
-            for (const structure of Object.values(schemaState.structures)) {
-              for (const col of structure.columns) {
-                allColumns.push({
-                  name: col.name,
-                  table: structure.table_ref.table,
-                  type: col.data_type,
-                });
-              }
-            }
+            const { allTables, allColumns } = suggestionsCacheRef.current;
 
-            // === DOT COMPLETION: table.column ===
+            // === DOT COMPLETION: table.column or alias.column ===
             if (charBeforeWord === '.') {
-              // Find the word before the dot
               const textBeforeDot = lineContent.substring(0, word.startColumn - 2);
               const tableMatch = textBeforeDot.match(/(\w+)\s*$/);
               if (tableMatch) {
                 const prefix = tableMatch[1].toLowerCase();
+                const fullText = model.getValue();
                 const aliases = parseAliases(fullText);
+                // Resolve alias → table name, or use prefix directly as table name
                 const resolvedTable = aliases[prefix] || prefix;
 
-                const tableColumns = allColumns.filter(
-                  (c) => c.table.toLowerCase() === resolvedTable,
-                );
+                const tableColumns = columnsByTableRef.current.get(resolvedTable) ?? [];
 
                 if (tableColumns.length > 0) {
                   return {
@@ -378,10 +442,28 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
                     })),
                   };
                 }
+
+                // Fuzzy fallback: partial table name match (e.g. "usr." matches "users")
+                const fuzzyMatches: any[] = [];
+                for (const [tableName, cols] of columnsByTableRef.current) {
+                  if (tableName.startsWith(prefix) || tableName.includes(prefix)) {
+                    for (const col of cols) {
+                      fuzzyMatches.push({
+                        label: col.name,
+                        kind: monaco.languages.CompletionItemKind.Field,
+                        detail: `${col.type} — ${col.table}`,
+                        insertText: col.name,
+                        range,
+                        sortText: tableName.startsWith(prefix) ? '0a' : '0b',
+                      });
+                    }
+                  }
+                }
+                if (fuzzyMatches.length > 0) return { suggestions: fuzzyMatches };
               }
             }
 
-            // === CONTEXT-AWARE COMPLETION ===
+            // === CONTEXT-AWARE COMPLETION (only relevant items) ===
             const textBeforeCursor = model.getValueInRange({
               startLineNumber: 1,
               startColumn: 1,
@@ -390,105 +472,135 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
             });
             const context = detectSqlContext(textBeforeCursor);
             const suggestions: any[] = [];
-            const tablePrefixes = parseTablePrefixes(fullText);
 
             const isColumnCtx = context === 'select' || context === 'condition'
               || context === 'order_group' || context === 'set';
             const isTableCtx = context === 'from';
+            const isDdlCtx = context === 'ddl';
 
-            // --- Columns (always present — Monaco fuzzy-matches on user input) ---
-            {
+            // In FROM context: tables first, then databases
+            if (isTableCtx) {
+              for (const t of allTables) {
+                suggestions.push({
+                  label: t.name,
+                  kind: monaco.languages.CompletionItemKind.Struct,
+                  detail: `Table — ${t.database}`,
+                  insertText: t.name,
+                  range,
+                  sortText: '0a',
+                });
+              }
+              for (const db of useSchemaStore.getState().databases) {
+                suggestions.push({
+                  label: db.name, kind: monaco.languages.CompletionItemKind.Module,
+                  detail: 'Database', insertText: db.name, range, sortText: '0b',
+                });
+              }
+              return { suggestions };
+            }
+
+            // In column context: prioritize columns from referenced tables
+            if (isColumnCtx) {
+              const fullText = model.getValue();
+              const tablePrefixes = parseTablePrefixes(fullText);
+              const referencedTables = new Set(Object.keys(tablePrefixes));
+
+              // Referenced table columns first
               const seenCols = new Set<string>();
+              for (const col of allColumns) {
+                const tableLower = col.table.toLowerCase();
+                if (!referencedTables.has(tableLower)) continue;
+                const key = `${col.name}__${col.table}`;
+                if (seenCols.has(key)) continue;
+                seenCols.add(key);
+                const prefix = tablePrefixes[tableLower] || col.table;
+                suggestions.push({
+                  label: `${prefix}.${col.name}`,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  detail: `${col.type} — ${col.table}`,
+                  insertText: `${prefix}.${col.name}`,
+                  filterText: `${prefix} ${col.name}`,
+                  range,
+                  sortText: '0a',
+                });
+              }
+
+              // Functions
+              for (const fn of SQL_FUNCTIONS) {
+                suggestions.push({
+                  label: fn.label, kind: monaco.languages.CompletionItemKind.Function,
+                  detail: fn.detail, insertText: fn.insertText,
+                  insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                  range, sortText: '0b',
+                });
+              }
+
+              // Non-referenced columns (lower priority)
               for (const col of allColumns) {
                 const key = `${col.name}__${col.table}`;
                 if (seenCols.has(key)) continue;
                 seenCols.add(key);
-                const prefix = tablePrefixes[col.table.toLowerCase()] || col.table;
-                const qualified = `${prefix}.${col.name}`;
-                const isReferenced = col.table.toLowerCase() in tablePrefixes;
                 suggestions.push({
-                  label: qualified,
+                  label: `${col.table}.${col.name}`,
                   kind: monaco.languages.CompletionItemKind.Field,
                   detail: `${col.type} — ${col.table}`,
-                  insertText: qualified,
-                  filterText: `${prefix} ${col.name}`,
+                  insertText: `${col.table}.${col.name}`,
+                  filterText: `${col.table} ${col.name}`,
                   range,
-                  sortText: isColumnCtx
-                    ? (isReferenced ? '0a' : '0c')
-                    : (isReferenced ? '1a' : '1c'),
+                  sortText: '2a',
                 });
               }
+
+              return { suggestions };
             }
 
-            // --- Tables (always present — Monaco fuzzy-matches on user input) ---
-            for (const t of allTables) {
-              suggestions.push({
-                label: t.name,
-                kind: monaco.languages.CompletionItemKind.Struct,
-                detail: `Table — ${t.database}`,
-                insertText: t.name,
-                range,
-                sortText: isTableCtx ? '0a' : '2a',
-              });
+            // In DDL context: types + keywords
+            if (isDdlCtx) {
+              for (const t of SQL_TYPES) {
+                suggestions.push({
+                  label: t, kind: monaco.languages.CompletionItemKind.TypeParameter,
+                  detail: 'Data type', insertText: t, range, sortText: '0a',
+                });
+              }
+              for (const kw of ['TABLE', 'INDEX', 'VIEW', 'DATABASE', 'SCHEMA', 'COLUMN']) {
+                suggestions.push({
+                  label: kw, kind: monaco.languages.CompletionItemKind.Keyword,
+                  insertText: kw, range, sortText: '0b',
+                });
+              }
+              for (const t of allTables) {
+                suggestions.push({
+                  label: t.name, kind: monaco.languages.CompletionItemKind.Struct,
+                  detail: `Table — ${t.database}`, insertText: t.name, range, sortText: '1a',
+                });
+              }
+              return { suggestions };
             }
 
-            // --- Functions (always — prioritized in select/condition) ---
-            for (const fn of SQL_FUNCTIONS) {
-              suggestions.push({
-                label: fn.label,
-                kind: monaco.languages.CompletionItemKind.Function,
-                detail: fn.detail,
-                insertText: fn.insertText,
-                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                range,
-                sortText: (context === 'select' || context === 'condition') ? '0b' : '3a',
-              });
-            }
-
-            // --- Clause snippets (always — prioritized after table) ---
+            // After table / general context: clause snippets + keywords + tables + columns
+            // Clause snippets
             for (const cs of CLAUSE_SNIPPETS) {
               suggestions.push({
-                label: cs.label,
-                kind: monaco.languages.CompletionItemKind.Snippet,
-                detail: cs.detail,
-                insertText: cs.insertText,
+                label: cs.label, kind: monaco.languages.CompletionItemKind.Snippet,
+                detail: cs.detail, insertText: cs.insertText,
                 insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                range,
-                sortText: context === 'after_table' ? '0a' : '2b',
+                range, sortText: context === 'after_table' ? '0a' : '1a',
               });
             }
 
-            // --- Keywords (always — priority depends on context) ---
+            // Keywords
             for (const kw of SQL_KEYWORDS) {
-              let priority = '4a';
-              if (context === 'select' && ['DISTINCT', 'CASE', 'AS'].includes(kw)) priority = '0c';
-              else if (context === 'condition' && ['NOT', 'IN', 'LIKE', 'BETWEEN', 'EXISTS', 'IS', 'NULL', 'TRUE', 'FALSE'].includes(kw)) priority = '0b';
-              else if (context === 'order_group' && ['ASC', 'DESC'].includes(kw)) priority = '0b';
-              else if (context === 'ddl' && ['TABLE', 'INDEX', 'VIEW', 'DATABASE', 'SCHEMA', 'COLUMN'].includes(kw)) priority = '0a';
               suggestions.push({
                 label: kw, kind: monaco.languages.CompletionItemKind.Keyword,
-                insertText: kw, range, sortText: priority,
+                insertText: kw, range, sortText: '1b',
               });
             }
 
-            // --- Databases (always) ---
-            for (const db of schemaState.databases) {
+            // Tables
+            for (const t of allTables) {
               suggestions.push({
-                label: db.name,
-                kind: monaco.languages.CompletionItemKind.Module,
-                detail: 'Database',
-                insertText: db.name,
-                range,
-                sortText: isTableCtx ? '0b' : '3b',
-              });
-            }
-
-            // --- Data types (always) ---
-            for (const t of SQL_TYPES) {
-              suggestions.push({
-                label: t, kind: monaco.languages.CompletionItemKind.TypeParameter,
-                detail: 'Data type', insertText: t, range,
-                sortText: context === 'ddl' ? '0b' : '5a',
+                label: t.name, kind: monaco.languages.CompletionItemKind.Struct,
+                detail: `Table — ${t.database}`, insertText: t.name, range, sortText: '2a',
               });
             }
 
@@ -511,16 +623,17 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
     };
   }, []);
 
-  // Listen for toolbar format event
+  // Listen for toolbar format event (lazy-loaded)
   useEffect(() => {
-    const handler = () => {
+    const handler = async () => {
       const editor = editorRef.current;
       if (!editor) return;
       const model = editor.getModel();
       if (!model) return;
       const val = model.getValue();
       try {
-        const formatted = formatSql(val, {
+        const { format } = await import('sql-formatter');
+        const formatted = format(val, {
           language: 'sql',
           tabWidth: 2,
           keywordCase: 'upper',
@@ -546,8 +659,8 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
       <MonacoEditor
         height="100%"
         defaultLanguage="sql"
-        value={value}
-        onChange={(val) => onChange(val || '')}
+        defaultValue={value}
+        onChange={handleChange}
         onMount={handleMount}
         theme={theme === 'dark' ? 'vs-dark' : 'vs'}
         options={{

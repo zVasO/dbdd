@@ -11,6 +11,7 @@ postgres = ["dataforge-postgres"]
 
 [dependencies]
 dataforge-core = { path = "../dataforge-core" }
+dataforge-config = { path = "../dataforge-config" }
 dataforge-mysql = { path = "../dataforge-mysql", optional = true }
 dataforge-sqlite = { path = "../dataforge-sqlite", optional = true }
 dataforge-postgres = { path = "../dataforge-postgres", optional = true }
@@ -20,6 +21,7 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 dashmap = { workspace = true }
+futures = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 tauri = { workspace = true }

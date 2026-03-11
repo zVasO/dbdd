@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect, useMemo } from 'react';
+import { useRef, useState, useCallback, useEffect, useMemo, useDeferredValue, memo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -10,6 +10,7 @@ import { useChangeStore } from '@/stores/changeStore';
 import { useFilterStore } from '@/stores/filterStore';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useQueryStore } from '@/stores/queryStore';
+import { useResultStore } from '@/stores/resultStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import type { RowInsert } from '@/stores/changeStore';
 import { Button } from '@/components/ui/button';
@@ -17,10 +18,16 @@ import { QuickLook } from './QuickLook';
 import { usePreferencesStore } from '@/stores/preferencesStore';
 import { useShortcutStore, matchesBinding } from '@/stores/shortcutStore';
 
+interface SortRequest {
+  column: string;
+  direction: 'asc' | 'desc';
+}
+
 interface Props {
   result: QueryResult;
   database?: string;
   table?: string;
+  onServerSort?: (sorts: SortRequest[]) => void;
 }
 
 interface EditingCell {
@@ -84,7 +91,72 @@ function getStoredPageSize(): number {
   }
 }
 
-export function DataGrid({ result, database, table }: Props) {
+// ─── Worker hook: offload filter/sort for large datasets ────────────────────
+
+interface WorkerState {
+  filteredIndices: number[] | null;
+  sortedIndices: number[] | null;
+}
+
+function useGridWorker(
+  data: import('@/lib/types').ColumnData[] | undefined,
+  filterText: string,
+  sortColumns: SortColumn[],
+  rowCount: number,
+): WorkerState & { useWorker: boolean } {
+  const workerRef = useRef<Worker | null>(null);
+  const [state, setState] = useState<WorkerState>({ filteredIndices: null, sortedIndices: null });
+  const useWorker = rowCount > 1000 && !!data && data.length > 0;
+
+  useEffect(() => {
+    if (!useWorker) return;
+    const worker = new Worker(
+      new URL('../../workers/grid.worker.ts', import.meta.url),
+      { type: 'module' },
+    );
+    workerRef.current = worker;
+
+    worker.onmessage = (e: MessageEvent) => {
+      if (e.data.type === 'filter-result') {
+        setState((prev) => ({ ...prev, filteredIndices: e.data.indices }));
+      }
+      if (e.data.type === 'sort-result') {
+        setState((prev) => ({ ...prev, sortedIndices: e.data.indices }));
+      }
+    };
+
+    return () => {
+      worker.terminate();
+      workerRef.current = null;
+    };
+  }, [useWorker]);
+
+  // Post filter
+  useEffect(() => {
+    if (!useWorker || !data || !workerRef.current) return;
+    workerRef.current.postMessage({ type: 'filter', data, filterText });
+  }, [useWorker, data, filterText]);
+
+  // Post sort
+  useEffect(() => {
+    if (!useWorker || !data || !workerRef.current || sortColumns.length === 0) {
+      setState((prev) => ({ ...prev, sortedIndices: null }));
+      return;
+    }
+    workerRef.current.postMessage({
+      type: 'sort',
+      data,
+      sortColumns,
+      inputIndices: state.filteredIndices,
+    });
+  }, [useWorker, data, sortColumns, state.filteredIndices]);
+
+  return { ...state, useWorker };
+}
+
+export type { SortRequest };
+
+export const DataGrid = memo(function DataGrid({ result, database, table, onServerSort }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [lastSelectedRow, setLastSelectedRow] = useState<number | null>(null);
@@ -104,7 +176,8 @@ export function DataGrid({ result, database, table }: Props) {
   const [lastSelectedCellKey, setLastSelectedCellKey] = useState<{ rowIndex: number; colIndex: number } | null>(null);
 
   // Filter state
-  const [filterText, setFilterText] = useState('');
+  const [filterInput, setFilterInput] = useState('');
+  const filterText = useDeferredValue(filterInput);
 
   // Sorting state
   const [sortColumns, setSortColumns] = useState<SortColumn[]>([]);
@@ -118,11 +191,11 @@ export function DataGrid({ result, database, table }: Props) {
   const resizingRef = useRef<{ colIndex: number; startX: number; startWidth: number } | null>(null);
 
   // Drag selection state (rows)
-  const [isDragging, setIsDragging] = useState(false);
+  const isDraggingRef = useRef(false);
   const [dragStartRow, setDragStartRow] = useState<number | null>(null);
 
   // Drag selection state (cells)
-  const [isCellDragging, setIsCellDragging] = useState(false);
+  const isCellDraggingRef = useRef(false);
   const [cellDragStart, setCellDragStart] = useState<{ rowIndex: number; colIndex: number } | null>(null);
 
   // Context menu state
@@ -151,6 +224,16 @@ export function DataGrid({ result, database, table }: Props) {
   const visibleColIndexMap = useMemo(
     () => visibleColumns.map((col) => result.columns.indexOf(col)),
     [visibleColumns, result.columns],
+  );
+
+  // Worker-based filter/sort for large datasets
+  const activeTabId = useQueryStore((s) => s.activeTabId);
+  const tabResult = useResultStore((s) => activeTabId ? s.results[activeTabId] : undefined);
+  const { filteredIndices: workerFilteredIndices, sortedIndices: workerSortedIndices, useWorker } = useGridWorker(
+    tabResult?.data,
+    filterText,
+    sortColumns,
+    result.rows.length,
   );
 
   // FK navigation: detect FK columns and allow click-to-navigate
@@ -268,22 +351,44 @@ export function DataGrid({ result, database, table }: Props) {
     };
   }, [filteredRows, filteredIndexMap, sortColumns]);
 
+  // When using worker, override the filtered/sorted results
+  const effectiveRows = useMemo(() => {
+    if (!useWorker) return { sortedRows, sortedIndexMap };
+
+    if (workerSortedIndices) {
+      return {
+        sortedRows: workerSortedIndices.map((i) => result.rows[i]),
+        sortedIndexMap: workerSortedIndices,
+      };
+    }
+    if (workerFilteredIndices) {
+      return {
+        sortedRows: workerFilteredIndices.map((i) => result.rows[i]),
+        sortedIndexMap: workerFilteredIndices,
+      };
+    }
+    return { sortedRows, sortedIndexMap };
+  }, [useWorker, workerFilteredIndices, workerSortedIndices, sortedRows, sortedIndexMap, result.rows]);
+
+  const finalSortedRows = effectiveRows.sortedRows;
+  const finalSortedIndexMap = effectiveRows.sortedIndexMap;
+
   // Paginate
-  const totalSortedRows = sortedRows.length;
+  const totalSortedRows = finalSortedRows.length;
   const totalPages = pageSize === Infinity ? 1 : Math.max(1, Math.ceil(totalSortedRows / pageSize));
   const safePage = Math.min(currentPage, totalPages - 1);
 
   const { paginatedRows, paginatedIndexMap } = useMemo(() => {
     if (pageSize === Infinity) {
-      return { paginatedRows: sortedRows, paginatedIndexMap: sortedIndexMap };
+      return { paginatedRows: finalSortedRows, paginatedIndexMap: finalSortedIndexMap };
     }
     const start = safePage * pageSize;
     const end = start + pageSize;
     return {
-      paginatedRows: sortedRows.slice(start, end),
-      paginatedIndexMap: sortedIndexMap.slice(start, end),
+      paginatedRows: finalSortedRows.slice(start, end),
+      paginatedIndexMap: finalSortedIndexMap.slice(start, end),
     };
-  }, [sortedRows, sortedIndexMap, safePage, pageSize]);
+  }, [finalSortedRows, finalSortedIndexMap, safePage, pageSize]);
 
   const handleDuplicateRow = useCallback((paginatedIdx: number) => {
     if (!database || !table) return;
@@ -350,7 +455,7 @@ export function DataGrid({ result, database, table }: Props) {
     count: paginatedRows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 32,
-    overscan: 20,
+    overscan: 5,
   });
 
   // Focus input on edit
@@ -364,8 +469,8 @@ export function DataGrid({ result, database, table }: Props) {
   // Global mouseup for drag selection + column resize
   useEffect(() => {
     const handleMouseUp = () => {
-      if (isDragging) setIsDragging(false);
-      if (isCellDragging) setIsCellDragging(false);
+      if (isDraggingRef.current) isDraggingRef.current = false;
+      if (isCellDraggingRef.current) isCellDraggingRef.current = false;
       if (resizingRef.current) {
         resizingRef.current = null;
         document.body.style.cursor = '';
@@ -387,7 +492,7 @@ export function DataGrid({ result, database, table }: Props) {
       window.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('mousemove', handleMouseMove);
     };
-  }, [isDragging, isCellDragging]);
+  }, []);
 
   // ─── Column resize ─────────────────────────────────────────────────────────
 
@@ -418,25 +523,33 @@ export function DataGrid({ result, database, table }: Props) {
   const handleHeaderClick = useCallback((colIndex: number, shiftKey: boolean) => {
     setSortColumns((prev) => {
       const existingIdx = prev.findIndex((s) => s.colIndex === colIndex);
+      let next: SortColumn[];
       if (existingIdx !== -1) {
         const existing = prev[existingIdx];
         if (existing.direction === 'asc') {
-          // asc → desc
-          const next = [...prev];
+          next = [...prev];
           next[existingIdx] = { ...existing, direction: 'desc' };
-          return next;
         } else {
-          // desc → remove
-          return prev.filter((_, i) => i !== existingIdx);
+          next = prev.filter((_, i) => i !== existingIdx);
         }
+      } else if (shiftKey) {
+        next = [...prev, { colIndex, direction: 'asc' }];
+      } else {
+        next = [{ colIndex, direction: 'asc' }];
       }
-      // New sort
-      if (shiftKey) {
-        return [...prev, { colIndex, direction: 'asc' }];
+
+      // Server-side sort when browsing a table
+      if (onServerSort) {
+        const sorts: SortRequest[] = next.map((s) => ({
+          column: result.columns[s.colIndex].name,
+          direction: s.direction,
+        }));
+        onServerSort(sorts);
       }
-      return [{ colIndex, direction: 'asc' }];
+
+      return next;
     });
-  }, []);
+  }, [onServerSort, result.columns]);
 
   const getSortDirection = useCallback((colIndex: number): 'asc' | 'desc' | null => {
     const found = sortColumns.find((s) => s.colIndex === colIndex);
@@ -467,7 +580,7 @@ export function DataGrid({ result, database, table }: Props) {
           return next;
         });
       } else {
-        setIsDragging(true);
+        isDraggingRef.current = true;
         setDragStartRow(rowIndex);
         setSelectedRows(new Set([rowIndex]));
       }
@@ -478,7 +591,7 @@ export function DataGrid({ result, database, table }: Props) {
 
   const handleRowMouseEnter = useCallback(
     (rowIndex: number) => {
-      if (!isDragging || dragStartRow === null) return;
+      if (!isDraggingRef.current || dragStartRow === null) return;
       const start = Math.min(dragStartRow, rowIndex);
       const end = Math.max(dragStartRow, rowIndex);
       const next = new Set<number>();
@@ -486,7 +599,7 @@ export function DataGrid({ result, database, table }: Props) {
       setSelectedRows(next);
       setSelectedCells(new Set());
     },
-    [isDragging, dragStartRow],
+    [dragStartRow],
   );
 
   // Cell click → cell selection + start drag (left click only)
@@ -519,7 +632,7 @@ export function DataGrid({ result, database, table }: Props) {
         });
         setLastSelectedCellKey({ rowIndex, colIndex });
       } else {
-        setIsCellDragging(true);
+        isCellDraggingRef.current = true;
         setCellDragStart({ rowIndex, colIndex });
         setSelectedCells(new Set([cellKey(rowIndex, colIndex)]));
         setLastSelectedCellKey({ rowIndex, colIndex });
@@ -532,7 +645,7 @@ export function DataGrid({ result, database, table }: Props) {
   // Cell drag → rectangular selection
   const handleCellMouseEnter = useCallback(
     (rowIndex: number, colIndex: number) => {
-      if (!isCellDragging || !cellDragStart) return;
+      if (!isCellDraggingRef.current || !cellDragStart) return;
       const minRow = Math.min(cellDragStart.rowIndex, rowIndex);
       const maxRow = Math.max(cellDragStart.rowIndex, rowIndex);
       const minCol = Math.min(cellDragStart.colIndex, colIndex);
@@ -546,7 +659,7 @@ export function DataGrid({ result, database, table }: Props) {
       setSelectedCells(next);
       setLastSelectedCellKey({ rowIndex, colIndex });
     },
-    [isCellDragging, cellDragStart],
+    [cellDragStart],
   );
 
   const handleCellDoubleClick = useCallback(
@@ -960,11 +1073,11 @@ export function DataGrid({ result, database, table }: Props) {
         <input
           className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none"
           placeholder="Filter rows..."
-          value={filterText}
-          onChange={(e) => setFilterText(e.target.value)}
+          value={filterInput}
+          onChange={(e) => setFilterInput(e.target.value)}
         />
-        {filterText && (
-          <button onClick={() => setFilterText('')} className="text-muted-foreground hover:text-foreground">
+        {filterInput && (
+          <button onClick={() => setFilterInput('')} className="text-muted-foreground hover:text-foreground">
             <X className="h-3 w-3" />
           </button>
         )}
@@ -1486,7 +1599,7 @@ export function DataGrid({ result, database, table }: Props) {
       />
     </div>
   );
-}
+});
 
 function formatCell(cell: CellValue): string {
   switch (cell.type) {

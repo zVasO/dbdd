@@ -19,6 +19,7 @@ import {
   toMarkdown,
 } from '@/lib/exportFormats';
 import { useQueryStore } from '@/stores/queryStore';
+import { useResultStore } from '@/stores/resultStore';
 import type { QueryResult } from '@/lib/types';
 import {
   Download,
@@ -81,7 +82,12 @@ export function ExportDialog() {
     const tab = s.tabs.find((t) => t.id === s.activeTabId);
     return tab ?? null;
   });
-  const result = activeTab?.result ?? null;
+  const tabResult = useResultStore((s) => activeTab ? s.results[activeTab.id] : undefined);
+  const result: QueryResult | null = useMemo(() => {
+    if (!tabResult || !activeTab) return null;
+    const allResults = useResultStore.getState().getAllResults(activeTab.id);
+    return allResults[tabResult.activeResultIndex] ?? null;
+  }, [tabResult, activeTab]);
   const tableName = activeTab?.table ?? activeTab?.title ?? 'export';
   const {
     exportDialogOpen,

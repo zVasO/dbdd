@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tauri::State;
 use uuid::Uuid;
 
@@ -23,12 +25,14 @@ pub async fn connect(
         state
             .config_store
             .store_password(&config.id, pw)
+            .await
             .map_err(|e| e.to_string())?;
         Some(pw.clone())
     } else {
         state
             .config_store
             .get_password(&config.id)
+            .await
             .map_err(|e| e.to_string())?
     };
 
@@ -110,13 +114,14 @@ pub async fn ping_connection(
     state: State<'_, AppState>,
     connection_id: Uuid,
 ) -> Result<(), String> {
-    let active = state
-        .connection_manager
-        .get(&connection_id)
-        .ok_or("Connection not found")?;
-    active
-        .connection
-        .ping()
+    let conn = {
+        let active = state
+            .connection_manager
+            .get(&connection_id)
+            .ok_or("Connection not found")?;
+        Arc::clone(&active.connection)
+    };
+    conn.ping()
         .await
         .map_err(|e| e.to_string())
 }

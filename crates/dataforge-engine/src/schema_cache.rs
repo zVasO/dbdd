@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
@@ -10,7 +11,7 @@ const DEFAULT_TTL: Duration = Duration::from_secs(300);
 type TableCacheKey = (Uuid, String, Option<String>);
 
 pub struct SchemaCache {
-    tables: DashMap<TableCacheKey, (Vec<TableInfo>, Instant)>,
+    tables: DashMap<TableCacheKey, (Arc<Vec<TableInfo>>, Instant)>,
     structures: DashMap<(Uuid, TableRef), (TableStructure, Instant)>,
     ttl: Duration,
 }
@@ -35,15 +36,16 @@ impl SchemaCache {
         conn_id: &Uuid,
         db: &str,
         schema: Option<&str>,
-    ) -> Option<Vec<TableInfo>> {
+    ) -> Option<Arc<Vec<TableInfo>>> {
         let key = (*conn_id, db.to_string(), schema.map(|s| s.to_string()));
-        self.tables.get(&key).and_then(|entry| {
-            if entry.1.elapsed() < self.ttl {
-                Some(entry.0.clone())
-            } else {
-                None
-            }
-        })
+        let entry = self.tables.get(&key)?;
+        if entry.1.elapsed() < self.ttl {
+            Some(Arc::clone(&entry.0))
+        } else {
+            drop(entry);
+            self.tables.remove(&key);
+            None
+        }
     }
 
     pub fn set_tables(
@@ -54,7 +56,7 @@ impl SchemaCache {
         tables: Vec<TableInfo>,
     ) {
         self.tables
-            .insert((conn_id, db, schema), (tables, Instant::now()));
+            .insert((conn_id, db, schema), (Arc::new(tables), Instant::now()));
     }
 
     pub fn invalidate_connection(&self, conn_id: &Uuid) {

@@ -81,6 +81,26 @@ export type CellValue =
   | { type: 'Bytes'; value: { size: number; preview: string } }
   | { type: 'Array'; value: CellValue[] };
 
+// === COLUMNAR ===
+
+export type ColumnData =
+  | { kind: 'Integers'; values: (number | null)[] }
+  | { kind: 'Floats'; values: (number | null)[] }
+  | { kind: 'Booleans'; values: (boolean | null)[] }
+  | { kind: 'Strings'; values: (string | null)[] }
+  | { kind: 'Json'; values: (unknown | null)[] };
+
+export interface ColumnarResult {
+  query_id: string;
+  columns: ColumnMeta[];
+  data: ColumnData[];
+  row_count: number;
+  affected_rows: number | null;
+  execution_time_ms: number;
+  warnings: string[];
+  result_type: ResultType;
+}
+
 export interface QueryHistoryEntry {
   id: string;
   connection_id: string;

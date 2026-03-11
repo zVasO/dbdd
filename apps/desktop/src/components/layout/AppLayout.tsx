@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useQueryStore } from '@/stores/queryStore';
 import { useSchemaStore } from '@/stores/schemaStore';
@@ -14,18 +14,19 @@ import { ActivityBar } from './ActivityBar';
 import { CommandPalette } from './CommandPalette';
 import { OpenAnything } from './OpenAnything';
 import { PreferencesDialog } from './PreferencesDialog';
-import { CsvImportDialog } from '@/components/editor/CsvImportDialog';
-import { SettingsPage } from '@/components/settings/SettingsPage';
-import { AiChatPanel } from '@/components/ai/AiChatPanel';
-import { SnippetPalette } from '@/components/snippets/SnippetPalette';
 import { useAIStore } from '@/stores/aiStore';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
-import { ConnectionDialog } from '@/components/connection/ConnectionDialog';
-import { ImportDialog } from '@/components/import-export/ImportDialog';
-import { ExportDialog } from '@/components/import-export/ExportDialog';
-import { DataGeneratorDialog } from '@/components/data-gen/DataGeneratorDialog';
-import { ShareDialog } from '@/components/sharing/ShareDialog';
-import { NotesPanel } from '@/components/notes/NotesPanel';
+
+const CsvImportDialog = lazy(() => import('@/components/editor/CsvImportDialog').then(m => ({ default: m.CsvImportDialog })));
+const SettingsPage = lazy(() => import('@/components/settings/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const AiChatPanel = lazy(() => import('@/components/ai/AiChatPanel').then(m => ({ default: m.AiChatPanel })));
+const SnippetPalette = lazy(() => import('@/components/snippets/SnippetPalette').then(m => ({ default: m.SnippetPalette })));
+const ConnectionDialog = lazy(() => import('@/components/connection/ConnectionDialog').then(m => ({ default: m.ConnectionDialog })));
+const ImportDialog = lazy(() => import('@/components/import-export/ImportDialog').then(m => ({ default: m.ImportDialog })));
+const ExportDialog = lazy(() => import('@/components/import-export/ExportDialog').then(m => ({ default: m.ExportDialog })));
+const DataGeneratorDialog = lazy(() => import('@/components/data-gen/DataGeneratorDialog').then(m => ({ default: m.DataGeneratorDialog })));
+const ShareDialog = lazy(() => import('@/components/sharing/ShareDialog').then(m => ({ default: m.ShareDialog })));
+const NotesPanel = lazy(() => import('@/components/notes/NotesPanel').then(m => ({ default: m.NotesPanel })));
 import { useImportExportStore } from '@/stores/importExportStore';
 import { useDataGenStore } from '@/stores/dataGenStore';
 import { useNotesStore } from '@/stores/notesStore';
@@ -35,7 +36,7 @@ export function AppLayout() {
   const activeConfig = useConnectionStore((s) => s.activeConfig);
   const disconnect = useConnectionStore((s) => s.disconnect);
   const loadDatabases = useSchemaStore((s) => s.loadDatabases);
-  const { createTab } = useQueryStore();
+  const createTab = useQueryStore((s) => s.createTab);
   const sidebarWidth = useUIStore((s) => s.sidebarWidth);
   const setSidebarWidth = useUIStore((s) => s.setSidebarWidth);
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
@@ -46,6 +47,7 @@ export function AppLayout() {
   const [snippetPaletteOpen, setSnippetPaletteOpen] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [connectionDialogOpen, setConnectionDialogOpen] = useState(false);
+  const handleOpenConnectionDialog = useCallback(() => setConnectionDialogOpen(true), []);
   const settingsOpen = useUIStore((s) => s.settingsOpen);
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen);
   const isDragging = useRef(false);
@@ -54,7 +56,7 @@ export function AppLayout() {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isDragging.current) return;
       const newWidth = Math.max(180, Math.min(500, e.clientX));
-      setSidebarWidth(newWidth);
+      // Update CSS variable directly — avoids React re-render per pixel
       document.documentElement.style.setProperty('--sidebar-width', `${newWidth}px`);
     };
     const handleMouseUp = () => {
@@ -62,6 +64,10 @@ export function AppLayout() {
         isDragging.current = false;
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
+        // Commit final width to store once on release
+        const current = document.documentElement.style.getPropertyValue('--sidebar-width');
+        const finalWidth = parseInt(current, 10);
+        if (finalWidth) setSidebarWidth(finalWidth);
       }
     };
     window.addEventListener('mousemove', handleMouseMove);
@@ -178,13 +184,17 @@ export function AppLayout() {
   ]);
 
   if (settingsOpen) {
-    return <SettingsPage onClose={() => setSettingsOpen(false)} />;
+    return (
+      <Suspense fallback={null}>
+        <SettingsPage onClose={() => setSettingsOpen(false)} />
+      </Suspense>
+    );
   }
 
   return (
     <div className="flex h-full flex-col bg-background">
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar onOpenConnectionDialog={() => setConnectionDialogOpen(true)} />
+        <Sidebar onOpenConnectionDialog={handleOpenConnectionDialog} />
         {sidebarOpen && (
           <div
             className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/30 active:bg-primary/50 transition-colors"
@@ -197,39 +207,43 @@ export function AppLayout() {
           />
         )}
         <PanelLayout />
-        <AiChatPanel />
+        <Suspense fallback={null}>
+          <AiChatPanel />
+        </Suspense>
       </div>
       <ActivityBar />
       <StatusBar
         connected={!!activeConnectionId}
         dbType={activeConfig?.db_type}
         onDisconnect={disconnect}
-        onOpenConnectionDialog={() => setConnectionDialogOpen(true)}
+        onOpenConnectionDialog={handleOpenConnectionDialog}
       />
-      <CommandPalette onOpenPreferences={() => setPrefsOpen(true)} onOpenCsvImport={() => setCsvImportOpen(true)} onOpenConnectionDialog={() => setConnectionDialogOpen(true)} />
+      <CommandPalette onOpenPreferences={() => setPrefsOpen(true)} onOpenCsvImport={() => setCsvImportOpen(true)} onOpenConnectionDialog={handleOpenConnectionDialog} />
       <OpenAnything />
       <PreferencesDialog open={prefsOpen} onOpenChange={setPrefsOpen} onOpenSettings={() => setSettingsOpen(true)} />
-      <CsvImportDialog open={csvImportOpen} onOpenChange={setCsvImportOpen} />
-      <SnippetPalette
-        open={snippetPaletteOpen}
-        onOpenChange={setSnippetPaletteOpen}
-        onInsert={(sql) => {
-          const { tabs, activeTabId, updateSql, createTab } = useQueryStore.getState();
-          const activeTab = tabs.find((t) => t.id === activeTabId);
-          if (activeTab) {
-            updateSql(activeTab.id, activeTab.sql ? `${activeTab.sql}\n${sql}` : sql);
-          } else {
-            const id = createTab('Snippet');
-            useQueryStore.getState().updateSql(id, sql);
-          }
-        }}
-      />
-      <ImportDialog />
-      <ExportDialog />
-      <DataGeneratorDialog />
-      <ShareDialog open={shareDialogOpen} onOpenChange={setShareDialogOpen} />
-      <ConnectionDialog open={connectionDialogOpen} onOpenChange={setConnectionDialogOpen} />
-      <NotesPanel />
+      <Suspense fallback={null}>
+        <CsvImportDialog open={csvImportOpen} onOpenChange={setCsvImportOpen} />
+        <SnippetPalette
+          open={snippetPaletteOpen}
+          onOpenChange={setSnippetPaletteOpen}
+          onInsert={(sql) => {
+            const { tabs, activeTabId, updateSql, createTab } = useQueryStore.getState();
+            const activeTab = tabs.find((t) => t.id === activeTabId);
+            if (activeTab) {
+              updateSql(activeTab.id, activeTab.sql ? `${activeTab.sql}\n${sql}` : sql);
+            } else {
+              const id = createTab('Snippet');
+              useQueryStore.getState().updateSql(id, sql);
+            }
+          }}
+        />
+        <ImportDialog />
+        <ExportDialog />
+        <DataGeneratorDialog />
+        <ShareDialog open={shareDialogOpen} onOpenChange={setShareDialogOpen} />
+        <ConnectionDialog open={connectionDialogOpen} onOpenChange={setConnectionDialogOpen} />
+        <NotesPanel />
+      </Suspense>
     </div>
   );
 }
