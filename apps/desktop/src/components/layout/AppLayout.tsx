@@ -231,7 +231,7 @@ export function AppLayout() {
             </div>
           </div>
         )}
-        <PanelLayout />
+        <PanelLayout onOpenConnectionDialog={handleOpenConnectionDialog} />
         <Suspense fallback={null}>
           <AiChatPanel />
         </Suspense>
