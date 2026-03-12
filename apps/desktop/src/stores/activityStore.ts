@@ -11,9 +11,16 @@ export interface ActivityEntry {
   error: string | null;
 }
 
+interface RecentTable {
+  connectionId: string;
+  table: string;
+  timestamp: number;
+}
+
 interface ActivityState {
   entries: ActivityEntry[];
   expanded: boolean;
+  recentTables: RecentTable[];
 
   logStart: (sql: string, connectionId?: string | null) => string;
   logSuccess: (id: string, durationMs: number, rowCount: number | null) => void;
@@ -22,6 +29,10 @@ interface ActivityState {
   clear: () => void;
   /** Get entries filtered to a specific connection (null = all) */
   getEntriesForConnection: (connectionId: string | null) => ActivityEntry[];
+  /** Track a table being opened */
+  trackTableOpen: (connectionId: string, table: string) => void;
+  /** Get recently opened tables for a connection */
+  getRecentTables: (connectionId: string) => string[];
 }
 
 const MAX_ENTRIES = 200;
@@ -29,6 +40,7 @@ const MAX_ENTRIES = 200;
 export const useActivityStore = create<ActivityState>((set, get) => ({
   entries: [],
   expanded: false,
+  recentTables: [],
 
   logStart: (sql: string, connectionId?: string | null): string => {
     const id = crypto.randomUUID();
@@ -81,5 +93,21 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   getEntriesForConnection: (connectionId: string | null): ActivityEntry[] => {
     if (!connectionId) return get().entries;
     return get().entries.filter((e) => e.connectionId === connectionId);
+  },
+
+  trackTableOpen: (connectionId: string, table: string) => {
+    set((s) => {
+      const filtered = s.recentTables.filter(
+        (r) => !(r.connectionId === connectionId && r.table === table)
+      );
+      const updated = [{ connectionId, table, timestamp: Date.now() }, ...filtered].slice(0, 10);
+      return { recentTables: updated };
+    });
+  },
+
+  getRecentTables: (connectionId: string): string[] => {
+    return get().recentTables
+      .filter((r) => r.connectionId === connectionId)
+      .map((r) => r.table);
   },
 }));

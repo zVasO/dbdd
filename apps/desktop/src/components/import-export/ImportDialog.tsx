@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -19,6 +19,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
+import { useUIStore } from '@/stores/uiStore';
 import { useImportExportStore } from '@/stores/importExportStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useSchemaStore } from '@/stores/schemaStore';
@@ -55,6 +56,18 @@ function FileTypeIcon({ type }: { type: string }) {
 }
 
 export function ImportDialog() {
+  const pushModal = useUIStore((s) => s.pushModal);
+  const popModal = useUIStore((s) => s.popModal);
+  const importDialogOpenForModal = useImportExportStore((s) => s.importDialogOpen);
+
+  // Register modal when open
+  useEffect(() => {
+    if (importDialogOpenForModal) {
+      pushModal('importDialog');
+      return () => popModal('importDialog');
+    }
+  }, [importDialogOpenForModal, pushModal, popModal]);
+
   const {
     importDialogOpen,
     setImportDialogOpen,

@@ -7,6 +7,7 @@ import { useChangeStore } from '@/stores/changeStore';
 import { useFilterStore } from '@/stores/filterStore';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcut';
 import { useShortcutStore } from '@/stores/shortcutStore';
+import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
 import { Sidebar } from './Sidebar';
 import { StatusBar } from './StatusBar';
 import { PanelLayout } from './PanelLayout';
@@ -41,6 +42,7 @@ export function AppLayout() {
   const setSidebarWidth = useUIStore((s) => s.setSidebarWidth);
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const splitMode = useUIStore((s) => s.splitMode);
 
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [csvImportOpen, setCsvImportOpen] = useState(false);
@@ -104,32 +106,37 @@ export function AppLayout() {
   const _shortcutOverrides = useShortcutStore((s) => s.overrides);
   const sc = useShortcutStore((s) => s.getBinding);
 
+  const isModalOpen = useUIStore((s) => s.isModalOpen);
+
   useKeyboardShortcuts([
-    { ...sc('global.newTab'), handler: () => createTab() },
-    { ...sc('global.openAnything'), handler: () => useUIStore.getState().setOpenAnythingOpen(true) },
-    { ...sc('global.commandPalette'), handler: () => useUIStore.getState().setCommandPaletteOpen(true) },
-    { ...sc('global.toggleSidebar'), handler: () => toggleSidebar() },
+    { ...sc('global.newTab'), handler: () => createTab(), when: () => !isModalOpen() },
+    { ...sc('global.openAnything'), handler: () => useUIStore.getState().setOpenAnythingOpen(true), when: () => !isModalOpen() },
+    { ...sc('global.commandPalette'), handler: () => useUIStore.getState().setCommandPaletteOpen(true), when: () => !isModalOpen() },
+    { ...sc('global.toggleSidebar'), handler: () => toggleSidebar(), when: () => !isModalOpen() },
     {
       ...sc('global.closeTab'),
       handler: () => {
         const { activeTabId, closeTab } = useQueryStore.getState();
         if (activeTabId) closeTab(activeTabId);
       },
+      when: () => !isModalOpen(),
     },
     {
       ...sc('global.save'),
       handler: () => {
         document.dispatchEvent(new CustomEvent('dataforge:commit'));
       },
+      when: () => !isModalOpen(),
     },
-    { ...sc('global.redo'), handler: () => useChangeStore.getState().redo() },
-    { ...sc('global.undo'), handler: () => useChangeStore.getState().undo() },
+    { ...sc('global.redo'), handler: () => useChangeStore.getState().redo(), when: () => !isModalOpen() },
+    { ...sc('global.undo'), handler: () => useChangeStore.getState().undo(), when: () => !isModalOpen() },
     {
       ...sc('global.previewChanges'),
       handler: () => {
         const store = useChangeStore.getState();
         if (store.hasPendingChanges()) store.setPreviewOpen(true);
       },
+      when: () => !isModalOpen(),
     },
     {
       ...sc('global.columnFilter'),
@@ -137,6 +144,7 @@ export function AppLayout() {
         const store = useFilterStore.getState();
         store.setColumnFilterOpen(!store.columnFilterOpen);
       },
+      when: () => !isModalOpen(),
     },
     {
       ...sc('global.searchFilter'),
@@ -144,8 +152,17 @@ export function AppLayout() {
         const store = useFilterStore.getState();
         store.setFilterBarOpen(!store.filterBarOpen);
       },
+      when: () => !isModalOpen(),
     },
-    { ...sc('global.preferences'), handler: () => setPrefsOpen(true) },
+    {
+      ...sc('global.splitView'),
+      handler: () => {
+        const current = useUIStore.getState().splitMode;
+        useUIStore.getState().setSplitMode(current === 'single' ? 'horizontal' : 'single');
+      },
+      when: () => !isModalOpen(),
+    },
+    { ...sc('global.preferences'), handler: () => setPrefsOpen(true), when: () => !isModalOpen() },
     {
       ...sc('global.openFile'),
       handler: async () => {
@@ -160,6 +177,7 @@ export function AppLayout() {
           useQueryStore.getState().updateSql(id, file.content);
         }
       },
+      when: () => !isModalOpen(),
     },
     {
       ...sc('global.saveFile'),
@@ -170,6 +188,7 @@ export function AppLayout() {
           saveSqlFile(tab.sql, `${tab.title.replace(/[^a-zA-Z0-9_-]/g, '_')}.sql`);
         }
       },
+      when: () => !isModalOpen(),
     },
     {
       ...sc('global.aiAssistant'),
@@ -177,10 +196,11 @@ export function AppLayout() {
         const store = useAIStore.getState();
         store.setChatOpen(!store.chatOpen);
       },
+      when: () => !isModalOpen(),
     },
-    { ...sc('global.insertSnippet'), handler: () => setSnippetPaletteOpen(true) },
-    { ...sc('global.export'), handler: () => useImportExportStore.getState().setExportDialogOpen(true) },
-    { ...sc('global.dataGenerator'), handler: () => useDataGenStore.getState().setDialogOpen(true) },
+    { ...sc('global.insertSnippet'), handler: () => setSnippetPaletteOpen(true), when: () => !isModalOpen() },
+    { ...sc('global.export'), handler: () => useImportExportStore.getState().setExportDialogOpen(true), when: () => !isModalOpen() },
+    { ...sc('global.dataGenerator'), handler: () => useDataGenStore.getState().setDialogOpen(true), when: () => !isModalOpen() },
   ]);
 
   if (settingsOpen) {
@@ -193,20 +213,47 @@ export function AppLayout() {
 
   return (
     <div className="flex h-full flex-col bg-background">
+      {/* macOS drag region for window movement */}
+      <div
+        className="fixed top-0 left-0 right-0 h-10 z-10"
+        style={{ WebkitAppRegion: 'drag', pointerEvents: 'none' } as React.CSSProperties}
+      />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar onOpenConnectionDialog={handleOpenConnectionDialog} />
         {sidebarOpen && (
           <div
-            className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/30 active:bg-primary/50 transition-colors"
+            className="group relative flex-shrink-0 cursor-col-resize select-none"
+            style={{ width: '8px', marginLeft: '-4px', marginRight: '-4px' }}
             onMouseDown={(e) => {
               e.preventDefault();
               isDragging.current = true;
               document.body.style.cursor = 'col-resize';
               document.body.style.userSelect = 'none';
             }}
-          />
+          >
+            {/* Visible line */}
+            <div className="absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 transition-colors bg-transparent group-hover:bg-border group-active:bg-primary" />
+            {/* Drag indicator dots */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col gap-[3px] opacity-0 group-hover:opacity-50 transition-opacity">
+              <div className="w-1 h-1 rounded-full bg-muted-foreground" />
+              <div className="w-1 h-1 rounded-full bg-muted-foreground" />
+              <div className="w-1 h-1 rounded-full bg-muted-foreground" />
+            </div>
+          </div>
         )}
-        <PanelLayout />
+        {splitMode === 'single' ? (
+          <PanelLayout paneId="primary" onOpenConnectionDialog={handleOpenConnectionDialog} />
+        ) : (
+          <PanelGroup direction="horizontal">
+            <Panel defaultSize={50} minSize={30}>
+              <PanelLayout paneId="primary" onOpenConnectionDialog={handleOpenConnectionDialog} />
+            </Panel>
+            <PanelResizeHandle className="w-[2px] bg-border hover:bg-primary transition-colors" />
+            <Panel defaultSize={50} minSize={30}>
+              <PanelLayout paneId="secondary" onOpenConnectionDialog={handleOpenConnectionDialog} />
+            </Panel>
+          </PanelGroup>
+        )}
         <Suspense fallback={null}>
           <AiChatPanel />
         </Suspense>

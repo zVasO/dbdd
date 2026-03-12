@@ -2,6 +2,14 @@ import { create } from 'zustand';
 
 export type CopyFormat = 'json' | 'csv' | 'tsv' | 'markdown' | 'insert';
 
+export type DarkModeScheduleMode = 'manual' | 'system' | 'schedule';
+
+export interface DarkModeSchedule {
+  mode: DarkModeScheduleMode;
+  lightFrom?: string; // "07:00"
+  darkFrom?: string;  // "19:00"
+}
+
 export interface Preferences {
   theme: 'light' | 'dark';
   editorFontSize: number;
@@ -12,6 +20,9 @@ export interface Preferences {
   alternatingRowColors: boolean;
   safeModeLevel: 'silent' | 'alert' | 'alert_select' | 'password' | 'password_select';
   defaultCopyFormat: CopyFormat;
+  darkModeSchedule: DarkModeSchedule;
+  notifyOnLongQueries: boolean;
+  longQueryThreshold: number; // ms
 }
 
 const STORAGE_KEY = 'dataforge:preferences';
@@ -26,6 +37,9 @@ const DEFAULTS: Preferences = {
   alternatingRowColors: false,
   safeModeLevel: 'alert',
   defaultCopyFormat: 'json',
+  darkModeSchedule: { mode: 'manual' },
+  notifyOnLongQueries: true,
+  longQueryThreshold: 5000,
 };
 
 function loadFromStorage(): Preferences {
@@ -70,6 +84,9 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => {
         alternatingRowColors: state.alternatingRowColors,
         safeModeLevel: state.safeModeLevel,
         defaultCopyFormat: state.defaultCopyFormat,
+        darkModeSchedule: state.darkModeSchedule,
+        notifyOnLongQueries: state.notifyOnLongQueries,
+        longQueryThreshold: state.longQueryThreshold,
       };
       if (key === 'theme') applyTheme(value as 'light' | 'dark');
       saveToStorage(prefs);

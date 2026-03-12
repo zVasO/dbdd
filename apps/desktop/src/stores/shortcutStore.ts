@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { IS_MACOS } from '@/lib/platform';
 
 // === Types ===
 
@@ -40,6 +41,9 @@ export const SHORTCUT_DEFS: ShortcutDef[] = [
   { id: 'global.insertSnippet', label: 'Insert Snippet', category: 'global', default: { key: 'i', modifiers: ['ctrl', 'shift'] } },
   { id: 'global.export', label: 'Export', category: 'global', default: { key: 'e', modifiers: ['ctrl', 'shift'] } },
   { id: 'global.dataGenerator', label: 'Data Generator', category: 'global', default: { key: 'g', modifiers: ['ctrl', 'shift'] } },
+  { id: 'global.fullscreen', label: 'Toggle Full Screen', category: 'global', default: { key: 'f', modifiers: ['ctrl', 'meta'] } },
+  { id: 'global.themeSwitcher', label: 'Theme Switcher', category: 'global', default: { key: 'y', modifiers: ['ctrl', 'shift'] } },
+  { id: 'global.splitView', label: 'Split View', category: 'global', default: { key: '\\', modifiers: ['ctrl'] } },
 
   // Editor
   { id: 'editor.execute', label: 'Execute Query', category: 'editor', default: { key: 'Enter', modifiers: ['ctrl'] } },
@@ -98,8 +102,7 @@ export const useShortcutStore = create<ShortcutState>((set, get) => ({
   },
 
   resetBinding: (id) => {
-    const overrides = { ...get().overrides };
-    delete overrides[id];
+    const { [id]: _removed, ...overrides } = get().overrides;
     set({ overrides });
     saveOverrides(overrides);
   },
@@ -129,8 +132,9 @@ export const useShortcutStore = create<ShortcutState>((set, get) => ({
 function bindingsEqual(a: ShortcutBinding, b: ShortcutBinding): boolean {
   if (a.key.toLowerCase() !== b.key.toLowerCase()) return false;
   if (a.modifiers.length !== b.modifiers.length) return false;
-  const sorted = (m: Modifier[]) => [...m].sort();
-  return sorted(a.modifiers).every((mod, i) => mod === sorted(b.modifiers)[i]);
+  const sortedA = [...a.modifiers].sort();
+  const sortedB = [...b.modifiers].sort();
+  return sortedA.every((mod, i) => mod === sortedB[i]);
 }
 
 const KEY_DISPLAY: Record<string, string> = {
@@ -155,28 +159,39 @@ const KEY_DISPLAY: Record<string, string> = {
   '`': '`',
 };
 
-export function formatBinding(binding: ShortcutBinding): string {
-  if (!binding.key) return 'None';
-  const parts: string[] = [];
-  if (binding.modifiers.includes('ctrl')) parts.push('Ctrl');
-  if (binding.modifiers.includes('shift')) parts.push('Shift');
-  if (binding.modifiers.includes('alt')) parts.push('Alt');
-  if (binding.modifiers.includes('meta')) parts.push('Meta');
-  const keyDisplay = KEY_DISPLAY[binding.key.toLowerCase()] || binding.key.toUpperCase();
-  parts.push(keyDisplay);
-  return parts.join('+');
-}
-
 export function formatBindingParts(binding: ShortcutBinding): string[] {
   if (!binding.key) return ['None'];
   const parts: string[] = [];
-  if (binding.modifiers.includes('ctrl')) parts.push('Ctrl');
-  if (binding.modifiers.includes('shift')) parts.push('Shift');
-  if (binding.modifiers.includes('alt')) parts.push('Alt');
-  if (binding.modifiers.includes('meta')) parts.push('Meta');
+
+  if (IS_MACOS) {
+    const hasBothCtrlAndMeta = binding.modifiers.includes('ctrl') && binding.modifiers.includes('meta');
+    if (hasBothCtrlAndMeta) {
+      // Both present: ctrl = ⌃ (Control), meta = ⌘ (Command)
+      parts.push('\u2303'); // ⌃
+    }
+    if (binding.modifiers.includes('alt')) parts.push('\u2325');
+    if (binding.modifiers.includes('shift')) parts.push('\u21E7');
+    if (hasBothCtrlAndMeta) {
+      parts.push('\u2318'); // ⌘
+    } else if (binding.modifiers.includes('ctrl') || binding.modifiers.includes('meta')) {
+      parts.push('\u2318'); // ⌘ (primary mod)
+    }
+  } else {
+    if (binding.modifiers.includes('ctrl')) parts.push('Ctrl');
+    if (binding.modifiers.includes('shift')) parts.push('Shift');
+    if (binding.modifiers.includes('alt')) parts.push('Alt');
+    if (binding.modifiers.includes('meta')) parts.push('Meta');
+  }
+
   const keyDisplay = KEY_DISPLAY[binding.key.toLowerCase()] || binding.key.toUpperCase();
   parts.push(keyDisplay);
   return parts;
+}
+
+export function formatBinding(binding: ShortcutBinding): string {
+  const parts = formatBindingParts(binding);
+  if (parts.length === 1 && parts[0] === 'None') return 'None';
+  return parts.join(IS_MACOS ? '' : '+');
 }
 
 /** Check if a keyboard event matches a shortcut binding */

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useUIStore } from '@/stores/uiStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { ConnectionForm } from './ConnectionForm';
 import { ConnectionCard } from './ConnectionCard';
@@ -21,6 +22,17 @@ interface Props {
 }
 
 export function ConnectionDialog({ open, onOpenChange }: Props) {
+  const pushModal = useUIStore((s) => s.pushModal);
+  const popModal = useUIStore((s) => s.popModal);
+
+  // Register modal when open
+  useEffect(() => {
+    if (open) {
+      pushModal('connectionDialog');
+      return () => popModal('connectionDialog');
+    }
+  }, [open, pushModal, popModal]);
+
   const [showNewForm, setShowNewForm] = useState(false);
   const loadSavedConnections = useConnectionStore((s) => s.loadSavedConnections);
   const savedConnections = useConnectionStore((s) => s.savedConnections);
