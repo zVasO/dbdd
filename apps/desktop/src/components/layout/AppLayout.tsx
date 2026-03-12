@@ -212,14 +212,24 @@ export function AppLayout() {
         <Sidebar onOpenConnectionDialog={handleOpenConnectionDialog} />
         {sidebarOpen && (
           <div
-            className="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-primary/30 active:bg-primary/50 transition-colors"
+            className="group relative flex-shrink-0 cursor-col-resize select-none"
+            style={{ width: '8px', marginLeft: '-4px', marginRight: '-4px' }}
             onMouseDown={(e) => {
               e.preventDefault();
               isDragging.current = true;
               document.body.style.cursor = 'col-resize';
               document.body.style.userSelect = 'none';
             }}
-          />
+          >
+            {/* Visible line */}
+            <div className="absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 transition-colors bg-transparent group-hover:bg-border group-active:bg-primary" />
+            {/* Drag indicator dots */}
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col gap-[3px] opacity-0 group-hover:opacity-50 transition-opacity">
+              <div className="w-1 h-1 rounded-full bg-muted-foreground" />
+              <div className="w-1 h-1 rounded-full bg-muted-foreground" />
+              <div className="w-1 h-1 rounded-full bg-muted-foreground" />
+            </div>
+          </div>
         )}
         <PanelLayout />
         <Suspense fallback={null}>
