@@ -171,6 +171,10 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
   } | null>(null);
   const [focusedColIndex, setFocusedColIndex] = useState<number>(0);
 
+  // Keyboard focus cell (for grid keyboard navigation)
+  const [focusedCell, setFocusedCell] = useState<{ row: number; col: number } | null>(null);
+  const gridRef = useRef<HTMLDivElement>(null);
+
   // Cell selection state (multi-cell: "rowIndex:colIndex" keys)
   const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set());
   const [lastSelectedCellKey, setLastSelectedCellKey] = useState<{ rowIndex: number; colIndex: number } | null>(null);
@@ -458,6 +462,13 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     overscan: 5,
   });
 
+  // Auto-scroll to focused cell
+  useEffect(() => {
+    if (focusedCell) {
+      rowVirtualizer.scrollToIndex(focusedCell.row, { align: 'auto' });
+    }
+  }, [focusedCell?.row, rowVirtualizer]);
+
   // Focus input on edit
   useEffect(() => {
     if (editingCell && editInputRef.current) {
@@ -638,6 +649,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
         setLastSelectedCellKey({ rowIndex, colIndex });
       }
       setFocusedColIndex(colIndex);
+      setFocusedCell({ row: rowIndex, col: colIndex });
     },
     [editingCell, lastSelectedCellKey],
   );
@@ -834,6 +846,91 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     })) as typeof paginatedRows;
   }, [selectedCells, paginatedRows]);
 
+  // ─── Grid keyboard navigation ──────────────────────────────────────────────
+
+  const handleGridKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (!focusedCell || editingCell) return false;
+
+    const maxRow = paginatedRows.length - 1;
+    const maxCol = visibleColIndexMap.length - 1;
+    let { row, col } = focusedCell;
+
+    // Find the visible column position for current focusedCell.col
+    let visIdx = visibleColIndexMap.indexOf(col);
+    if (visIdx === -1) visIdx = 0;
+
+    switch (e.key) {
+      case 'ArrowUp':
+        e.preventDefault();
+        row = Math.max(0, row - 1);
+        break;
+      case 'ArrowDown':
+        e.preventDefault();
+        row = Math.min(maxRow, row + 1);
+        break;
+      case 'ArrowLeft':
+        e.preventDefault();
+        visIdx = Math.max(0, visIdx - 1);
+        col = visibleColIndexMap[visIdx];
+        break;
+      case 'ArrowRight':
+        e.preventDefault();
+        visIdx = Math.min(maxCol, visIdx + 1);
+        col = visibleColIndexMap[visIdx];
+        break;
+      case 'Home':
+        e.preventDefault();
+        col = visibleColIndexMap[0];
+        break;
+      case 'End':
+        e.preventDefault();
+        col = visibleColIndexMap[maxCol];
+        break;
+      case 'Tab':
+        e.preventDefault();
+        if (e.shiftKey) {
+          if (visIdx > 0) {
+            visIdx -= 1;
+          } else {
+            visIdx = maxCol;
+            if (row > 0) row -= 1;
+          }
+        } else {
+          if (visIdx < maxCol) {
+            visIdx += 1;
+          } else {
+            visIdx = 0;
+            if (row < maxRow) row += 1;
+          }
+        }
+        col = visibleColIndexMap[visIdx];
+        break;
+      case 'Escape':
+        setFocusedCell(null);
+        setSelectedCells(new Set());
+        setLastSelectedCellKey(null);
+        return true;
+      default:
+        return false;
+    }
+
+    setFocusedCell({ row, col });
+    // Sync cell selection so copy and other operations work
+    if (!e.shiftKey || e.key === 'Tab' || e.key === 'Home' || e.key === 'End') {
+      setSelectedCells(new Set([cellKey(row, col)]));
+    } else {
+      setSelectedCells((prev) => {
+        const next = new Set(prev);
+        next.add(cellKey(row, col));
+        return next;
+      });
+    }
+    setLastSelectedCellKey({ rowIndex: row, colIndex: col });
+    setFocusedColIndex(col);
+    setSelectedRows(new Set());
+    return true;
+  }, [focusedCell, editingCell, paginatedRows.length, visibleColIndexMap]);
+
   // ─── Keyboard ──────────────────────────────────────────────────────────────
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -867,10 +964,13 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     if (e.key === 'Escape') {
       if (contextMenu) { setContextMenu(null); return; }
       if (editingCell) cancelEdit();
+      else if (focusedCell) { setFocusedCell(null); setSelectedCells(new Set()); setLastSelectedCellKey(null); }
       else if (selectedCells.size > 0) { setSelectedCells(new Set()); setLastSelectedCellKey(null); }
       else setSelectedRows(new Set());
       return;
     }
+    // Grid keyboard navigation (arrow keys, Home, End, Tab when focusedCell is set)
+    if (focusedCell && handleGridKeyDown(e)) return;
     // Quick Look
     if (matchesBinding(e, getBinding('grid.quickLook')) && !editingCell) {
       e.preventDefault();
@@ -935,7 +1035,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       setLastSelectedRow(next);
       return;
     }
-  }, [copySelection, paginatedRows, editingCell, cancelEdit, lastSelectedRow, contextMenu, focusedColIndex, result.columns, selectedRows, selectedCells, lastSelectedCellKey, database, table, handleDuplicateRow, handlePasteRows]);
+  }, [copySelection, paginatedRows, editingCell, cancelEdit, lastSelectedRow, contextMenu, focusedColIndex, result.columns, selectedRows, selectedCells, lastSelectedCellKey, database, table, handleDuplicateRow, handlePasteRows, focusedCell, handleGridKeyDown]);
 
   // ─── Export ────────────────────────────────────────────────────────────────
 
@@ -1151,6 +1251,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
                 const pendingEdit = getCellPendingEdit(actualRowIndex, col.name);
 
                 const isCellSelected = selectedCells.has(cellKey(virtualRow.index, colIdx));
+                const isFocused = focusedCell?.row === virtualRow.index && focusedCell?.col === colIdx;
 
                 return (
                   <div
@@ -1158,7 +1259,8 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
                     className={cn(
                       'flex shrink-0 items-center border-r border-border/30',
                       isEditing && 'ring-2 ring-inset ring-primary',
-                      !isEditing && isCellSelected && 'ring-2 ring-inset ring-primary/60 bg-primary/10',
+                      !isEditing && isFocused && 'ring-2 ring-primary ring-inset',
+                      !isEditing && !isFocused && isCellSelected && 'ring-2 ring-inset ring-primary/60 bg-primary/10',
                       pendingEdit && !isEditing && 'bg-yellow-500/15',
                     )}
                     style={{ width }}
