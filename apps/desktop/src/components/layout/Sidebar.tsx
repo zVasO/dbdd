@@ -3,6 +3,7 @@ import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useQueryStore } from '@/stores/queryStore';
 import { useUIStore } from '@/stores/uiStore';
+import { useActivityStore } from '@/stores/activityStore';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -27,6 +28,7 @@ import {
 import {
   ChevronRight,
   ChevronDown,
+  Clock,
   Copy,
   Database,
   Hash,
@@ -88,6 +90,10 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
   const isFavorite = useFavoritesStore((s) => s.isFavorite);
   const favorites = activeConnectionId ? getFavorites(activeConnectionId) : [];
+
+  const getRecentTables = useActivityStore((s) => s.getRecentTables);
+  const trackTableOpen = useActivityStore((s) => s.trackTableOpen);
+  const recentTables = activeConnectionId ? getRecentTables(activeConnectionId) : [];
 
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedDbs, setExpandedDbs] = useState<Set<string>>(new Set());
@@ -161,6 +167,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
 
   const handleTableClick = (db: string, tableName: string) => {
     if (!activeConnectionId) return;
+    trackTableOpen(activeConnectionId, tableName);
     // Reuse existing tab for same table + database
     const existing = tabs.find((t) => t.table === tableName && t.database === db);
     if (existing) {
@@ -355,6 +362,26 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
                     >
                       <X className="w-3 h-3 text-muted-foreground hover:text-foreground" />
                     </button>
+                  </button>
+                ))}
+                <Separator className="mt-1" />
+              </div>
+            )}
+
+            {/* Recent tables section */}
+            {recentTables.length > 0 && !searchQuery && (
+              <div className="px-2 py-1">
+                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider px-2 py-1">
+                  Recent
+                </div>
+                {recentTables.slice(0, 5).map((table) => (
+                  <button
+                    key={table}
+                    onClick={() => activeDatabase && handleTableClick(activeDatabase, table)}
+                    className="w-full flex items-center gap-2 px-2 py-1 text-sm hover:bg-accent rounded"
+                  >
+                    <Clock className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                    <span className="truncate">{table}</span>
                   </button>
                 ))}
                 <Separator className="mt-1" />
