@@ -6,6 +6,7 @@ import { WorkspacePage } from "@/pages/WorkspacePage";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { loadSession } from "@/lib/sessionRecovery";
 import { ipc } from "@/lib/ipc";
+import { setupMenuBridge, teardownMenuBridge } from "@/lib/menuBridge";
 // Initialize theme store on import (applies saved theme to DOM)
 import "@/stores/themeStore";
 
@@ -15,6 +16,14 @@ const PING_INTERVAL_MS = 30_000;
 
 function App() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
+
+  // Bridge native menu events to frontend store actions
+  useEffect(() => {
+    setupMenuBridge().catch((err) => {
+      console.error('[App] Failed to initialize menu bridge:', err);
+    });
+    return () => teardownMenuBridge();
+  }, []);
 
   // Track last activity per connection
   const lastActivityRef = useRef<Map<string, number>>(new Map());
