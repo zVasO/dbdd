@@ -1,6 +1,8 @@
 import { useEffect, useRef } from "react";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
+import { usePreferencesStore } from "@/stores/preferencesStore";
+import { useThemeStore } from "@/stores/themeStore";
 import { WelcomePage } from "@/pages/WelcomePage";
 import { WorkspacePage } from "@/pages/WorkspacePage";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -75,6 +77,35 @@ function App() {
     }
     restore();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Dark mode scheduling: system preference or time-based schedule
+  const darkModeSchedule = usePreferencesStore((s) => s.darkModeSchedule);
+  useEffect(() => {
+    const { setDarkMode } = useThemeStore.getState();
+
+    if (darkModeSchedule.mode === 'system') {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      const handler = () => {
+        setDarkMode(mq.matches);
+      };
+      handler(); // Apply current system preference immediately
+      mq.addEventListener('change', handler);
+      return () => mq.removeEventListener('change', handler);
+    }
+
+    if (darkModeSchedule.mode === 'schedule') {
+      const check = () => {
+        const now = new Date();
+        const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        const { lightFrom = '07:00', darkFrom = '19:00' } = darkModeSchedule;
+        const shouldBeDark = time >= darkFrom || time < lightFrom;
+        useThemeStore.getState().setDarkMode(shouldBeDark);
+      };
+      check(); // Apply immediately
+      const interval = setInterval(check, 60_000);
+      return () => clearInterval(interval);
+    }
+  }, [darkModeSchedule]);
 
   // Keep-alive: ping idle connections every 30 seconds
   const activeConnections = useConnectionStore((s) => s.activeConnections);
