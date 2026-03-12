@@ -6,10 +6,11 @@ import { useChangeStore } from '@/stores/changeStore';
 import { usePreferencesStore } from '@/stores/preferencesStore';
 import { useConnectionStore, type ActiveConnection } from '@/stores/connectionStore';
 import { useSchemaStore } from '@/stores/schemaStore';
+import { useThemeStore } from '@/stores/themeStore';
 import { ConnectionStatus } from '@/components/connection/ConnectionStatus';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { Moon, Sun, ChevronDown, Unplug, ArrowRightLeft, Database, Plus } from 'lucide-react';
+import { Moon, Sun, ChevronDown, Unplug, ArrowRightLeft, Database, Plus, Check, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -37,8 +38,15 @@ export function StatusBar({ connected, dbType, onDisconnect, onOpenConnectionDia
 
   const activeDatabase = useSchemaStore((s) => s.activeDatabase);
 
+  const themes = useThemeStore((s) => s.themes);
+  const activeThemeId = useThemeStore((s) => s.activeThemeId);
+  const setActiveTheme = useThemeStore((s) => s.setActiveTheme);
+
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const switcherRef = useRef<HTMLDivElement>(null);
+
+  const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
+  const themeDropdownRef = useRef<HTMLDivElement>(null);
 
   // Close switcher on outside click
   useEffect(() => {
@@ -51,6 +59,18 @@ export function StatusBar({ connected, dbType, onDisconnect, onOpenConnectionDia
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [switcherOpen]);
+
+  // Close theme dropdown on outside click
+  useEffect(() => {
+    if (!themeDropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (themeDropdownRef.current && !themeDropdownRef.current.contains(e.target as Node)) {
+        setThemeDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [themeDropdownOpen]);
 
   return (
     <div
@@ -160,15 +180,67 @@ export function StatusBar({ connected, dbType, onDisconnect, onOpenConnectionDia
         )}
         {activeTab?.isExecuting && <span>Executing...</span>}
         <kbd className="rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px] text-muted-foreground">Ctrl+K</kbd>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={toggleTheme}
-          className="text-muted-foreground hover:text-foreground"
-          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-        >
-          {theme === 'dark' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-        </Button>
+        <div className="relative" ref={themeDropdownRef}>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={() => setThemeDropdownOpen(!themeDropdownOpen)}
+            className="text-muted-foreground hover:text-foreground"
+            title="Theme options"
+          >
+            {theme === 'dark' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+          </Button>
+
+          {themeDropdownOpen && (
+            <div className="absolute bottom-full right-0 mb-1 w-52 rounded-md border border-border bg-popover p-1 shadow-lg z-50">
+              <button
+                onClick={() => {
+                  toggleTheme();
+                  setThemeDropdownOpen(false);
+                }}
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent transition-colors"
+              >
+                {theme === 'dark' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+                <span>Toggle Light/Dark</span>
+              </button>
+
+              <div className="my-1 border-t border-border" />
+
+              <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Themes
+              </div>
+              {themes.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    setActiveTheme(t.id);
+                    setThemeDropdownOpen(false);
+                  }}
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors',
+                    t.id === activeThemeId ? 'bg-accent text-accent-foreground' : 'hover:bg-muted',
+                  )}
+                >
+                  <span className="flex-1 text-left truncate">{t.name}</span>
+                  {t.id === activeThemeId && <Check className="h-3 w-3 shrink-0" />}
+                </button>
+              ))}
+
+              <div className="my-1 border-t border-border" />
+
+              <button
+                onClick={() => {
+                  useUIStore.getState().setSettingsOpen(true);
+                  setThemeDropdownOpen(false);
+                }}
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent transition-colors text-muted-foreground"
+              >
+                <Settings className="h-3.5 w-3.5" />
+                <span>Customize...</span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
