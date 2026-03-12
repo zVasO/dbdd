@@ -21,6 +21,8 @@ export interface Preferences {
   safeModeLevel: 'silent' | 'alert' | 'alert_select' | 'password' | 'password_select';
   defaultCopyFormat: CopyFormat;
   darkModeSchedule: DarkModeSchedule;
+  notifyOnLongQueries: boolean;
+  longQueryThreshold: number; // ms
 }
 
 const STORAGE_KEY = 'dataforge:preferences';
@@ -36,6 +38,8 @@ const DEFAULTS: Preferences = {
   safeModeLevel: 'alert',
   defaultCopyFormat: 'json',
   darkModeSchedule: { mode: 'manual' },
+  notifyOnLongQueries: true,
+  longQueryThreshold: 5000,
 };
 
 function loadFromStorage(): Preferences {
@@ -81,6 +85,8 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => {
         safeModeLevel: state.safeModeLevel,
         defaultCopyFormat: state.defaultCopyFormat,
         darkModeSchedule: state.darkModeSchedule,
+        notifyOnLongQueries: state.notifyOnLongQueries,
+        longQueryThreshold: state.longQueryThreshold,
       };
       if (key === 'theme') applyTheme(value as 'light' | 'dark');
       saveToStorage(prefs);

@@ -35,13 +35,14 @@ import {
   Sparkles,
   FileCode2,
   Keyboard,
+  Bell,
 } from 'lucide-react';
 
 interface Props {
   onClose: () => void;
 }
 
-type Section = 'appearance' | 'editor' | 'grid' | 'security' | 'ai' | 'themes' | 'shortcuts';
+type Section = 'appearance' | 'editor' | 'grid' | 'notifications' | 'security' | 'ai' | 'themes' | 'shortcuts';
 
 export function SettingsPage({ onClose }: Props) {
   useModal('settings');
@@ -68,6 +69,7 @@ export function SettingsPage({ onClose }: Props) {
           <NavItem icon={<Palette className="size-4" />} label="Appearance" active={activeSection === 'appearance'} onClick={() => setActiveSection('appearance')} />
           <NavItem icon={<Settings2 className="size-4" />} label="Editor" active={activeSection === 'editor'} onClick={() => setActiveSection('editor')} />
           <NavItem icon={<Grid3X3 className="size-4" />} label="Data Grid" active={activeSection === 'grid'} onClick={() => setActiveSection('grid')} />
+          <NavItem icon={<Bell className="size-4" />} label="Notifications" active={activeSection === 'notifications'} onClick={() => setActiveSection('notifications')} />
           <NavItem icon={<Shield className="size-4" />} label="Security" active={activeSection === 'security'} onClick={() => setActiveSection('security')} />
           <NavItem icon={<Sparkles className="size-4" />} label="AI" active={activeSection === 'ai'} onClick={() => setActiveSection('ai')} />
           <NavItem icon={<Keyboard className="size-4" />} label="Shortcuts" active={activeSection === 'shortcuts'} onClick={() => setActiveSection('shortcuts')} />
@@ -81,6 +83,7 @@ export function SettingsPage({ onClose }: Props) {
             {activeSection === 'appearance' && <AppearanceSection />}
             {activeSection === 'editor' && <EditorSection />}
             {activeSection === 'grid' && <GridSection />}
+            {activeSection === 'notifications' && <NotificationsSection />}
             {activeSection === 'security' && <SecuritySection />}
             {activeSection === 'ai' && <AISection />}
             {activeSection === 'shortcuts' && <ShortcutsSection />}
@@ -283,6 +286,36 @@ function GridSection() {
           </SelectContent>
         </Select>
       </SettingRow>
+    </div>
+  );
+}
+
+function NotificationsSection() {
+  const prefs = usePreferencesStore();
+  const set = prefs.setPreference;
+
+  return (
+    <div className="space-y-6">
+      <SectionTitle title="Notifications" description="Configure when DataForge sends system notifications." />
+
+      <SettingRow label="Notify on long queries" description="Send a notification when a query takes longer than the threshold (only when window is not focused).">
+        <Toggle checked={prefs.notifyOnLongQueries} onChange={(v) => set('notifyOnLongQueries', v)} />
+      </SettingRow>
+
+      {prefs.notifyOnLongQueries && (
+        <SettingRow label="Threshold" description="Minimum query duration before a notification is sent.">
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              min={1}
+              className="w-16 text-xs"
+              value={prefs.longQueryThreshold / 1000}
+              onChange={(e) => set('longQueryThreshold', Number(e.target.value) * 1000)}
+            />
+            <span className="text-sm text-muted-foreground">seconds</span>
+          </div>
+        </SettingRow>
+      )}
     </div>
   );
 }

@@ -2,9 +2,46 @@ import { create } from 'zustand';
 import { ipc } from '../lib/ipc';
 import { useActivityStore } from './activityStore';
 import { useConnectionStore } from './connectionStore';
+import { usePreferencesStore } from './preferencesStore';
 import { useResultStore } from './resultStore';
 import { saveSession } from '../lib/sessionRecovery';
 import type { QueryResult, QueryHistoryEntry, ColumnarResult } from '../lib/types';
+
+async function maybeNotifyQueryComplete(
+  executionTimeMs: number,
+  rowCount: number,
+  error: string | null,
+): Promise<void> {
+  const prefs = usePreferencesStore.getState();
+  if (
+    !prefs.notifyOnLongQueries ||
+    executionTimeMs <= prefs.longQueryThreshold ||
+    document.hasFocus()
+  ) {
+    return;
+  }
+
+  try {
+    const { isPermissionGranted, requestPermission, sendNotification } =
+      await import('@tauri-apps/plugin-notification');
+    let permitted = await isPermissionGranted();
+    if (!permitted) {
+      const permission = await requestPermission();
+      permitted = permission === 'granted';
+    }
+    if (permitted) {
+      const title = error
+        ? 'DataForge: Query failed'
+        : 'DataForge: Query completed';
+      const body = error
+        ? `Error: ${String(error).substring(0, 100)}`
+        : `Completed in ${(executionTimeMs / 1000).toFixed(1)}s — ${rowCount} rows`;
+      sendNotification({ title, body });
+    }
+  } catch (e) {
+    console.warn('[queryStore] Notification failed:', e);
+  }
+}
 
 export type TabViewMode = 'data' | 'structure' | 'er-diagram' | 'dashboard' | 'explain' | 'diff' | 'health' | 'query-builder' | 'migration' | 'alerts' | 'table-designer' | 'processes';
 
@@ -217,6 +254,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
           useActivityStore.getState().logSuccess(activityId, durationMs, totalRows);
         }
         useResultStore.getState().setResults(tabId, results, errors.length > 0 ? errors.join('\n') : null);
+        maybeNotifyQueryComplete(durationMs, totalRows, errors.length > 0 ? errors.join('\n') : null);
 
         set((s) => {
           const connId = getActiveConnectionId();
@@ -235,6 +273,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         const durationMs = Math.round(performance.now() - startTime);
         useActivityStore.getState().logSuccess(activityId, durationMs, result.row_count);
         useResultStore.getState().setColumnarResult(tabId, result);
+        maybeNotifyQueryComplete(durationMs, result.row_count, null);
 
         set((s) => {
           const connId = getActiveConnectionId();
@@ -251,6 +290,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       const durationMs = Math.round(performance.now() - startTime);
       useActivityStore.getState().logError(activityId, durationMs, String(e));
       useResultStore.getState().setError(tabId, String(e));
+      maybeNotifyQueryComplete(durationMs, 0, String(e));
 
       set((s) => {
         const connId = getActiveConnectionId();
