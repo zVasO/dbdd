@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { ipc } from '../lib/ipc';
+import { getFuzzySearchBridge } from '../lib/fuzzy-search-bridge';
 import type { DatabaseInfo, TableInfo, TableStructure, TableRef } from '../lib/types';
 
 interface SchemaState {
@@ -130,3 +131,30 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
     });
   },
 }));
+
+// Sync schema data to fuzzy search worker on every change
+useSchemaStore.subscribe((state, prevState) => {
+  if (state.tables === prevState.tables && state.structures === prevState.structures) {
+    return;
+  }
+
+  const tables: { name: string; database: string }[] = [];
+  for (const [db, dbTables] of Object.entries(state.tables)) {
+    for (const t of dbTables) {
+      tables.push({ name: t.name, database: db });
+    }
+  }
+
+  const columns: { name: string; table: string; type: string }[] = [];
+  for (const structure of Object.values(state.structures)) {
+    for (const col of structure.columns) {
+      columns.push({
+        name: col.name,
+        table: structure.table_ref.table,
+        type: typeof col.data_type === 'string' ? col.data_type : JSON.stringify(col.data_type),
+      });
+    }
+  }
+
+  getFuzzySearchBridge().syncSchema(tables, columns);
+});
