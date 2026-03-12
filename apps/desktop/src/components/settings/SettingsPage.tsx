@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { useModal } from '@/hooks/useModal';
 import { usePreferencesStore, type Preferences, type CopyFormat } from '@/stores/preferencesStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { Button } from '@/components/ui/button';
@@ -43,6 +44,7 @@ interface Props {
 type Section = 'appearance' | 'editor' | 'grid' | 'security' | 'ai' | 'themes' | 'shortcuts';
 
 export function SettingsPage({ onClose }: Props) {
+  useModal('settings');
   const [activeSection, setActiveSection] = useState<Section>('appearance');
   const [editingThemeId, setEditingThemeId] = useState<string | null>(null);
 

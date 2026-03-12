@@ -104,32 +104,37 @@ export function AppLayout() {
   const _shortcutOverrides = useShortcutStore((s) => s.overrides);
   const sc = useShortcutStore((s) => s.getBinding);
 
+  const isModalOpen = useUIStore((s) => s.isModalOpen);
+
   useKeyboardShortcuts([
-    { ...sc('global.newTab'), handler: () => createTab() },
-    { ...sc('global.openAnything'), handler: () => useUIStore.getState().setOpenAnythingOpen(true) },
-    { ...sc('global.commandPalette'), handler: () => useUIStore.getState().setCommandPaletteOpen(true) },
-    { ...sc('global.toggleSidebar'), handler: () => toggleSidebar() },
+    { ...sc('global.newTab'), handler: () => createTab(), when: () => !isModalOpen() },
+    { ...sc('global.openAnything'), handler: () => useUIStore.getState().setOpenAnythingOpen(true), when: () => !isModalOpen() },
+    { ...sc('global.commandPalette'), handler: () => useUIStore.getState().setCommandPaletteOpen(true), when: () => !isModalOpen() },
+    { ...sc('global.toggleSidebar'), handler: () => toggleSidebar(), when: () => !isModalOpen() },
     {
       ...sc('global.closeTab'),
       handler: () => {
         const { activeTabId, closeTab } = useQueryStore.getState();
         if (activeTabId) closeTab(activeTabId);
       },
+      when: () => !isModalOpen(),
     },
     {
       ...sc('global.save'),
       handler: () => {
         document.dispatchEvent(new CustomEvent('dataforge:commit'));
       },
+      when: () => !isModalOpen(),
     },
-    { ...sc('global.redo'), handler: () => useChangeStore.getState().redo() },
-    { ...sc('global.undo'), handler: () => useChangeStore.getState().undo() },
+    { ...sc('global.redo'), handler: () => useChangeStore.getState().redo(), when: () => !isModalOpen() },
+    { ...sc('global.undo'), handler: () => useChangeStore.getState().undo(), when: () => !isModalOpen() },
     {
       ...sc('global.previewChanges'),
       handler: () => {
         const store = useChangeStore.getState();
         if (store.hasPendingChanges()) store.setPreviewOpen(true);
       },
+      when: () => !isModalOpen(),
     },
     {
       ...sc('global.columnFilter'),
@@ -137,6 +142,7 @@ export function AppLayout() {
         const store = useFilterStore.getState();
         store.setColumnFilterOpen(!store.columnFilterOpen);
       },
+      when: () => !isModalOpen(),
     },
     {
       ...sc('global.searchFilter'),
@@ -144,8 +150,9 @@ export function AppLayout() {
         const store = useFilterStore.getState();
         store.setFilterBarOpen(!store.filterBarOpen);
       },
+      when: () => !isModalOpen(),
     },
-    { ...sc('global.preferences'), handler: () => setPrefsOpen(true) },
+    { ...sc('global.preferences'), handler: () => setPrefsOpen(true), when: () => !isModalOpen() },
     {
       ...sc('global.openFile'),
       handler: async () => {
@@ -160,6 +167,7 @@ export function AppLayout() {
           useQueryStore.getState().updateSql(id, file.content);
         }
       },
+      when: () => !isModalOpen(),
     },
     {
       ...sc('global.saveFile'),
@@ -170,6 +178,7 @@ export function AppLayout() {
           saveSqlFile(tab.sql, `${tab.title.replace(/[^a-zA-Z0-9_-]/g, '_')}.sql`);
         }
       },
+      when: () => !isModalOpen(),
     },
     {
       ...sc('global.aiAssistant'),
@@ -177,10 +186,11 @@ export function AppLayout() {
         const store = useAIStore.getState();
         store.setChatOpen(!store.chatOpen);
       },
+      when: () => !isModalOpen(),
     },
-    { ...sc('global.insertSnippet'), handler: () => setSnippetPaletteOpen(true) },
-    { ...sc('global.export'), handler: () => useImportExportStore.getState().setExportDialogOpen(true) },
-    { ...sc('global.dataGenerator'), handler: () => useDataGenStore.getState().setDialogOpen(true) },
+    { ...sc('global.insertSnippet'), handler: () => setSnippetPaletteOpen(true), when: () => !isModalOpen() },
+    { ...sc('global.export'), handler: () => useImportExportStore.getState().setExportDialogOpen(true), when: () => !isModalOpen() },
+    { ...sc('global.dataGenerator'), handler: () => useDataGenStore.getState().setDialogOpen(true), when: () => !isModalOpen() },
   ]);
 
   if (settingsOpen) {

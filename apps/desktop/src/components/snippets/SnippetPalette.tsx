@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
+import { useUIStore } from '@/stores/uiStore';
 import { Search, Code, Tag, Plus, Pencil, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
@@ -49,6 +50,17 @@ export function SnippetPalette({
   onOpenChange,
   onInsert,
 }: SnippetPaletteProps) {
+  const pushModal = useUIStore((s) => s.pushModal);
+  const popModal = useUIStore((s) => s.popModal);
+
+  // Register modal when open
+  useEffect(() => {
+    if (open) {
+      pushModal('snippetPalette');
+      return () => popModal('snippetPalette');
+    }
+  }, [open, pushModal, popModal]);
+
   const { snippets, deleteSnippet } = useSnippetStore();
   const [search, setSearch] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
