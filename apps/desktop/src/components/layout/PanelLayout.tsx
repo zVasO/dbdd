@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { cn } from '@/lib/utils';
 import { Table2, Columns3 } from 'lucide-react';
+import { useUIStore } from '@/stores/uiStore';
 import type { QueryResult } from '@/lib/types';
 import type { QueryTab, TabViewMode } from '@/stores/queryStore';
 
@@ -31,17 +32,22 @@ const ProcessList = lazy(() => import('@/components/admin/ProcessList').then(m =
 const LazyFallback = () => <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">Loading...</div>;
 
 interface PanelLayoutProps {
+  readonly paneId?: 'primary' | 'secondary';
   readonly onOpenConnectionDialog?: () => void;
 }
 
-export function PanelLayout({ onOpenConnectionDialog }: PanelLayoutProps = {}) {
+export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: PanelLayoutProps = {}) {
   const tabs = useQueryStore((s) => s.tabs);
-  const activeTabId = useQueryStore((s) => s.activeTabId);
+  const primaryActiveTabId = useQueryStore((s) => s.activeTabId);
+  const secondaryActiveTabId = useUIStore((s) => s.secondaryActiveTabId);
+  const activeTabId = paneId === 'secondary' ? secondaryActiveTabId : primaryActiveTabId;
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const tabResult = useResultStore((s) => activeTab ? s.results[activeTab.id] : undefined);
 
-  const { updateSql, executeQuery, createTab, closeTab, setActiveTab, setEditorVisible, setViewMode, setActiveResult } = useQueryStore.getState();
+  const { updateSql, executeQuery, createTab, closeTab, setActiveTab: setPrimaryActiveTab, setEditorVisible, setViewMode, setActiveResult } = useQueryStore.getState();
+  const setSecondaryActiveTab = useUIStore.getState().setSecondaryActiveTabId;
+  const setActiveTab = paneId === 'secondary' ? setSecondaryActiveTab : setPrimaryActiveTab;
 
   const handleCreateQuery = () => {
     if (activeTab) {
