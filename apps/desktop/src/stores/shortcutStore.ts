@@ -41,6 +41,9 @@ export const SHORTCUT_DEFS: ShortcutDef[] = [
   { id: 'global.insertSnippet', label: 'Insert Snippet', category: 'global', default: { key: 'i', modifiers: ['ctrl', 'shift'] } },
   { id: 'global.export', label: 'Export', category: 'global', default: { key: 'e', modifiers: ['ctrl', 'shift'] } },
   { id: 'global.dataGenerator', label: 'Data Generator', category: 'global', default: { key: 'g', modifiers: ['ctrl', 'shift'] } },
+  { id: 'global.fullscreen', label: 'Toggle Full Screen', category: 'global', default: { key: 'f', modifiers: ['ctrl', 'meta'] } },
+  { id: 'global.themeSwitcher', label: 'Theme Switcher', category: 'global', default: { key: 'y', modifiers: ['ctrl', 'shift'] } },
+  { id: 'global.splitView', label: 'Split View', category: 'global', default: { key: '\\', modifiers: ['ctrl'] } },
 
   // Editor
   { id: 'editor.execute', label: 'Execute Query', category: 'editor', default: { key: 'Enter', modifiers: ['ctrl'] } },
@@ -161,9 +164,18 @@ export function formatBindingParts(binding: ShortcutBinding): string[] {
   const parts: string[] = [];
 
   if (IS_MACOS) {
+    const hasBothCtrlAndMeta = binding.modifiers.includes('ctrl') && binding.modifiers.includes('meta');
+    if (hasBothCtrlAndMeta) {
+      // Both present: ctrl = ⌃ (Control), meta = ⌘ (Command)
+      parts.push('\u2303'); // ⌃
+    }
     if (binding.modifiers.includes('alt')) parts.push('\u2325');
     if (binding.modifiers.includes('shift')) parts.push('\u21E7');
-    if (binding.modifiers.includes('ctrl') || binding.modifiers.includes('meta')) parts.push('\u2318');
+    if (hasBothCtrlAndMeta) {
+      parts.push('\u2318'); // ⌘
+    } else if (binding.modifiers.includes('ctrl') || binding.modifiers.includes('meta')) {
+      parts.push('\u2318'); // ⌘ (primary mod)
+    }
   } else {
     if (binding.modifiers.includes('ctrl')) parts.push('Ctrl');
     if (binding.modifiers.includes('shift')) parts.push('Shift');
