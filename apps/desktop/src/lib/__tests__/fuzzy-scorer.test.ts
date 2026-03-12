@@ -130,7 +130,7 @@ describe('scoreDotAware', () => {
       'llx_dossierisolation',
       'rowid'
     );
-    expect(result.score).toBeGreaterThan(50);
+    expect(result.score).toBeGreaterThanOrEqual(60);
   });
 
   it('returns 0 when column part does not match', () => {
