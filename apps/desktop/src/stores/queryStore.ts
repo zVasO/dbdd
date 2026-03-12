@@ -46,6 +46,7 @@ interface QueryState {
   executeQuery: (connectionId: string, tabId: string) => Promise<void>;
   cancelQuery: (connectionId: string, queryId: string) => Promise<void>;
   loadHistory: (connectionId: string) => Promise<void>;
+  reorderTabs: (fromIndex: number, toIndex: number) => void;
   restoreTabs: (tabs: Array<{ id: string; title: string; sql: string; editorVisible: boolean; connectionId?: string | null; database?: string; table?: string }>, activeTabIds?: Record<string, string>) => void;
 
   /** Called internally when active connection changes — recomputes visible tabs */
@@ -273,6 +274,22 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   loadHistory: async (connectionId) => {
     const history = await ipc.getQueryHistory(connectionId);
     set({ history });
+  },
+
+  reorderTabs: (fromIndex: number, toIndex: number) => {
+    const connectionId = useConnectionStore.getState().activeConnectionId;
+    if (!connectionId) return;
+
+    const allTabs = get().allTabs;
+    const connectionTabs = allTabs.filter((t) => t.connectionId === connectionId);
+    const otherTabs = allTabs.filter((t) => t.connectionId !== connectionId);
+
+    const reordered = [...connectionTabs];
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+
+    set({ allTabs: [...otherTabs, ...reordered] });
+    get()._syncVisibleTabs();
   },
 
   restoreTabs: (tabs, activeTabIds) => {
