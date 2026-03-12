@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { useModal } from '@/hooks/useModal';
-import { usePreferencesStore, type Preferences, type CopyFormat } from '@/stores/preferencesStore';
+import { usePreferencesStore, type Preferences, type CopyFormat, type DarkModeScheduleMode } from '@/stores/preferencesStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -151,6 +151,54 @@ function AppearanceSection() {
           </SelectContent>
         </Select>
       </SettingRow>
+
+      <SettingRow label="Theme mode" description="Control when dark mode is active.">
+        <Select
+          value={prefs.darkModeSchedule?.mode || 'manual'}
+          onValueChange={(v) => set('darkModeSchedule', {
+            ...prefs.darkModeSchedule,
+            mode: v as DarkModeScheduleMode,
+          })}
+        >
+          <SelectTrigger className="w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="manual">Manual</SelectItem>
+            <SelectItem value="system">Follow System</SelectItem>
+            <SelectItem value="schedule">Schedule</SelectItem>
+          </SelectContent>
+        </Select>
+      </SettingRow>
+
+      {prefs.darkModeSchedule?.mode === 'schedule' && (
+        <div className="flex gap-4 pl-1">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Light mode from</Label>
+            <Input
+              type="time"
+              className="w-32 text-xs"
+              value={prefs.darkModeSchedule.lightFrom || '07:00'}
+              onChange={(e) => set('darkModeSchedule', {
+                ...prefs.darkModeSchedule,
+                lightFrom: e.target.value,
+              })}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Dark mode from</Label>
+            <Input
+              type="time"
+              className="w-32 text-xs"
+              value={prefs.darkModeSchedule.darkFrom || '19:00'}
+              onChange={(e) => set('darkModeSchedule', {
+                ...prefs.darkModeSchedule,
+                darkFrom: e.target.value,
+              })}
+            />
+          </div>
+        </div>
+      )}
 
       <SettingRow label="Alternating row colors" description="Stripe every other row in the data grid.">
         <Toggle checked={prefs.alternatingRowColors} onChange={(v) => set('alternatingRowColors', v)} />

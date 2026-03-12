@@ -13,6 +13,7 @@ interface ThemeState {
   // Actions
   setActiveTheme: (id: string) => void;
   toggleDarkMode: () => void;
+  setDarkMode: (isDark: boolean) => void;
   createTheme: (name: string, baseThemeId?: string) => string;
   duplicateTheme: (id: string) => string;
   deleteTheme: (id: string) => void;
@@ -82,6 +83,18 @@ export const useThemeStore = create<ThemeState>((set, get) => {
       const themes = get().themes.map((t) => t.id === theme.id ? updated : t);
       set({ themes });
       // Only persist custom themes to localStorage
+      if (!theme.builtIn) {
+        saveCustomThemes(themes);
+      }
+      applyThemeToDOM(updated);
+    },
+
+    setDarkMode: (isDark) => {
+      const theme = get().getActiveTheme();
+      if (theme.isDark === isDark) return;
+      const updated = { ...theme, isDark };
+      const themes = get().themes.map((t) => t.id === theme.id ? updated : t);
+      set({ themes });
       if (!theme.builtIn) {
         saveCustomThemes(themes);
       }
