@@ -32,6 +32,7 @@ import {
   TableProperties,
   Users,
   Plug,
+  Columns,
 } from 'lucide-react';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 import { useAIStore } from '@/stores/aiStore';
@@ -184,6 +185,16 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
                 icon={<Terminal className="h-4 w-4" />}
               >
                 Toggle Activity Log
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  const current = useUIStore.getState().splitMode;
+                  useUIStore.getState().setSplitMode(current === 'single' ? 'horizontal' : 'single');
+                })}
+                icon={<Columns className="h-4 w-4" />}
+                shortcut={formatBinding(sc('global.splitView'))}
+              >
+                {useUIStore.getState().splitMode === 'single' ? 'Split Right' : 'Close Split'}
               </CommandItem>
               {onOpenPreferences && (
                 <CommandItem

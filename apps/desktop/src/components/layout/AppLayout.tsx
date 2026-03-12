@@ -7,6 +7,7 @@ import { useChangeStore } from '@/stores/changeStore';
 import { useFilterStore } from '@/stores/filterStore';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcut';
 import { useShortcutStore } from '@/stores/shortcutStore';
+import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
 import { Sidebar } from './Sidebar';
 import { StatusBar } from './StatusBar';
 import { PanelLayout } from './PanelLayout';
@@ -41,6 +42,7 @@ export function AppLayout() {
   const setSidebarWidth = useUIStore((s) => s.setSidebarWidth);
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
+  const splitMode = useUIStore((s) => s.splitMode);
 
   const [prefsOpen, setPrefsOpen] = useState(false);
   const [csvImportOpen, setCsvImportOpen] = useState(false);
@@ -152,6 +154,14 @@ export function AppLayout() {
       },
       when: () => !isModalOpen(),
     },
+    {
+      ...sc('global.splitView'),
+      handler: () => {
+        const current = useUIStore.getState().splitMode;
+        useUIStore.getState().setSplitMode(current === 'single' ? 'horizontal' : 'single');
+      },
+      when: () => !isModalOpen(),
+    },
     { ...sc('global.preferences'), handler: () => setPrefsOpen(true), when: () => !isModalOpen() },
     {
       ...sc('global.openFile'),
@@ -231,7 +241,19 @@ export function AppLayout() {
             </div>
           </div>
         )}
-        <PanelLayout onOpenConnectionDialog={handleOpenConnectionDialog} />
+        {splitMode === 'single' ? (
+          <PanelLayout paneId="primary" onOpenConnectionDialog={handleOpenConnectionDialog} />
+        ) : (
+          <PanelGroup direction="horizontal">
+            <Panel defaultSize={50} minSize={30}>
+              <PanelLayout paneId="primary" onOpenConnectionDialog={handleOpenConnectionDialog} />
+            </Panel>
+            <PanelResizeHandle className="w-[2px] bg-border hover:bg-primary transition-colors" />
+            <Panel defaultSize={50} minSize={30}>
+              <PanelLayout paneId="secondary" onOpenConnectionDialog={handleOpenConnectionDialog} />
+            </Panel>
+          </PanelGroup>
+        )}
         <Suspense fallback={null}>
           <AiChatPanel />
         </Suspense>
