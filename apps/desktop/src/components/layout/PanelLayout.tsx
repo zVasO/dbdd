@@ -10,6 +10,7 @@ import { TableStructureView } from '@/components/grid/TableStructureView';
 import { FilterBar } from '@/components/grid/FilterBar';
 import { ColumnFilter } from '@/components/grid/ColumnFilter';
 import { CodePreview } from '@/components/editor/CodePreview';
+import { WelcomeScreen } from '@/components/layout/WelcomeScreen';
 import { Button } from '@/components/ui/button';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { cn } from '@/lib/utils';
@@ -29,7 +30,11 @@ const ProcessList = lazy(() => import('@/components/admin/ProcessList').then(m =
 
 const LazyFallback = () => <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">Loading...</div>;
 
-export function PanelLayout() {
+interface PanelLayoutProps {
+  readonly onOpenConnectionDialog?: () => void;
+}
+
+export function PanelLayout({ onOpenConnectionDialog }: PanelLayoutProps = {}) {
   const tabs = useQueryStore((s) => s.tabs);
   const activeTabId = useQueryStore((s) => s.activeTabId);
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
@@ -74,16 +79,14 @@ export function PanelLayout() {
     executeQuery(activeConnectionId, activeTab.id);
   }, [activeConnectionId, activeTab, updateSql, executeQuery]);
 
-  // No tabs open yet -- show empty state
+  // No tabs open yet -- show welcome / empty state
   if (tabs.length === 0) {
     return (
       <>
-        <div className="flex flex-1 flex-col items-center justify-center text-muted-foreground">
-          <p className="mb-4 text-sm">Select a table from the sidebar, or create a query</p>
-          <Button onClick={() => createTab()}>
-            Create Query
-          </Button>
-        </div>
+        <WelcomeScreen
+          onNewConnection={() => onOpenConnectionDialog?.()}
+          onOpenFile={() => createTab()}
+        />
         <CodePreview />
       </>
     );
