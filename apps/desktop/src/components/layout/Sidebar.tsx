@@ -229,7 +229,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   return (
     <TooltipProvider delayDuration={400}>
       <div
-        className="flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
+        className="flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar/80 backdrop-blur-xl text-sidebar-foreground"
         style={{ width: 'var(--sidebar-width)' }}
       >
         {/* Database selector — pl-[78px] reserves space for macOS traffic lights */}

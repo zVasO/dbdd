@@ -32,7 +32,10 @@
         "resizable": true,
         "titleBarStyle": "overlay",
         "hiddenTitle": true,
-        "trafficLightPosition": { "x": 13, "y": 13 }
+        "trafficLightPosition": { "x": 13, "y": 13 },
+        "windowEffects": {
+          "effects": ["sidebar"]
+        }
       }
     ],
     "security": {
