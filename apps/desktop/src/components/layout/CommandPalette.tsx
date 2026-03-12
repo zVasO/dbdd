@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Command } from 'cmdk';
 import { useUIStore } from '@/stores/uiStore';
 import { useQueryStore } from '@/stores/queryStore';
@@ -12,6 +13,7 @@ import {
   Terminal,
   Unplug,
   Settings,
+  Palette,
   FolderOpen,
   Save,
   Upload,
@@ -30,6 +32,7 @@ import {
   TableProperties,
   Users,
   Plug,
+  Columns,
 } from 'lucide-react';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 import { useAIStore } from '@/stores/aiStore';
@@ -47,9 +50,19 @@ interface CommandPaletteProps {
 export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConnectionDialog }: CommandPaletteProps) {
   const open = useUIStore((s) => s.commandPaletteOpen);
   const setOpen = useUIStore((s) => s.setCommandPaletteOpen);
+  const pushModal = useUIStore((s) => s.pushModal);
+  const popModal = useUIStore((s) => s.popModal);
   const sc = useShortcutStore((s) => s.getBinding);
   // Subscribe to overrides so display updates when shortcuts change
   useShortcutStore((s) => s.overrides);
+
+  // Register modal when open
+  useEffect(() => {
+    if (open) {
+      pushModal('commandPalette');
+      return () => popModal('commandPalette');
+    }
+  }, [open, pushModal, popModal]);
 
   function runAndClose(fn: () => void) {
     fn();
@@ -173,6 +186,16 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
               >
                 Toggle Activity Log
               </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => {
+                  const current = useUIStore.getState().splitMode;
+                  useUIStore.getState().setSplitMode(current === 'single' ? 'horizontal' : 'single');
+                })}
+                icon={<Columns className="h-4 w-4" />}
+                shortcut={formatBinding(sc('global.splitView'))}
+              >
+                {useUIStore.getState().splitMode === 'single' ? 'Split Right' : 'Close Split'}
+              </CommandItem>
               {onOpenPreferences && (
                 <CommandItem
                   onSelect={() => runAndClose(() => onOpenPreferences())}
@@ -187,6 +210,12 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
                 icon={<Settings className="h-4 w-4" />}
               >
                 Open Settings
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => useUIStore.getState().setSettingsOpen(true))}
+                icon={<Palette className="h-4 w-4" />}
+              >
+                Theme: Open Editor
               </CommandItem>
             </Command.Group>
 

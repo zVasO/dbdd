@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react';
+import { useMemo, useCallback, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -10,6 +10,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { useUIStore } from '@/stores/uiStore';
 import { useImportExportStore } from '@/stores/importExportStore';
 import {
   toCSV,
@@ -78,6 +79,18 @@ const FORMAT_OPTIONS = [
 ];
 
 export function ExportDialog() {
+  const pushModal = useUIStore((s) => s.pushModal);
+  const popModal = useUIStore((s) => s.popModal);
+  const exportDialogOpenForModal = useImportExportStore((s) => s.exportDialogOpen);
+
+  // Register modal when open
+  useEffect(() => {
+    if (exportDialogOpenForModal) {
+      pushModal('exportDialog');
+      return () => popModal('exportDialog');
+    }
+  }, [exportDialogOpenForModal, pushModal, popModal]);
+
   const activeTab = useQueryStore((s) => {
     const tab = s.tabs.find((t) => t.id === s.activeTabId);
     return tab ?? null;
