@@ -37,6 +37,7 @@ import {
   Key,
   Loader2,
   Search,
+  Star,
   Terminal,
   Trash2,
   Eraser,
@@ -48,6 +49,7 @@ import {
 } from 'lucide-react';
 import { ipc } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
+import { useFavoritesStore } from '@/stores/favoritesStore';
 import type { TableInfo, ColumnInfo } from '@/lib/types';
 
 /** Safely convert data_type to string - backend may return objects like {Varchar: 255} */
@@ -81,6 +83,11 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   const activeConfig = useConnectionStore((s) => s.activeConfig);
   const tabs = useQueryStore((s) => s.tabs);
   const { createTab, updateSql, executeQuery, setActiveTab } = useQueryStore.getState();
+
+  const getFavorites = useFavoritesStore((s) => s.getFavorites);
+  const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
+  const isFavorite = useFavoritesStore((s) => s.isFavorite);
+  const favorites = activeConnectionId ? getFavorites(activeConnectionId) : [];
 
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedDbs, setExpandedDbs] = useState<Set<string>>(new Set());
@@ -325,6 +332,35 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
 
         <ScrollArea className="flex-1 overflow-hidden">
           <div className="py-1">
+            {/* Favorites section */}
+            {favorites.length > 0 && !searchQuery && (
+              <div className="px-2 py-1">
+                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider px-2 py-1">
+                  Favorites
+                </div>
+                {favorites.map((table) => (
+                  <button
+                    key={table}
+                    onClick={() => activeDatabase && handleTableClick(activeDatabase, table)}
+                    className="w-full flex items-center gap-2 px-2 py-1 text-sm hover:bg-accent rounded group"
+                  >
+                    <Star className="w-3 h-3 text-yellow-500 fill-yellow-500 flex-shrink-0" />
+                    <span className="truncate">{table}</span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (activeConnectionId) toggleFavorite(activeConnectionId, table);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 ml-auto"
+                    >
+                      <X className="w-3 h-3 text-muted-foreground hover:text-foreground" />
+                    </button>
+                  </button>
+                ))}
+                <Separator className="mt-1" />
+              </div>
+            )}
+
             {/* Single-database mode: flat table list */}
             {activeDatabase && !searchQuery ? (
               activeTables.length === 0 ? (
@@ -351,6 +387,8 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
                       onDrop={() => handleDropTable(activeDatabase, table.name)}
                       onRename={() => handleRenameTable(activeDatabase, table.name)}
                       flat
+                      isFavorited={activeConnectionId ? isFavorite(activeConnectionId, table.name) : false}
+                      onToggleFavorite={activeConnectionId ? () => toggleFavorite(activeConnectionId, table.name) : undefined}
                     />
                   );
                 })
@@ -376,6 +414,8 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
                 onTruncateTable={handleTruncateTable}
                 onDropTable={handleDropTable}
                 onRenameTable={handleRenameTable}
+                isFavorite={activeConnectionId ? (table: string) => isFavorite(activeConnectionId, table) : undefined}
+                onToggleFavorite={activeConnectionId ? (table: string) => toggleFavorite(activeConnectionId, table) : undefined}
               />
             )}
           </div>
@@ -474,6 +514,8 @@ interface SearchableTreeProps {
   onTruncateTable: (db: string, table: string) => void;
   onDropTable: (db: string, table: string) => void;
   onRenameTable: (db: string, table: string) => void;
+  isFavorite?: (table: string) => boolean;
+  onToggleFavorite?: (table: string) => void;
 }
 
 function SearchableTree({
@@ -481,6 +523,7 @@ function SearchableTree({
   searchQuery, expandedDbs, expandedTables, selectedColumn,
   onToggleDb, onToggleTable, onTableClick, onColumnClick,
   onTruncateTable, onDropTable, onRenameTable,
+  isFavorite, onToggleFavorite,
 }: SearchableTreeProps) {
   const q = searchQuery.toLowerCase().trim();
 
@@ -637,6 +680,8 @@ function SearchableTree({
           onTruncateTable={onTruncateTable}
           onDropTable={onDropTable}
           onRenameTable={onRenameTable}
+          isFavorite={isFavorite}
+          onToggleFavorite={onToggleFavorite}
         />
       ))}
     </>
@@ -664,6 +709,8 @@ interface DatabaseNodeProps {
   onTruncateTable: (db: string, table: string) => void;
   onDropTable: (db: string, table: string) => void;
   onRenameTable: (db: string, table: string) => void;
+  isFavorite?: (table: string) => boolean;
+  onToggleFavorite?: (table: string) => void;
 }
 
 function DatabaseNode({
@@ -685,6 +732,8 @@ function DatabaseNode({
   onTruncateTable,
   onDropTable,
   onRenameTable,
+  isFavorite,
+  onToggleFavorite,
 }: DatabaseNodeProps) {
   return (
     <Collapsible open={expanded} onOpenChange={onToggle}>
@@ -731,6 +780,8 @@ function DatabaseNode({
                 onTruncate={() => onTruncateTable(dbName, table.name)}
                 onDrop={() => onDropTable(dbName, table.name)}
                 onRename={() => onRenameTable(dbName, table.name)}
+                isFavorited={isFavorite?.(table.name)}
+                onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(table.name) : undefined}
               />
             );
           })
@@ -758,6 +809,8 @@ interface TableNodeProps {
   onRename: () => void;
   /** Render without database-level indentation (flat mode) */
   flat?: boolean;
+  isFavorited?: boolean;
+  onToggleFavorite?: () => void;
 }
 
 function TableNode({
@@ -774,6 +827,8 @@ function TableNode({
   onRename,
   searchQuery,
   flat,
+  isFavorited,
+  onToggleFavorite,
 }: TableNodeProps) {
   const isView = table.table_type === 'View';
   const TableIcon = isView ? Eye : Table2;
@@ -782,7 +837,7 @@ function TableNode({
     <Collapsible open={expanded}>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div className={cn("flex items-center", flat ? "pl-2" : "pl-5")}>
+          <div className={cn("group flex items-center", flat ? "pl-2" : "pl-5")}>
             {/* Expand/collapse chevron */}
             <button
               onClick={(e) => {
@@ -836,6 +891,26 @@ function TableNode({
                 {table.comment && <p className="mt-1 text-muted-foreground">{table.comment}</p>}
               </TooltipContent>
             </Tooltip>
+
+            {onToggleFavorite && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleFavorite();
+                }}
+                className={cn(
+                  'flex-shrink-0 p-0.5 rounded-sm transition-opacity',
+                  isFavorited ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+                )}
+              >
+                <Star className={cn(
+                  'w-3 h-3',
+                  isFavorited
+                    ? 'text-yellow-500 fill-yellow-500'
+                    : 'text-muted-foreground hover:text-yellow-500',
+                )} />
+              </button>
+            )}
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="w-48">
