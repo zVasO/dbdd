@@ -13,6 +13,7 @@ import {
   Terminal,
   Unplug,
   Settings,
+  Palette,
   FolderOpen,
   Save,
   Upload,
@@ -198,6 +199,12 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
                 icon={<Settings className="h-4 w-4" />}
               >
                 Open Settings
+              </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => useUIStore.getState().setSettingsOpen(true))}
+                icon={<Palette className="h-4 w-4" />}
+              >
+                Theme: Open Editor
               </CommandItem>
             </Command.Group>
 
