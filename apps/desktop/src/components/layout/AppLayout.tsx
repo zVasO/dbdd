@@ -193,6 +193,11 @@ export function AppLayout() {
 
   return (
     <div className="flex h-full flex-col bg-background">
+      {/* macOS drag region for window movement */}
+      <div
+        className="fixed top-0 left-0 right-0 h-10 z-10"
+        style={{ WebkitAppRegion: 'drag', pointerEvents: 'none' } as React.CSSProperties}
+      />
       <div className="flex flex-1 overflow-hidden">
         <Sidebar onOpenConnectionDialog={handleOpenConnectionDialog} />
         {sidebarOpen && (

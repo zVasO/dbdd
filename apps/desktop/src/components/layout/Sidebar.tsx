@@ -218,9 +218,9 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
         className="flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
         style={{ width: 'var(--sidebar-width)' }}
       >
-        {/* Database selector */}
+        {/* Database selector — pl-[78px] reserves space for macOS traffic lights */}
         <div className="relative border-b border-sidebar-border" ref={dbSelectorRef}>
-          <div className="flex items-center">
+          <div className="flex items-center pl-[78px]">
           <button
             onClick={() => setDbSelectorOpen(!dbSelectorOpen)}
             className="flex flex-1 min-w-0 items-center gap-2 px-3 py-2 text-left hover:bg-sidebar-accent/50 transition-colors"
