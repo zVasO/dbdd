@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Command } from 'cmdk';
 import { useUIStore } from '@/stores/uiStore';
 import { useQueryStore } from '@/stores/queryStore';
@@ -47,9 +48,19 @@ interface CommandPaletteProps {
 export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConnectionDialog }: CommandPaletteProps) {
   const open = useUIStore((s) => s.commandPaletteOpen);
   const setOpen = useUIStore((s) => s.setCommandPaletteOpen);
+  const pushModal = useUIStore((s) => s.pushModal);
+  const popModal = useUIStore((s) => s.popModal);
   const sc = useShortcutStore((s) => s.getBinding);
   // Subscribe to overrides so display updates when shortcuts change
   useShortcutStore((s) => s.overrides);
+
+  // Register modal when open
+  useEffect(() => {
+    if (open) {
+      pushModal('commandPalette');
+      return () => popModal('commandPalette');
+    }
+  }, [open, pushModal, popModal]);
 
   function runAndClose(fn: () => void) {
     fn();
