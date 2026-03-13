@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import type { QueryResult, ColumnMeta, ColumnarResult, ColumnData, StreamMeta, ResultType } from '../lib/types';
+import { estimateTabMemory, selectEvictionCandidates } from '../lib/memory-manager';
+import type { TabMemoryEntry } from '../lib/memory-manager';
 
 export interface TabResult {
   columns: ColumnMeta[];
@@ -21,6 +23,8 @@ export interface TabResult {
   _streamResultType: ResultType | null;
   _streamQueryId: string | null;
   _streamWarnings: string[];
+  /** Whether this tab's data was evicted by memory management */
+  isStale: boolean;
   /** Legacy: row-based view built lazily on first access */
   _rowsCache: QueryResult['rows'] | null;
   _allResultsCache: QueryResult[] | null;
@@ -103,6 +107,52 @@ const EMPTY_COLUMNAR_DEFAULTS = {
   allColumnarResults: [] as ColumnarResult[],
 };
 
+// --- Memory tracking ---
+const memoryEntries = new Map<string, TabMemoryEntry>();
+
+/** Track memory for a tab and evict LRU tabs if over the soft cap */
+function trackAndEvict(
+  tabId: string,
+  data: ColumnData[],
+  results: Record<string, TabResult>,
+): Record<string, TabResult> {
+  const bytes = estimateTabMemory(data);
+  memoryEntries.set(tabId, {
+    tabId,
+    bytes,
+    lastAccessed: Date.now(),
+    pinned: false,
+  });
+
+  const toEvict = selectEvictionCandidates(
+    Array.from(memoryEntries.values()),
+    tabId,
+    [],
+  );
+
+  if (toEvict.length === 0) return results;
+
+  let updated = { ...results };
+  for (const evictId of toEvict) {
+    const existing = updated[evictId];
+    if (existing) {
+      updated = {
+        ...updated,
+        [evictId]: {
+          ...existing,
+          data: [],
+          rowCount: 0,
+          isStale: true,
+          _rowsCache: null,
+          _allResultsCache: null,
+        },
+      };
+    }
+    memoryEntries.delete(evictId);
+  }
+  return updated;
+}
+
 interface ResultState {
   results: Record<string, TabResult>;
 
@@ -116,6 +166,7 @@ interface ResultState {
   initStream: (tabId: string, meta: StreamMeta) => void;
   appendChunk: (tabId: string, offset: number, chunkData: ColumnData[]) => void;
   finishStream: (tabId: string, totalRows: number, executionTimeMs: number) => void;
+  updateLastAccessed: (tabId: string) => void;
   clearResult: (tabId: string) => void;
   clearAll: () => void;
 
@@ -141,6 +192,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
               totalRows: 0,
               isStreaming: false,
               streamProgress: 0,
+              isStale: false,
               activeResultIndex: 0,
               _streamResultType: null,
               _streamQueryId: null,
@@ -167,6 +219,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
           isExecuting: false,
           isStreaming: false,
           streamProgress: 0,
+          isStale: false,
           error: null,
           activeResultIndex: 0,
           _streamResultType: null,
@@ -191,6 +244,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
           isExecuting: false,
           isStreaming: false,
           streamProgress: 0,
+          isStale: false,
           error,
           activeResultIndex: 0,
           _streamResultType: null,
@@ -205,56 +259,56 @@ export const useResultStore = create<ResultState>((set, get) => ({
 
   setColumnarResult: (tabId, result) => {
     // Store columnar only — rows built lazily via getRows()
-    set((s) => ({
-      results: {
-        ...s.results,
-        [tabId]: {
-          columns: result.columns,
-          data: result.data,
-          rowCount: result.row_count,
-          totalRows: result.row_count,
-          executionTimeMs: result.execution_time_ms,
-          isExecuting: false,
-          isStreaming: false,
-          streamProgress: 0,
-          error: null,
-          allColumnarResults: [result],
-          activeResultIndex: 0,
-          _streamResultType: null,
-          _streamQueryId: null,
-          _streamWarnings: [],
-          _rowsCache: null,
-          _allResultsCache: null,
-        },
-      },
-    }));
+    set((s) => {
+      const newTabResult: TabResult = {
+        columns: result.columns,
+        data: result.data,
+        rowCount: result.row_count,
+        totalRows: result.row_count,
+        executionTimeMs: result.execution_time_ms,
+        isExecuting: false,
+        isStreaming: false,
+        streamProgress: 0,
+        isStale: false,
+        error: null,
+        allColumnarResults: [result],
+        activeResultIndex: 0,
+        _streamResultType: null,
+        _streamQueryId: null,
+        _streamWarnings: [],
+        _rowsCache: null,
+        _allResultsCache: null,
+      };
+      const updatedResults = { ...s.results, [tabId]: newTabResult };
+      return { results: trackAndEvict(tabId, result.data, updatedResults) };
+    });
   },
 
   setColumnarResults: (tabId, results, error) => {
     const first = results[0] ?? null;
-    set((s) => ({
-      results: {
-        ...s.results,
-        [tabId]: {
-          columns: first?.columns ?? [],
-          data: first?.data ?? [],
-          rowCount: first?.row_count ?? 0,
-          totalRows: first?.row_count ?? 0,
-          executionTimeMs: first?.execution_time_ms ?? 0,
-          isExecuting: false,
-          isStreaming: false,
-          streamProgress: 0,
-          error,
-          allColumnarResults: results,
-          activeResultIndex: 0,
-          _streamResultType: null,
-          _streamQueryId: null,
-          _streamWarnings: [],
-          _rowsCache: null,
-          _allResultsCache: null,
-        },
-      },
-    }));
+    set((s) => {
+      const newTabResult: TabResult = {
+        columns: first?.columns ?? [],
+        data: first?.data ?? [],
+        rowCount: first?.row_count ?? 0,
+        totalRows: first?.row_count ?? 0,
+        executionTimeMs: first?.execution_time_ms ?? 0,
+        isExecuting: false,
+        isStreaming: false,
+        streamProgress: 0,
+        isStale: false,
+        error,
+        allColumnarResults: results,
+        activeResultIndex: 0,
+        _streamResultType: null,
+        _streamQueryId: null,
+        _streamWarnings: [],
+        _rowsCache: null,
+        _allResultsCache: null,
+      };
+      const updatedResults = { ...s.results, [tabId]: newTabResult };
+      return { results: trackAndEvict(tabId, first?.data ?? [], updatedResults) };
+    });
   },
 
   setError: (tabId, error) => {
@@ -268,6 +322,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
             totalRows: 0,
             isStreaming: false,
             streamProgress: 0,
+            isStale: false,
             activeResultIndex: 0,
             _streamResultType: null,
             _streamQueryId: null,
@@ -335,6 +390,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
           isExecuting: true,
           isStreaming: true,
           streamProgress: 0,
+          isStale: false,
           error: null,
           allColumnarResults: [],
           activeResultIndex: 0,
@@ -398,26 +454,27 @@ export const useResultStore = create<ResultState>((set, get) => ({
         result_type: current._streamResultType ?? 'Select',
       };
 
-      return {
-        results: {
-          ...s.results,
-          [tabId]: {
-            ...current,
-            isExecuting: false,
-            isStreaming: false,
-            rowCount: totalRows,
-            totalRows: totalRows,
-            executionTimeMs,
-            streamProgress: totalRows,
-            allColumnarResults: [columnarResult],
-            _streamResultType: null,
-            _streamQueryId: null,
-            _streamWarnings: [],
-            _rowsCache: null,
-            _allResultsCache: null,
-          },
+      const updatedResults = {
+        ...s.results,
+        [tabId]: {
+          ...current,
+          isExecuting: false,
+          isStreaming: false,
+          isStale: false,
+          rowCount: totalRows,
+          totalRows: totalRows,
+          executionTimeMs,
+          streamProgress: totalRows,
+          allColumnarResults: [columnarResult],
+          _streamResultType: null,
+          _streamQueryId: null,
+          _streamWarnings: [],
+          _rowsCache: null,
+          _allResultsCache: null,
         },
       };
+
+      return { results: trackAndEvict(tabId, current.data, updatedResults) };
     });
   },
 
@@ -456,7 +513,15 @@ export const useResultStore = create<ResultState>((set, get) => ({
     return [];
   },
 
+  updateLastAccessed: (tabId) => {
+    const entry = memoryEntries.get(tabId);
+    if (entry) {
+      memoryEntries.set(tabId, { ...entry, lastAccessed: Date.now() });
+    }
+  },
+
   clearResult: (tabId) => {
+    memoryEntries.delete(tabId);
     set((s) => {
       const { [tabId]: _, ...rest } = s.results;
       return { results: rest };
@@ -464,6 +529,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
   },
 
   clearAll: () => {
+    memoryEntries.clear();
     set({ results: {} });
   },
 }));
