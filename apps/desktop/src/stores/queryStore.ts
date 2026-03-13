@@ -266,11 +266,14 @@ export const useQueryStore = create<QueryState>((set, get) => ({
           ...t, isExecuting: false, activeQueryId: null, error: errors.length > 0 ? errors.join('\n') : null,
         })));
       } else {
-        // Detect small LIMIT — use fast single-shot path for small results
+        // Detect when single-shot is appropriate:
+        // - Table browse queries (tab.table set) always use single-shot — bounded by table size
+        // - Queries with small explicit LIMIT use single-shot — lower overhead than streaming
         const limitMatch = tab.sql.match(/\bLIMIT\s+(\d+)/i);
         const hasSmallLimit = limitMatch && parseInt(limitMatch[1], 10) <= 5000;
+        const isTableBrowse = !!tab.table;
 
-        if (hasSmallLimit) {
+        if (hasSmallLimit || isTableBrowse) {
           // Single-shot columnar path (fast for small results)
           const result = await ipc.executeQueryColumnar(connectionId, tab.sql);
           const durationMs = Math.round(performance.now() - startTime);
