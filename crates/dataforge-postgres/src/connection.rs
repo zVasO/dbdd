@@ -16,7 +16,7 @@ impl PostgresConnection {
     pub async fn new(config: &ConnectionConfig, password: Option<&str>) -> Result<Self> {
         let url = build_connection_url(config, password);
         let pool = PgPoolOptions::new()
-            .max_connections(20)
+            .max_connections(config.pool_size.unwrap_or(20))
             .acquire_timeout(std::time::Duration::from_secs(10))
             .connect(&url)
             .await

@@ -14,9 +14,11 @@ impl MySqlConnection {
         config: &dataforge_core::models::connection::ConnectionConfig,
         password: Option<&str>,
     ) -> Result<Self> {
+        let max_conns = config.pool_size.unwrap_or(20);
+        let min_conns = std::cmp::min(2, max_conns);
         let pool_opts = mysql_async::PoolOpts::default()
             .with_constraints(
-                mysql_async::PoolConstraints::new(2, 20).unwrap(),
+                mysql_async::PoolConstraints::new(min_conns as usize, max_conns as usize).unwrap(),
             );
 
         let opts = mysql_async::OptsBuilder::default()
