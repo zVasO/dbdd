@@ -85,16 +85,28 @@ export function AppLayout() {
       // Clear stale schema from previous connection before loading new one
       useSchemaStore.getState().reset();
       useChangeStore.getState().discard();
-      loadDatabases(activeConnectionId).then(() => {
-        // Auto-select the configured database (or first available)
-        const { databases, setActiveDatabase } = useSchemaStore.getState();
-        const targetDb = activeConfig?.database
-          || databases[0]?.name;
-        if (targetDb) {
-          setActiveDatabase(targetDb);
-          useSchemaStore.getState().loadTables(activeConnectionId, targetDb);
-        }
-      });
+
+      const targetDb = activeConfig?.database;
+
+      if (targetDb) {
+        // Parallel: load databases list AND tables for known database simultaneously
+        Promise.all([
+          loadDatabases(activeConnectionId),
+          useSchemaStore.getState().loadTables(activeConnectionId, targetDb),
+        ]).then(() => {
+          useSchemaStore.getState().setActiveDatabase(targetDb);
+        });
+      } else {
+        // Sequential: need database list first to pick default
+        loadDatabases(activeConnectionId).then(() => {
+          const { databases, setActiveDatabase } = useSchemaStore.getState();
+          const firstDb = databases[0]?.name;
+          if (firstDb) {
+            setActiveDatabase(firstDb);
+            useSchemaStore.getState().loadTables(activeConnectionId, firstDb);
+          }
+        });
+      }
     } else {
       // No active connection — clear everything
       useSchemaStore.getState().reset();
