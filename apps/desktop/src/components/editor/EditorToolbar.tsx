@@ -11,7 +11,7 @@ import {
   TooltipContent,
   TooltipProvider,
 } from '@/components/ui/tooltip';
-import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2, Wand2, FolderOpen, Download, Sparkles, Brain, Zap, GitBranch, Check, X } from 'lucide-react';
+import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2, Wand2, FolderOpen, Download, Sparkles, Brain, Zap, GitBranch, Check, X, StopCircle } from 'lucide-react';
 import { useState, useCallback, useEffect } from 'react';
 import { useAIStore } from '@/stores/aiStore';
 import { AiResultDialog } from '@/components/ai/AiResultDialog';
@@ -31,6 +31,7 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
   const setPreviewOpen = useChangeStore((s) => s.setPreviewOpen);
   const generateSql = useChangeStore((s) => s.generateSql);
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
+  const activeTab = useQueryStore((s) => s.tabs.find((t) => t.id === s.activeTabId));
   const [isCommitting, setIsCommitting] = useState(false);
   const [txState, setTxState] = useState<'none' | 'active' | 'error'>('none');
   const [aiDialogOpen, setAiDialogOpen] = useState(false);
@@ -81,6 +82,15 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
     } catch { setTxState('error'); }
   }, [activeConnectionId, txState]);
 
+  const handleCancel = useCallback(async () => {
+    if (!activeConnectionId || !activeTab?.activeQueryId) return;
+    try {
+      await useQueryStore.getState().cancelQuery(activeConnectionId, activeTab.activeQueryId);
+    } catch (e) {
+      console.warn('Cancel failed:', e);
+    }
+  }, [activeConnectionId, activeTab?.activeQueryId]);
+
   // Listen for Ctrl+S commit event from AppLayout
   useEffect(() => {
     const handler = () => { handleCommit(); };
@@ -114,6 +124,24 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
           </TooltipTrigger>
           <TooltipContent>Run query (Ctrl+Enter)</TooltipContent>
         </Tooltip>
+
+        {/* Cancel query */}
+        {isExecuting && activeTab?.activeQueryId && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleCancel}
+                className="gap-1.5 text-xs text-destructive hover:text-destructive"
+              >
+                <StopCircle className="h-3.5 w-3.5" />
+                Stop
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Cancel query (Esc)</TooltipContent>
+          </Tooltip>
+        )}
 
         {/* Format SQL */}
         <Tooltip>

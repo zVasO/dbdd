@@ -54,6 +54,7 @@ export interface QueryTab {
   error: string | null;
   editorVisible: boolean;
   viewMode: TabViewMode;
+  activeQueryId: string | null;
   database?: string;
   table?: string;
 }
@@ -99,6 +100,21 @@ function computeVisibleTabs(allTabs: QueryTab[], connId: string | null): QueryTa
   return allTabs.filter((t) => t.connectionId === connId || !t.connectionId);
 }
 
+/**
+ * Updates a single tab's properties in both allTabs and tabs arrays
+ * without recomputing visible tabs from scratch. This avoids the O(n) filter
+ * and produces stable array references when only tab properties change.
+ */
+function updateTab(
+  state: QueryState,
+  tabId: string,
+  updater: (tab: QueryTab) => QueryTab,
+): Partial<QueryState> {
+  const allTabs = state.allTabs.map((t) => t.id === tabId ? updater(t) : t);
+  const tabs = state.tabs.map((t) => t.id === tabId ? updater(t) : t);
+  return { allTabs, tabs };
+}
+
 export const useQueryStore = create<QueryState>((set, get) => ({
   allTabs: [],
   activeTabIds: {},
@@ -132,6 +148,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       error: null,
       editorVisible: opts?.editorVisible ?? true,
       viewMode: 'data',
+      activeQueryId: null,
       database: opts?.database,
       table: opts?.table,
     };
@@ -220,18 +237,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
     useResultStore.getState().setExecuting(tabId);
 
-    set((s) => {
-      const connId = getActiveConnectionId();
-      const allTabs = s.allTabs.map((t) =>
-        t.id === tabId
-          ? { ...t, isExecuting: true, error: null }
-          : t,
-      );
-      const tabs = computeVisibleTabs(allTabs, connId);
-      const activeTabId = (connId && s.activeTabIds[connId]) || null;
-      const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
-      return { allTabs, tabs, activeTabId: validActive };
-    });
+    set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: true, error: null, activeQueryId: null })));
 
     // Split into multiple statements for batch execution
     const statements = tab.sql.split(/;\s*/).map((s) => s.trim()).filter(Boolean);
@@ -256,18 +262,9 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         useResultStore.getState().setResults(tabId, results, errors.length > 0 ? errors.join('\n') : null);
         maybeNotifyQueryComplete(durationMs, totalRows, errors.length > 0 ? errors.join('\n') : null);
 
-        set((s) => {
-          const connId = getActiveConnectionId();
-          const allTabs = s.allTabs.map((t) =>
-            t.id === tabId
-              ? { ...t, isExecuting: false, error: errors.length > 0 ? errors.join('\n') : null }
-              : t,
-          );
-          const tabs = computeVisibleTabs(allTabs, connId);
-          const activeTabId = (connId && s.activeTabIds[connId]) || null;
-          const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
-          return { allTabs, tabs, activeTabId: validActive };
-        });
+        set((s) => updateTab(s, tabId, (t) => ({
+          ...t, isExecuting: false, activeQueryId: null, error: errors.length > 0 ? errors.join('\n') : null,
+        })));
       } else {
         // Detect small LIMIT — use fast single-shot path for small results
         const limitMatch = tab.sql.match(/\bLIMIT\s+(\d+)/i);
@@ -281,19 +278,12 @@ export const useQueryStore = create<QueryState>((set, get) => ({
           useResultStore.getState().setColumnarResult(tabId, result);
           maybeNotifyQueryComplete(durationMs, result.row_count, null);
 
-          set((s) => {
-            const connId = getActiveConnectionId();
-            const allTabs = s.allTabs.map((t) =>
-              t.id === tabId ? { ...t, isExecuting: false } : t,
-            );
-            const tabs = computeVisibleTabs(allTabs, connId);
-            const activeTabId = (connId && s.activeTabIds[connId]) || null;
-            const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
-            return { allTabs, tabs, activeTabId: validActive };
-          });
+          set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null })));
         } else {
           // Streaming path — progressive delivery for large/unbounded results
           const queryId = await ipc.executeQueryStream(connectionId, tab.sql);
+          // Store queryId on tab so the UI can cancel it
+          set((s) => updateTab(s, tabId, (t) => ({ ...t, activeQueryId: queryId })));
 
           const cleanup = await ipc.listenToStream(queryId, {
             onMeta: (meta) => {
@@ -309,16 +299,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
               activity.logSuccess(activityId, durationMs, done.total_rows);
               maybeNotifyQueryComplete(durationMs, done.total_rows, null);
 
-              set((s) => {
-                const connId = getActiveConnectionId();
-                const allTabs = s.allTabs.map((t) =>
-                  t.id === tabId ? { ...t, isExecuting: false } : t,
-                );
-                const tabs = computeVisibleTabs(allTabs, connId);
-                const activeTabId = (connId && s.activeTabIds[connId]) || null;
-                const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
-                return { allTabs, tabs, activeTabId: validActive };
-              });
+              set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null })));
             },
             onError: (err) => {
               cleanup();
@@ -327,16 +308,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
               activity.logError(activityId, durationMs, err.error);
               maybeNotifyQueryComplete(durationMs, 0, err.error);
 
-              set((s) => {
-                const connId = getActiveConnectionId();
-                const allTabs = s.allTabs.map((t) =>
-                  t.id === tabId ? { ...t, isExecuting: false, error: err.error } : t,
-                );
-                const tabs = computeVisibleTabs(allTabs, connId);
-                const activeTabId = (connId && s.activeTabIds[connId]) || null;
-                const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
-                return { allTabs, tabs, activeTabId: validActive };
-              });
+              set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null, error: err.error })));
             },
           });
 
@@ -350,18 +322,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       useResultStore.getState().setError(tabId, String(e));
       maybeNotifyQueryComplete(durationMs, 0, String(e));
 
-      set((s) => {
-        const connId = getActiveConnectionId();
-        const allTabs = s.allTabs.map((t) =>
-          t.id === tabId
-            ? { ...t, isExecuting: false, error: String(e) }
-            : t,
-        );
-        const tabs = computeVisibleTabs(allTabs, connId);
-        const activeTabId = (connId && s.activeTabIds[connId]) || null;
-        const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
-        return { allTabs, tabs, activeTabId: validActive };
-      });
+      set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null, error: String(e) })));
     }
   },
 
@@ -397,6 +358,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       isExecuting: false,
       error: null,
       viewMode: 'data' as TabViewMode,
+      activeQueryId: null,
     }));
     set({ allTabs: restored, activeTabIds: activeTabIds ?? {} });
     get()._syncVisibleTabs();
