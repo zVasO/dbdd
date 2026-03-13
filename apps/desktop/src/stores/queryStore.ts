@@ -269,22 +269,80 @@ export const useQueryStore = create<QueryState>((set, get) => ({
           return { allTabs, tabs, activeTabId: validActive };
         });
       } else {
-        const result = await ipc.executeQueryColumnar(connectionId, tab.sql);
-        const durationMs = Math.round(performance.now() - startTime);
-        useActivityStore.getState().logSuccess(activityId, durationMs, result.row_count);
-        useResultStore.getState().setColumnarResult(tabId, result);
-        maybeNotifyQueryComplete(durationMs, result.row_count, null);
+        // Detect small LIMIT — use fast single-shot path for small results
+        const limitMatch = tab.sql.match(/\bLIMIT\s+(\d+)/i);
+        const hasSmallLimit = limitMatch && parseInt(limitMatch[1], 10) <= 5000;
 
-        set((s) => {
-          const connId = getActiveConnectionId();
-          const allTabs = s.allTabs.map((t) =>
-            t.id === tabId ? { ...t, isExecuting: false } : t,
-          );
-          const tabs = computeVisibleTabs(allTabs, connId);
-          const activeTabId = (connId && s.activeTabIds[connId]) || null;
-          const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
-          return { allTabs, tabs, activeTabId: validActive };
-        });
+        if (hasSmallLimit) {
+          // Single-shot columnar path (fast for small results)
+          const result = await ipc.executeQueryColumnar(connectionId, tab.sql);
+          const durationMs = Math.round(performance.now() - startTime);
+          useActivityStore.getState().logSuccess(activityId, durationMs, result.row_count);
+          useResultStore.getState().setColumnarResult(tabId, result);
+          maybeNotifyQueryComplete(durationMs, result.row_count, null);
+
+          set((s) => {
+            const connId = getActiveConnectionId();
+            const allTabs = s.allTabs.map((t) =>
+              t.id === tabId ? { ...t, isExecuting: false } : t,
+            );
+            const tabs = computeVisibleTabs(allTabs, connId);
+            const activeTabId = (connId && s.activeTabIds[connId]) || null;
+            const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
+            return { allTabs, tabs, activeTabId: validActive };
+          });
+        } else {
+          // Streaming path — progressive delivery for large/unbounded results
+          const queryId = await ipc.executeQueryStream(connectionId, tab.sql);
+
+          const cleanup = await ipc.listenToStream(queryId, {
+            onMeta: (meta) => {
+              useResultStore.getState().initStream(tabId, meta);
+            },
+            onChunk: (chunk) => {
+              useResultStore.getState().appendChunk(tabId, chunk.offset, chunk.data);
+            },
+            onDone: (done) => {
+              cleanup();
+              const durationMs = done.execution_time_ms;
+              useResultStore.getState().finishStream(tabId, done.total_rows, durationMs);
+              activity.logSuccess(activityId, durationMs, done.total_rows);
+              maybeNotifyQueryComplete(durationMs, done.total_rows, null);
+
+              set((s) => {
+                const connId = getActiveConnectionId();
+                const allTabs = s.allTabs.map((t) =>
+                  t.id === tabId ? { ...t, isExecuting: false } : t,
+                );
+                const tabs = computeVisibleTabs(allTabs, connId);
+                const activeTabId = (connId && s.activeTabIds[connId]) || null;
+                const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
+                return { allTabs, tabs, activeTabId: validActive };
+              });
+            },
+            onError: (err) => {
+              cleanup();
+              useResultStore.getState().setError(tabId, err.error);
+              const durationMs = Math.round(performance.now() - startTime);
+              activity.logError(activityId, durationMs, err.error);
+              maybeNotifyQueryComplete(durationMs, 0, err.error);
+
+              set((s) => {
+                const connId = getActiveConnectionId();
+                const allTabs = s.allTabs.map((t) =>
+                  t.id === tabId ? { ...t, isExecuting: false, error: err.error } : t,
+                );
+                const tabs = computeVisibleTabs(allTabs, connId);
+                const activeTabId = (connId && s.activeTabIds[connId]) || null;
+                const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
+                return { allTabs, tabs, activeTabId: validActive };
+              });
+            },
+          });
+
+          // Streaming is event-driven — don't fall through to catch block
+          return;
+        }
       }
     } catch (e) {
       const durationMs = Math.round(performance.now() - startTime);
