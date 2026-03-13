@@ -42,7 +42,7 @@ interface SortColumn {
   direction: 'asc' | 'desc';
 }
 
-const PAGE_SIZES = [100, 300, 500, 1000] as const;
+const PAGE_SIZES = [50, 100, 300, 500, 1000] as const;
 const DEFAULT_COL_WIDTH = 180;
 const MIN_COL_WIDTH = 80;
 
@@ -80,15 +80,8 @@ function formatDataType(dt: unknown): string {
 }
 
 function getStoredPageSize(): number {
-  try {
-    const v = localStorage.getItem('dataforge:pageSize');
-    if (v === 'all') return Infinity;
-    const n = Number(v);
-    if (n > 0) return n;
-    return usePreferencesStore.getState().defaultPageSize;
-  } catch {
-    return 300;
-  }
+  const pref = usePreferencesStore.getState().defaultPageSize;
+  return pref === 0 ? Infinity : pref;
 }
 
 // ─── Worker hook: offload filter/sort for large datasets ────────────────────
@@ -1093,9 +1086,8 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
   const handlePageSizeChange = useCallback((size: number) => {
     setPageSize(size);
     setCurrentPage(0);
-    try {
-      localStorage.setItem('dataforge:pageSize', size === Infinity ? 'all' : String(size));
-    } catch {}
+    // Persist to preferences store (0 = All)
+    usePreferencesStore.getState().setPreference('defaultPageSize', size === Infinity ? 0 : size);
   }, []);
 
   const pageStart = pageSize === Infinity ? 0 : safePage * pageSize;
