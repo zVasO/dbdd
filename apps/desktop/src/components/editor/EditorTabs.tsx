@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, Plus, GitBranch, LayoutDashboard, Activity, Search, Code2, Workflow, ArrowLeftRight, Bell } from 'lucide-react';
+import { X, Plus, GitBranch, LayoutDashboard, Activity, Search, Code2, Workflow, ArrowLeftRight, Bell, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { QueryTab } from '@/stores/queryStore';
 import { useQueryStore } from '@/stores/queryStore';
+import { useResultStore } from '@/stores/resultStore';
 
 function TabIcon({ viewMode, isActive }: { viewMode: string; isActive?: boolean }) {
   const iconClass = cn('size-3', isActive ? 'text-foreground' : 'text-muted-foreground');
@@ -28,6 +29,7 @@ interface Props {
 }
 
 export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTab }: Props) {
+  const tabResults = useResultStore((s) => s.results);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 
@@ -97,6 +99,9 @@ export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTa
             <span className="max-w-[120px] truncate">{tab.title}</span>
             {tab.isExecuting && (
               <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+            )}
+            {tabResults[tab.id]?.isStale && (
+              <RefreshCw className="h-3 w-3 text-muted-foreground" />
             )}
             <Button
               variant="ghost"
