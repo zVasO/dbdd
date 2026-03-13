@@ -4,13 +4,13 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Key, Plus, Search, Trash2, X, Filter, Eye, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight as ChevronRightIcon, Copy, CopyPlus, ClipboardPaste, FileJson, Table2, FileCode, FileText } from 'lucide-react';
 import { copyAsJson, copyAsInsert, copyAsCsv, copyAsMarkdown, copyAsTsv, copyCellAsJson, copyCellAsText, copyToClipboard } from '@/lib/copyFormats';
-import type { QueryResult, CellValue } from '@/lib/types';
+import type { QueryResult, CellValue, ColumnData } from '@/lib/types';
 import { ipc } from '@/lib/ipc';
 import { useChangeStore } from '@/stores/changeStore';
 import { useFilterStore } from '@/stores/filterStore';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useQueryStore } from '@/stores/queryStore';
-import { useResultStore } from '@/stores/resultStore';
+import { useResultStore, formatColumnarCell } from '@/stores/resultStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import type { RowInsert } from '@/stores/changeStore';
 import { Button } from '@/components/ui/button';
@@ -149,6 +149,32 @@ function useGridWorker(
 
 export type { SortRequest };
 
+/** Build a CellValue from columnar data at a specific position */
+function columnarCellValue(data: ColumnData[], colIdx: number, rowIdx: number): CellValue {
+  const col = data[colIdx];
+  if (!col) return { type: 'Null' };
+  const val = col.values[rowIdx];
+  if (val == null) return { type: 'Null' };
+  switch (col.kind) {
+    case 'Integers': return { type: 'Integer', value: val as number };
+    case 'Floats': return { type: 'Float', value: val as number };
+    case 'Booleans': return { type: 'Boolean', value: val as boolean };
+    case 'Strings': return { type: 'Text', value: val as string };
+    case 'Json': return { type: 'Json', value: val };
+  }
+}
+
+/** Build Row objects on-demand from columnar data for a specific set of actual row indices */
+function buildRowsOnDemand(
+  data: ColumnData[],
+  columns: { name: string }[],
+  rowIndices: number[],
+): { cells: CellValue[] }[] {
+  return rowIndices.map((rowIdx) => ({
+    cells: columns.map((_, colIdx) => columnarCellValue(data, colIdx, rowIdx)),
+  }));
+}
+
 export const DataGrid = memo(function DataGrid({ result, database, table, onServerSort }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
@@ -226,11 +252,14 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
   // Worker-based filter/sort for large datasets
   const activeTabId = useQueryStore((s) => s.activeTabId);
   const tabResult = useResultStore((s) => activeTabId ? s.results[activeTabId] : undefined);
+  // Columnar data — primary data source for rendering
+  const columnarData: ColumnData[] = tabResult?.data ?? [];
+  const columnarRowCount = tabResult?.rowCount ?? result.rows.length;
   const { filteredIndices: workerFilteredIndices, sortedIndices: workerSortedIndices, useWorker } = useGridWorker(
     tabResult?.data,
     filterText,
     sortColumns,
-    result.rows.length,
+    columnarRowCount,
   );
 
   // FK navigation: detect FK columns and allow click-to-navigate
@@ -295,48 +324,54 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
 
   // ─── Data pipeline: filter → sort → paginate ──────────────────────────────
 
-  const { filteredRows, filteredIndexMap } = useMemo(() => {
+  // Filter pipeline — works directly on columnar data (no row conversion)
+  const filteredIndexMap = useMemo(() => {
+    const rowCount = columnarRowCount;
     if (!filterText) {
-      return {
-        filteredRows: result.rows,
-        filteredIndexMap: result.rows.map((_, i) => i),
-      };
+      const indices: number[] = [];
+      for (let i = 0; i < rowCount; i++) indices.push(i);
+      return indices;
     }
-    const rows: typeof result.rows = [];
-    const indexMap: number[] = [];
-    result.rows.forEach((row, i) => {
-      if (row.cells.some((cell) => formatCell(cell).toLowerCase().includes(filterText.toLowerCase()))) {
-        rows.push(row);
-        indexMap.push(i);
+    const lowerFilter = filterText.toLowerCase();
+    const indices: number[] = [];
+    for (let r = 0; r < rowCount; r++) {
+      let match = false;
+      for (let c = 0; c < columnarData.length; c++) {
+        const val = columnarData[c].values[r];
+        if (val != null && String(val).toLowerCase().includes(lowerFilter)) {
+          match = true;
+          break;
+        }
       }
-    });
-    return { filteredRows: rows, filteredIndexMap: indexMap };
-  }, [filterText, result.rows]);
+      if (match) indices.push(r);
+    }
+    return indices;
+  }, [filterText, columnarData, columnarRowCount]);
 
-  // Sort
-  const { sortedRows, sortedIndexMap } = useMemo(() => {
+  // Sort pipeline — works directly on columnar data (no row conversion)
+  const sortedIndexMap = useMemo(() => {
     if (sortColumns.length === 0) {
-      return { sortedRows: filteredRows, sortedIndexMap: filteredIndexMap };
+      return filteredIndexMap;
     }
 
-    const indices = filteredRows.map((_, i) => i);
-    indices.sort((a, b) => {
+    const indices = [...filteredIndexMap];
+    indices.sort((rowA, rowB) => {
       for (const { colIndex, direction } of sortColumns) {
-        const cellA = filteredRows[a].cells[colIndex];
-        const cellB = filteredRows[b].cells[colIndex];
-        const valA = formatCell(cellA);
-        const valB = formatCell(cellB);
+        const col = columnarData[colIndex];
+        if (!col) continue;
+        const valA = col.values[rowA];
+        const valB = col.values[rowB];
 
         // Nulls last
-        if (cellA.type === 'Null' && cellB.type !== 'Null') return 1;
-        if (cellA.type !== 'Null' && cellB.type === 'Null') return -1;
-        if (cellA.type === 'Null' && cellB.type === 'Null') continue;
+        if (valA == null && valB != null) return 1;
+        if (valA != null && valB == null) return -1;
+        if (valA == null && valB == null) continue;
 
         let cmp = 0;
-        if ((cellA.type === 'Integer' || cellA.type === 'Float') && (cellB.type === 'Integer' || cellB.type === 'Float')) {
-          cmp = (cellA.value as number) - (cellB.value as number);
+        if (col.kind === 'Integers' || col.kind === 'Floats') {
+          cmp = (valA as number) - (valB as number);
         } else {
-          cmp = valA.localeCompare(valB, undefined, { numeric: true, sensitivity: 'base' });
+          cmp = String(valA).localeCompare(String(valB), undefined, { numeric: true, sensitivity: 'base' });
         }
 
         if (cmp !== 0) return direction === 'asc' ? cmp : -cmp;
@@ -344,72 +379,51 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       return 0;
     });
 
-    return {
-      sortedRows: indices.map((i) => filteredRows[i]),
-      sortedIndexMap: indices.map((i) => filteredIndexMap[i]),
-    };
-  }, [filteredRows, filteredIndexMap, sortColumns]);
+    return indices;
+  }, [filteredIndexMap, sortColumns, columnarData]);
 
-  // When using worker, override the filtered/sorted results
-  const effectiveRows = useMemo(() => {
-    if (!useWorker) return { sortedRows, sortedIndexMap };
+  // When using worker, override the filtered/sorted index maps
+  const finalSortedIndexMap = useMemo(() => {
+    if (!useWorker) return sortedIndexMap;
+    if (workerSortedIndices) return workerSortedIndices;
+    if (workerFilteredIndices) return workerFilteredIndices;
+    return sortedIndexMap;
+  }, [useWorker, workerFilteredIndices, workerSortedIndices, sortedIndexMap]);
 
-    if (workerSortedIndices) {
-      return {
-        sortedRows: workerSortedIndices.map((i) => result.rows[i]),
-        sortedIndexMap: workerSortedIndices,
-      };
-    }
-    if (workerFilteredIndices) {
-      return {
-        sortedRows: workerFilteredIndices.map((i) => result.rows[i]),
-        sortedIndexMap: workerFilteredIndices,
-      };
-    }
-    return { sortedRows, sortedIndexMap };
-  }, [useWorker, workerFilteredIndices, workerSortedIndices, sortedRows, sortedIndexMap, result.rows]);
-
-  const finalSortedRows = effectiveRows.sortedRows;
-  const finalSortedIndexMap = effectiveRows.sortedIndexMap;
-
-  // Paginate
-  const totalSortedRows = finalSortedRows.length;
+  // Paginate — now purely index-based (no row objects)
+  const totalSortedRows = finalSortedIndexMap.length;
   const totalPages = pageSize === Infinity ? 1 : Math.max(1, Math.ceil(totalSortedRows / pageSize));
   const safePage = Math.min(currentPage, totalPages - 1);
 
-  const { paginatedRows, paginatedIndexMap } = useMemo(() => {
-    if (pageSize === Infinity) {
-      return { paginatedRows: finalSortedRows, paginatedIndexMap: finalSortedIndexMap };
-    }
+  const paginatedIndexMap = useMemo(() => {
+    if (pageSize === Infinity) return finalSortedIndexMap;
     const start = safePage * pageSize;
     const end = start + pageSize;
-    return {
-      paginatedRows: finalSortedRows.slice(start, end),
-      paginatedIndexMap: finalSortedIndexMap.slice(start, end),
-    };
-  }, [finalSortedRows, finalSortedIndexMap, safePage, pageSize]);
+    return finalSortedIndexMap.slice(start, end);
+  }, [finalSortedIndexMap, safePage, pageSize]);
 
   const handleDuplicateRow = useCallback((paginatedIdx: number) => {
     if (!database || !table) return;
     const actualRowIndex = paginatedIndexMap[paginatedIdx];
-    const row = result.rows[actualRowIndex];
     const values: Record<string, string | number | boolean | null> = {};
     result.columns.forEach((col, i) => {
-      const cell = row.cells[i];
       if (col.is_primary_key) {
         values[col.name] = null;
-      } else if (cell.type === 'Null') {
-        values[col.name] = null;
-      } else if (cell.type === 'Integer' || cell.type === 'Float') {
-        values[col.name] = cell.value as number;
-      } else if (cell.type === 'Boolean') {
-        values[col.name] = cell.value as boolean;
       } else {
-        values[col.name] = formatCell(cell);
+        const cell = columnarCellValue(columnarData, i, actualRowIndex);
+        if (cell.type === 'Null') {
+          values[col.name] = null;
+        } else if (cell.type === 'Integer' || cell.type === 'Float') {
+          values[col.name] = cell.value as number;
+        } else if (cell.type === 'Boolean') {
+          values[col.name] = cell.value as boolean;
+        } else {
+          values[col.name] = formatCell(cell);
+        }
       }
     });
     addChange({ type: 'insert', table, database, values });
-  }, [database, table, result, addChange, paginatedIndexMap]);
+  }, [database, table, result.columns, columnarData, addChange, paginatedIndexMap]);
 
   const handlePasteRows = useCallback(async () => {
     if (!database || !table) return;
@@ -451,7 +465,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
   // ─── Virtualizer ──────────────────────────────────────────────────────────
 
   const rowVirtualizer = useVirtualizer({
-    count: paginatedRows.length,
+    count: paginatedIndexMap.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 32,
     overscan: 5,
@@ -671,11 +685,12 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
 
   const handleCellDoubleClick = useCallback(
     (rowIndex: number, colIndex: number) => {
-      const cell = paginatedRows[rowIndex].cells[colIndex];
+      const actualRowIndex = paginatedIndexMap[rowIndex];
+      const cell = columnarCellValue(columnarData, colIndex, actualRowIndex);
       const isNull = cell.type === 'Null';
       setEditingCell({ rowIndex, colIndex, value: isNull ? '' : formatCell(cell), isNull });
     },
-    [paginatedRows],
+    [paginatedIndexMap, columnarData],
   );
 
   const commitEdit = useCallback(() => {
@@ -685,9 +700,8 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     }
     const { rowIndex, colIndex, isNull } = editingCell;
     const actualRowIndex = paginatedIndexMap[rowIndex];
-    const row = result.rows[actualRowIndex];
     const column = result.columns[colIndex];
-    const cell = row.cells[colIndex];
+    const cell = columnarCellValue(columnarData, colIndex, actualRowIndex);
     const oldValue: string | number | boolean | null = cell.type === 'Null' ? null : formatCell(cell);
     const newValue: string | number | boolean | null = isNull ? null : editingCell.value;
     if (oldValue === newValue) {
@@ -697,7 +711,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     if (database && table) {
       const primaryKeys: Record<string, string | number | boolean | null> = {};
       result.columns.forEach((col, i) => {
-        if (col.is_primary_key) primaryKeys[col.name] = formatCell(row.cells[i]);
+        if (col.is_primary_key) primaryKeys[col.name] = formatColumnarCell(columnarData, i, actualRowIndex);
       });
       if (Object.keys(primaryKeys).length > 0) {
         addChange({
@@ -707,7 +721,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       }
     }
     setEditingCell(null);
-  }, [editingCell, result, database, table, addChange, paginatedIndexMap]);
+  }, [editingCell, result.columns, columnarData, database, table, addChange, paginatedIndexMap]);
 
   const cancelEdit = useCallback(() => setEditingCell(null), []);
 
@@ -717,15 +731,14 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     // Commit first (inline logic to avoid async timing issues)
     const { rowIndex, colIndex, isNull } = editingCell;
     const actualRowIndex = paginatedIndexMap[rowIndex];
-    const row = result.rows[actualRowIndex];
     const column = result.columns[colIndex];
-    const cell = row.cells[colIndex];
+    const cell = columnarCellValue(columnarData, colIndex, actualRowIndex);
     const oldValue: string | number | boolean | null = cell.type === 'Null' ? null : formatCell(cell);
     const newValue: string | number | boolean | null = isNull ? null : editingCell.value;
     if (oldValue !== newValue && database && table) {
       const primaryKeys: Record<string, string | number | boolean | null> = {};
       result.columns.forEach((col, i) => {
-        if (col.is_primary_key) primaryKeys[col.name] = formatCell(row.cells[i]);
+        if (col.is_primary_key) primaryKeys[col.name] = formatColumnarCell(columnarData, i, actualRowIndex);
       });
       if (Object.keys(primaryKeys).length > 0) {
         addChange({ type: 'edit', table, database, rowIndex: actualRowIndex, primaryKeys, column: column.name, oldValue, newValue });
@@ -747,32 +760,33 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       nextRow = rowIndex + 1;
     }
 
-    if (nextRow >= 0 && nextRow < paginatedRows.length) {
+    if (nextRow >= 0 && nextRow < paginatedIndexMap.length) {
       const nextColIdx = visibleColIndexMap[nextVisIdx];
-      const nextCell = paginatedRows[nextRow].cells[nextColIdx];
+      const nextActualRow = paginatedIndexMap[nextRow];
+      const nextCell = columnarCellValue(columnarData, nextColIdx, nextActualRow);
       const nextIsNull = nextCell.type === 'Null';
       setEditingCell({ rowIndex: nextRow, colIndex: nextColIdx, value: nextIsNull ? '' : formatCell(nextCell), isNull: nextIsNull });
     } else {
       setEditingCell(null);
     }
-  }, [editingCell, paginatedIndexMap, paginatedRows, result, database, table, addChange, visibleColumns, visibleColIndexMap]);
+  }, [editingCell, paginatedIndexMap, columnarData, result.columns, database, table, addChange, visibleColumns, visibleColIndexMap]);
 
   const handleDeleteRow = useCallback((paginatedIdx: number) => {
     if (!database || !table) return;
     const actualRowIndex = paginatedIndexMap[paginatedIdx];
-    const row = result.rows[actualRowIndex];
     const primaryKeys: Record<string, string | number | boolean | null> = {};
     const originalRow: Record<string, string | number | boolean | null> = {};
     result.columns.forEach((col, i) => {
-      if (col.is_primary_key) primaryKeys[col.name] = formatCell(row.cells[i]);
-      originalRow[col.name] = formatCell(row.cells[i]);
+      const formatted = formatColumnarCell(columnarData, i, actualRowIndex);
+      if (col.is_primary_key) primaryKeys[col.name] = formatted;
+      originalRow[col.name] = formatted;
     });
     if (Object.keys(primaryKeys).length === 0) return;
     addChange({ type: 'delete', table, database, rowIndex: actualRowIndex, primaryKeys, originalRow });
     setContextMenu(null);
-  }, [database, table, result, addChange, paginatedIndexMap]);
+  }, [database, table, result.columns, columnarData, addChange, paginatedIndexMap]);
 
-  const formatRowsForCopy = useCallback((columns: typeof result.columns, rows: typeof paginatedRows) => {
+  const formatRowsForCopy = useCallback((columns: typeof result.columns, rows: { cells: CellValue[] }[]) => {
     switch (defaultCopyFormat) {
       case 'json': return copyAsJson(columns, rows);
       case 'csv': return copyAsCsv(columns, rows);
@@ -790,10 +804,10 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       if (parsed.length === 1) {
         // Single cell
         const { rowIndex, colIndex } = parsed[0];
-        const row = paginatedRows[rowIndex];
-        if (!row) return;
+        const actualRowIndex = paginatedIndexMap[rowIndex];
+        if (actualRowIndex == null) return;
         const col = result.columns[colIndex];
-        const cell = row.cells[colIndex];
+        const cell = columnarCellValue(columnarData, colIndex, actualRowIndex);
         if (defaultCopyFormat === 'json') {
           copyToClipboard(copyCellAsJson(col.name, cell));
         } else {
@@ -804,9 +818,10 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
         const colIndices = [...new Set(parsed.map((p) => p.colIndex))].sort((a, b) => a - b);
         const rowIndices = [...new Set(parsed.map((p) => p.rowIndex))].sort((a, b) => a - b);
         const cols = colIndices.map((i) => result.columns[i]);
-        const rows = rowIndices.map((ri) => ({
-          cells: colIndices.map((ci) => paginatedRows[ri].cells[ci]),
-        }));
+        const rows = rowIndices.map((ri) => {
+          const actualRow = paginatedIndexMap[ri];
+          return { cells: colIndices.map((ci) => columnarCellValue(columnarData, ci, actualRow)) };
+        });
         copyToClipboard(formatRowsForCopy(cols, rows as any));
       }
       return;
@@ -814,16 +829,18 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     // Row selection
     if (selectedRows.size === 0) return;
     const sortedIndices = [...selectedRows].sort((a, b) => a - b);
-    const rows = sortedIndices.map((idx) => paginatedRows[idx]);
+    const actualRows = sortedIndices.map((idx) => paginatedIndexMap[idx]);
+    const rows = buildRowsOnDemand(columnarData, result.columns, actualRows);
     copyToClipboard(formatRowsForCopy(result.columns, rows));
-  }, [selectedCells, selectedRows, result, paginatedRows, defaultCopyFormat, formatRowsForCopy]);
+  }, [selectedCells, selectedRows, result.columns, columnarData, paginatedIndexMap, defaultCopyFormat, formatRowsForCopy]);
 
   const getSelectedOrContextRows = useCallback((contextRowIndex: number) => {
-    if (selectedRows.size > 0) {
-      return [...selectedRows].sort((a, b) => a - b).map((idx) => paginatedRows[idx]);
-    }
-    return [paginatedRows[contextRowIndex]];
-  }, [selectedRows, paginatedRows]);
+    const indices = selectedRows.size > 0
+      ? [...selectedRows].sort((a, b) => a - b)
+      : [contextRowIndex];
+    const actualRows = indices.map((idx) => paginatedIndexMap[idx]);
+    return buildRowsOnDemand(columnarData, result.columns, actualRows);
+  }, [selectedRows, paginatedIndexMap, columnarData, result.columns]);
 
   // Build columns + rows from cell selection (for copy actions)
   const getContextColumnsFromCells = useCallback(() => {
@@ -836,17 +853,18 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     const parsed = [...selectedCells].map(parseCellKey);
     const colIndices = [...new Set(parsed.map((p) => p.colIndex))].sort((a, b) => a - b);
     const rowIndices = [...new Set(parsed.map((p) => p.rowIndex))].sort((a, b) => a - b);
-    return rowIndices.map((ri) => ({
-      cells: colIndices.map((ci) => paginatedRows[ri].cells[ci]),
-    })) as typeof paginatedRows;
-  }, [selectedCells, paginatedRows]);
+    return rowIndices.map((ri) => {
+      const actualRow = paginatedIndexMap[ri];
+      return { cells: colIndices.map((ci) => columnarCellValue(columnarData, ci, actualRow)) };
+    }) as { cells: CellValue[] }[];
+  }, [selectedCells, paginatedIndexMap, columnarData]);
 
   // ─── Grid keyboard navigation ──────────────────────────────────────────────
 
   const handleGridKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!focusedCell || editingCell) return false;
 
-    const maxRow = paginatedRows.length - 1;
+    const maxRow = paginatedIndexMap.length - 1;
     const maxCol = visibleColIndexMap.length - 1;
     let { row, col } = focusedCell;
 
@@ -924,7 +942,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     setFocusedColIndex(col);
     setSelectedRows(new Set());
     return true;
-  }, [focusedCell, editingCell, paginatedRows.length, visibleColIndexMap]);
+  }, [focusedCell, editingCell, paginatedIndexMap.length, visibleColIndexMap]);
 
   // ─── Keyboard ──────────────────────────────────────────────────────────────
 
@@ -940,7 +958,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       setSelectedCells(new Set());
       setLastSelectedCellKey(null);
       const all = new Set<number>();
-      for (let i = 0; i < paginatedRows.length; i++) all.add(i);
+      for (let i = 0; i < paginatedIndexMap.length; i++) all.add(i);
       setSelectedRows(all);
       return;
     }
@@ -971,11 +989,11 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       e.preventDefault();
       if (selectedRows.size === 1) {
         const rowIdx = [...selectedRows][0];
-        const row = paginatedRows[rowIdx];
-        if (row) {
+        const actualRowIndex = paginatedIndexMap[rowIdx];
+        if (actualRowIndex != null) {
           const colIdx = focusedColIndex < result.columns.length ? focusedColIndex : 0;
           const col = result.columns[colIdx];
-          const cell = row.cells[colIdx];
+          const cell = columnarCellValue(columnarData, colIdx, actualRowIndex);
           setQuickLookCell({ cell, columnName: col.name, columnType: col.native_type });
         }
       }
@@ -1002,7 +1020,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       e.preventDefault();
       if (lastSelectedCellKey && selectedCells.size > 0) {
         const nextRow = e.key === 'ArrowDown'
-          ? Math.min(lastSelectedCellKey.rowIndex + 1, paginatedRows.length - 1)
+          ? Math.min(lastSelectedCellKey.rowIndex + 1, paginatedIndexMap.length - 1)
           : Math.max(lastSelectedCellKey.rowIndex - 1, 0);
         const next = { rowIndex: nextRow, colIndex: lastSelectedCellKey.colIndex };
         if (e.shiftKey) {
@@ -1016,7 +1034,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       }
       const current = lastSelectedRow ?? -1;
       const next = e.key === 'ArrowDown'
-        ? Math.min(current + 1, paginatedRows.length - 1)
+        ? Math.min(current + 1, paginatedIndexMap.length - 1)
         : Math.max(current - 1, 0);
       if (e.shiftKey) {
         setSelectedRows((prev) => {
@@ -1030,33 +1048,33 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       setLastSelectedRow(next);
       return;
     }
-  }, [copySelection, paginatedRows, editingCell, cancelEdit, lastSelectedRow, contextMenu, focusedColIndex, result.columns, selectedRows, selectedCells, lastSelectedCellKey, database, table, handleDuplicateRow, handlePasteRows, focusedCell, handleGridKeyDown]);
+  }, [copySelection, paginatedIndexMap, columnarData, editingCell, cancelEdit, lastSelectedRow, contextMenu, focusedColIndex, result.columns, selectedRows, selectedCells, lastSelectedCellKey, database, table, handleDuplicateRow, handlePasteRows, focusedCell, handleGridKeyDown]);
 
   // ─── Export ────────────────────────────────────────────────────────────────
 
   const exportData = useCallback(async (format: 'csv' | 'json' | 'sql') => {
-    const dataRows = selectedRows.size > 0
-      ? [...selectedRows].sort((a, b) => a - b).map((i) => paginatedRows[i])
-      : paginatedRows;
+    const selectedIndices = selectedRows.size > 0
+      ? [...selectedRows].sort((a, b) => a - b).map((i) => paginatedIndexMap[i])
+      : paginatedIndexMap;
     const cols = result.columns;
     let content: string;
     let filename: string;
 
     if (format === 'csv') {
       const header = cols.map((c) => `"${c.name}"`).join(',');
-      const rows = dataRows.map((row) =>
-        row.cells.map((cell) => {
-          const val = formatCell(cell);
+      const rows = selectedIndices.map((actualRow) =>
+        cols.map((_, colIdx) => {
+          const val = formatColumnarCell(columnarData, colIdx, actualRow);
           return `"${val.replace(/"/g, '""')}"`;
         }).join(',')
       );
       content = [header, ...rows].join('\n');
       filename = `${table ?? 'export'}.csv`;
     } else if (format === 'json') {
-      const data = dataRows.map((row) => {
+      const data = selectedIndices.map((actualRow) => {
         const obj: Record<string, string> = {};
-        row.cells.forEach((cell, i) => {
-          obj[cols[i].name] = formatCell(cell);
+        cols.forEach((col, colIdx) => {
+          obj[col.name] = formatColumnarCell(columnarData, colIdx, actualRow);
         });
         return obj;
       });
@@ -1065,8 +1083,9 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     } else {
       const tableName = table ?? 'table_name';
       const colNames = cols.map((c) => `\`${c.name}\``).join(', ');
-      const rows = dataRows.map((row) => {
-        const values = row.cells.map((cell) => {
+      const rows = selectedIndices.map((actualRow) => {
+        const values = cols.map((_, colIdx) => {
+          const cell = columnarCellValue(columnarData, colIdx, actualRow);
           if (cell.type === 'Null') return 'NULL';
           if (cell.type === 'Integer' || cell.type === 'Float') return String(cell.value);
           if (cell.type === 'Boolean') return cell.value ? '1' : '0';
@@ -1079,7 +1098,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     }
 
     await ipc.saveSqlFile(content, filename);
-  }, [selectedRows, result, paginatedRows, table]);
+  }, [selectedRows, result.columns, columnarData, paginatedIndexMap, table]);
 
   // ─── Pagination helpers ────────────────────────────────────────────────────
 
@@ -1176,7 +1195,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
           </button>
         )}
         <span className="text-[10px] text-muted-foreground">
-          {totalSortedRows}/{result.rows.length}
+          {totalSortedRows}/{columnarRowCount}
         </span>
       </div>
 
@@ -1186,7 +1205,6 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
         style={{ height: `${rowVirtualizer.getTotalSize()}px`, minWidth: totalContentWidth }}
       >
         {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-          const row = paginatedRows[virtualRow.index];
           const actualRowIndex = paginatedIndexMap[virtualRow.index];
           const displayIndex = pageStart + virtualRow.index;
           const isOdd = virtualRow.index % 2 === 1;
@@ -1238,7 +1256,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
               {visibleColumns.map((col, visIdx) => {
                 const colIdx = visibleColIndexMap[visIdx];
                 const width = getColWidth(colIdx);
-                const cell = row.cells[colIdx];
+                const cell = columnarCellValue(columnarData, colIdx, actualRowIndex);
                 const isEditing =
                   editingCell?.rowIndex === virtualRow.index &&
                   editingCell?.colIndex === colIdx;
@@ -1397,7 +1415,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       ))}
 
       {/* Footer with pagination */}
-      {result.rows.length > 0 && (
+      {columnarRowCount > 0 && (
         <div className="sticky bottom-0 flex items-center gap-3 border-t border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground" style={{ minWidth: totalContentWidth }}>
           {/* Row info */}
           <span>
@@ -1571,11 +1589,11 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
             <button
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
-                const row = paginatedRows[contextMenu.rowIndex];
-                if (row) {
+                const actualRow = paginatedIndexMap[contextMenu.rowIndex];
+                if (actualRow != null) {
                   const colIdx = contextMenu.colIndex;
                   const col = result.columns[colIdx];
-                  const cell = row.cells[colIdx];
+                  const cell = columnarCellValue(columnarData, colIdx, actualRow);
                   setQuickLookCell({ cell, columnName: col.name, columnType: col.native_type });
                 }
                 setContextMenu(null);
@@ -1589,7 +1607,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
                 const all = new Set<number>();
-                for (let i = 0; i < paginatedRows.length; i++) all.add(i);
+                for (let i = 0; i < paginatedIndexMap.length; i++) all.add(i);
                 setSelectedRows(all);
                 setContextMenu(null);
               }}
@@ -1615,8 +1633,8 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
                 const col = result.columns[contextMenu.colIndex];
-                const row = paginatedRows[contextMenu.rowIndex];
-                const value = formatCell(row.cells[contextMenu.colIndex]);
+                const actualRow = paginatedIndexMap[contextMenu.rowIndex];
+                const value = formatColumnarCell(columnarData, contextMenu.colIndex, actualRow);
                 handleQuickFilter(col.name, value);
                 setContextMenu(null);
               }}
@@ -1628,8 +1646,8 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
             {(() => {
               const col = result.columns[contextMenu.colIndex];
               const fk = col ? fkMap[col.name] : null;
-              const row = paginatedRows[contextMenu.rowIndex];
-              const cell = row?.cells[contextMenu.colIndex];
+              const ctxActualRow = paginatedIndexMap[contextMenu.rowIndex];
+              const cell = ctxActualRow != null ? columnarCellValue(columnarData, contextMenu.colIndex, ctxActualRow) : null;
               if (fk && cell && cell.type !== 'Null') {
                 return (
                   <button
