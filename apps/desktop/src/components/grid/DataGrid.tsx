@@ -264,7 +264,9 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     const connId = useConnectionStore.getState().activeConnectionId;
     if (!connId) return;
     const refDb = fk.refDb ?? database ?? '';
-    const sql = `SELECT * FROM \`${fk.refTable}\` WHERE \`${fk.refColumn}\` = '${cellValue.replace(/'/g, "''")}' LIMIT 500`;
+    const pageSize = usePreferencesStore.getState().defaultPageSize;
+    const limitClause = pageSize > 0 ? ` LIMIT ${pageSize}` : '';
+    const sql = `SELECT * FROM \`${fk.refTable}\` WHERE \`${fk.refColumn}\` = '${cellValue.replace(/'/g, "''")}'${limitClause}`;
     const tabId = useQueryStore.getState().createTab(`${fk.refTable} → ${cellValue}`, { editorVisible: true });
     useQueryStore.getState().updateSql(tabId, sql);
     useQueryStore.getState().executeQuery(connId, tabId);

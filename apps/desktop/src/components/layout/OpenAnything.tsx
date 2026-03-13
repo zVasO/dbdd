@@ -4,6 +4,7 @@ import { useUIStore } from '@/stores/uiStore';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useQueryStore } from '@/stores/queryStore';
+import { usePreferencesStore } from '@/stores/preferencesStore';
 import { Database, Table2, Eye } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
@@ -48,7 +49,10 @@ export function OpenAnything() {
 
     if (item.type === 'table' || item.type === 'view') {
       const { createTab, updateSql, executeQuery } = useQueryStore.getState();
-      const sql = `SELECT * FROM \`${item.name}\` LIMIT 500`;
+      const pageSize = usePreferencesStore.getState().defaultPageSize;
+      const sql = pageSize > 0
+        ? `SELECT * FROM \`${item.name}\` LIMIT ${pageSize}`
+        : `SELECT * FROM \`${item.name}\``;
       const tabId = createTab(item.name, {
         editorVisible: false,
         database: item.database,

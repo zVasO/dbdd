@@ -16,6 +16,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { cn } from '@/lib/utils';
 import { Table2, Columns3 } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
+import { usePreferencesStore } from '@/stores/preferencesStore';
 import type { QueryResult } from '@/lib/types';
 import type { QueryTab, TabViewMode } from '@/stores/queryStore';
 
@@ -50,17 +51,15 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
   const setActiveTab = paneId === 'secondary' ? setSecondaryActiveTab : setPrimaryActiveTab;
 
   const handleCreateQuery = () => {
-    if (activeTab) {
-      setEditorVisible(activeTab.id, true);
-    } else {
-      createTab();
-    }
+    createTab();
   };
 
   const handleFilterApply = useCallback((whereClause: string) => {
     if (!activeConnectionId || !activeTab?.table || !activeTab?.database) return;
     const base = `SELECT * FROM \`${activeTab.table}\``;
-    const sql = whereClause ? `${base} WHERE ${whereClause} LIMIT 500` : `${base} LIMIT 500`;
+    const pageSize = usePreferencesStore.getState().defaultPageSize;
+    const limit = pageSize > 0 ? ` LIMIT ${pageSize}` : '';
+    const sql = whereClause ? `${base} WHERE ${whereClause}${limit}` : `${base}${limit}`;
     updateSql(activeTab.id, sql);
     executeQuery(activeConnectionId, activeTab.id);
   }, [activeConnectionId, activeTab, updateSql, executeQuery]);
@@ -75,7 +74,9 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
       ? ` ORDER BY ${sorts.map((s) => `\`${s.column}\` ${s.direction.toUpperCase()}`).join(', ')}`
       : '';
 
-    return `SELECT * FROM \`${tableName}\`${whereClause}${orderByClause} LIMIT 500`;
+    const pageSize = usePreferencesStore.getState().defaultPageSize;
+    const limitClause = pageSize > 0 ? ` LIMIT ${pageSize}` : '';
+    return `SELECT * FROM \`${tableName}\`${whereClause}${orderByClause}${limitClause}`;
   };
 
   const handleServerSort = useCallback((sorts: SortRequest[]) => {

@@ -12,7 +12,7 @@ members = [
 
 [workspace.dependencies]
 # Framework
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "devtools"] }
 tauri-build = "2"
 
 # Async

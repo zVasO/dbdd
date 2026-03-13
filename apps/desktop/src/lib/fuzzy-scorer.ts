@@ -117,6 +117,11 @@ function hasCharacterOverlap(input: string, target: string, minRequired: number)
  * - Fuzzy match:     20-59  (DL-based with aggressive pre-filtering)
  * - No match:        0
  */
+/** Strip separator characters (_, -) for normalized matching */
+function stripSeparators(s: string): string {
+  return s.replace(/[_-]/g, '');
+}
+
 export function fuzzyScore(input: string, target: string): ScoreResult {
   if (input.length === 0) return NO_MATCH;
 
@@ -141,6 +146,28 @@ export function fuzzyScore(input: string, target: string): ScoreResult {
     const ratio = lowerInput.length / lowerTarget.length;
     const score = Math.round(60 + ratio * 24);
     return { score, matches: [[subIdx, subIdx + input.length]] };
+  }
+
+  // --- Separator-stripped matching (e.g. "llxdossier" matches "llx_dossierisolation") ---
+  const strippedInput = stripSeparators(lowerInput);
+  const strippedTarget = stripSeparators(lowerTarget);
+
+  if (strippedInput !== lowerInput || strippedTarget !== lowerTarget) {
+    // Prefix match on stripped versions
+    if (strippedTarget.startsWith(strippedInput)) {
+      const ratio = strippedInput.length / strippedTarget.length;
+      // Slightly lower score than direct prefix (penalty for separator mismatch)
+      const score = Math.round(80 + ratio * 14);
+      return { score, matches: [[0, target.length]] };
+    }
+
+    // Substring match on stripped versions
+    const strippedSubIdx = strippedTarget.indexOf(strippedInput);
+    if (strippedSubIdx !== -1) {
+      const ratio = strippedInput.length / strippedTarget.length;
+      const score = Math.round(55 + ratio * 24);
+      return { score, matches: [[0, target.length]] };
+    }
   }
 
   // --- Fuzzy match with aggressive pre-filtering ---

@@ -33,7 +33,7 @@ const DEFAULTS: Preferences = {
   editorShowLineNumbers: true,
   editorWordWrap: true,
   autoUppercaseKeywords: false,
-  defaultPageSize: 300,
+  defaultPageSize: 100,
   alternatingRowColors: false,
   safeModeLevel: 'alert',
   defaultCopyFormat: 'json',
