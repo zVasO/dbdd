@@ -64,6 +64,38 @@ function buildQueryResult(result: ColumnarResult): QueryResult {
   };
 }
 
+/** Direct columnar cell access — O(1) per cell, no row conversion needed */
+export function getColumnarCell(data: ColumnData[], colIdx: number, rowIdx: number): { type: string; value: unknown } {
+  const col = data[colIdx];
+  if (!col) return { type: 'Null', value: null };
+  const val = col.values[rowIdx];
+  if (val == null) return { type: 'Null', value: null };
+  switch (col.kind) {
+    case 'Integers': return { type: 'Integer', value: val };
+    case 'Floats': return { type: 'Float', value: val };
+    case 'Booleans': return { type: 'Boolean', value: val };
+    case 'Strings': return { type: 'Text', value: val };
+    case 'Json': return { type: 'Json', value: val };
+    default: return { type: 'Null', value: null };
+  }
+}
+
+/** Format a columnar cell value to string — mirrors formatCell but works with raw columnar data */
+export function formatColumnarCell(data: ColumnData[], colIdx: number, rowIdx: number): string {
+  const col = data[colIdx];
+  if (!col) return 'NULL';
+  const val = col.values[rowIdx];
+  if (val == null) return 'NULL';
+  switch (col.kind) {
+    case 'Integers':
+    case 'Floats': return String(val);
+    case 'Booleans': return val ? 'true' : 'false';
+    case 'Strings': return val as string;
+    case 'Json': return JSON.stringify(val);
+    default: return '';
+  }
+}
+
 const EMPTY_COLUMNAR_DEFAULTS = {
   data: [] as ColumnData[],
   rowCount: 0,
