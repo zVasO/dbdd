@@ -54,19 +54,21 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
     createTab();
   };
 
+  // Read page size preference early — used by buildTableSql, handleFilterApply, and the re-query effect
+  const defaultPageSize = usePreferencesStore((s) => s.defaultPageSize);
+
   const handleFilterApply = useCallback((whereClause: string) => {
     if (!activeConnectionId || !activeTab?.table || !activeTab?.database) return;
     const base = `SELECT * FROM \`${activeTab.table}\``;
-    const pageSize = usePreferencesStore.getState().defaultPageSize;
-    const limit = pageSize > 0 ? ` LIMIT ${pageSize}` : '';
+    const limit = defaultPageSize > 0 ? ` LIMIT ${defaultPageSize}` : '';
     const sql = whereClause ? `${base} WHERE ${whereClause}${limit}` : `${base}${limit}`;
     updateSql(activeTab.id, sql);
     executeQuery(activeConnectionId, activeTab.id);
-  }, [activeConnectionId, activeTab, updateSql, executeQuery]);
+  }, [activeConnectionId, activeTab, defaultPageSize, updateSql, executeQuery]);
 
-  const buildTableSql = (tableName: string, sorts: SortRequest[]): string => {
+  const currentSql = activeTab?.sql ?? '';
+  const buildTableSql = useCallback((tableName: string, sorts: SortRequest[]): string => {
     // Preserve existing WHERE clause from current SQL
-    const currentSql = activeTab?.sql ?? '';
     const whereMatch = currentSql.match(/WHERE\s+(.+?)(?:\s+ORDER\s+BY|\s+LIMIT|$)/i);
     const whereClause = whereMatch ? ` WHERE ${whereMatch[1].trim()}` : '';
 
@@ -74,20 +76,18 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
       ? ` ORDER BY ${sorts.map((s) => `\`${s.column}\` ${s.direction.toUpperCase()}`).join(', ')}`
       : '';
 
-    const pageSize = usePreferencesStore.getState().defaultPageSize;
-    const limitClause = pageSize > 0 ? ` LIMIT ${pageSize}` : '';
+    const limitClause = defaultPageSize > 0 ? ` LIMIT ${defaultPageSize}` : '';
     return `SELECT * FROM \`${tableName}\`${whereClause}${orderByClause}${limitClause}`;
-  };
+  }, [currentSql, defaultPageSize]);
 
   const handleServerSort = useCallback((sorts: SortRequest[]) => {
     if (!activeConnectionId || !activeTab?.table || !activeTab?.database) return;
     const sql = buildTableSql(activeTab.table, sorts);
     updateSql(activeTab.id, sql);
     executeQuery(activeConnectionId, activeTab.id);
-  }, [activeConnectionId, activeTab, updateSql, executeQuery]);
+  }, [activeConnectionId, activeTab, buildTableSql, updateSql, executeQuery]);
 
   // Re-query active table tab when page size preference changes (or on remount after settings close)
-  const defaultPageSize = usePreferencesStore((s) => s.defaultPageSize);
   useEffect(() => {
     if (!activeConnectionId || !activeTab?.table) return;
     const expectedLimit = defaultPageSize > 0 ? ` LIMIT ${defaultPageSize}` : '';
@@ -96,9 +96,13 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
     // Only auto-update simple SELECT * queries (don't overwrite custom WHERE/ORDER BY)
     const isSimpleSelect = /^SELECT \* FROM `[^`]+`(\s+LIMIT \d+)?$/i.test(activeTab.sql);
     if (!isSimpleSelect) return;
-    updateSql(activeTab.id, expectedSql);
-    executeQuery(activeConnectionId, activeTab.id);
-  }, [defaultPageSize]);
+    const tabId = activeTab.id;
+    const connId = activeConnectionId;
+    queueMicrotask(() => {
+      updateSql(tabId, expectedSql);
+      executeQuery(connId, tabId);
+    });
+  }, [defaultPageSize, activeConnectionId, activeTab, updateSql, executeQuery]);
 
   // No tabs open yet -- show welcome / empty state
   if (tabs.length === 0) {
