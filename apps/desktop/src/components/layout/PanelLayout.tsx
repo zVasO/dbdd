@@ -1,4 +1,4 @@
-import { useCallback, useMemo, lazy, Suspense } from 'react';
+import { useCallback, useEffect, useMemo, lazy, Suspense } from 'react';
 import { useQueryStore } from '@/stores/queryStore';
 import { useResultStore, type TabResult } from '@/stores/resultStore';
 import { useConnectionStore } from '@/stores/connectionStore';
@@ -85,6 +85,20 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
     updateSql(activeTab.id, sql);
     executeQuery(activeConnectionId, activeTab.id);
   }, [activeConnectionId, activeTab, updateSql, executeQuery]);
+
+  // Re-query active table tab when page size preference changes (or on remount after settings close)
+  const defaultPageSize = usePreferencesStore((s) => s.defaultPageSize);
+  useEffect(() => {
+    if (!activeConnectionId || !activeTab?.table) return;
+    const expectedLimit = defaultPageSize > 0 ? ` LIMIT ${defaultPageSize}` : '';
+    const expectedSql = `SELECT * FROM \`${activeTab.table}\`${expectedLimit}`;
+    if (activeTab.sql === expectedSql) return;
+    // Only auto-update simple SELECT * queries (don't overwrite custom WHERE/ORDER BY)
+    const isSimpleSelect = /^SELECT \* FROM `[^`]+`(\s+LIMIT \d+)?$/i.test(activeTab.sql);
+    if (!isSimpleSelect) return;
+    updateSql(activeTab.id, expectedSql);
+    executeQuery(activeConnectionId, activeTab.id);
+  }, [defaultPageSize]);
 
   // No tabs open yet -- show welcome / empty state
   if (tabs.length === 0) {

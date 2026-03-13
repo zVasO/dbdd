@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
 import { usePreferencesStore } from '@/stores/preferencesStore';
+import { useThemeStore } from '@/stores/themeStore';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useShortcutStore } from '@/stores/shortcutStore';
@@ -230,6 +231,75 @@ const CLAUSE_SNIPPETS: { label: string; insertText: string; detail: string }[] =
   { label: 'UNION ALL', insertText: 'UNION ALL\nSELECT ', detail: 'Combine results (with duplicates)' },
 ];
 
+/** Read a CSS variable from :root and convert HSL to hex for Monaco */
+function cssVarToHex(varName: string, fallback: string): string {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+  if (!raw) return fallback;
+  // Handle hsl(...) or raw "H S% L%" format
+  const hslMatch = raw.match(/^(?:hsl\()?\s*([\d.]+)\s+([\d.]+)%\s+([\d.]+)%\s*\)?$/);
+  if (hslMatch) {
+    const h = parseFloat(hslMatch[1]) / 360;
+    const s = parseFloat(hslMatch[2]) / 100;
+    const l = parseFloat(hslMatch[3]) / 100;
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    const r = Math.round(hue2rgb(p, q, h + 1 / 3) * 255);
+    const g = Math.round(hue2rgb(p, q, h) * 255);
+    const b = Math.round(hue2rgb(p, q, h - 1 / 3) * 255);
+    return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+  }
+  // Already hex or other format
+  if (raw.startsWith('#')) return raw;
+  return fallback;
+}
+
+function defineDataforgeTheme(monaco: any, dark: boolean) {
+  const bg = cssVarToHex('--background', dark ? '#1e1e1e' : '#ffffff');
+  const fg = cssVarToHex('--foreground', dark ? '#d4d4d4' : '#1e1e1e');
+  const muted = cssVarToHex('--muted', dark ? '#2d2d2d' : '#f5f5f5');
+  const mutedFg = cssVarToHex('--muted-foreground', dark ? '#858585' : '#737373');
+  const primary = cssVarToHex('--primary', dark ? '#569cd6' : '#0070f3');
+  const accent = cssVarToHex('--accent', dark ? '#2d2d2d' : '#f0f0f0');
+  const border = cssVarToHex('--border', dark ? '#3e3e3e' : '#e5e5e5');
+
+  monaco.editor.defineTheme('dataforge', {
+    base: dark ? 'vs-dark' : 'vs',
+    inherit: true,
+    rules: [
+      { token: 'keyword', foreground: primary.replace('#', ''), fontStyle: 'bold' },
+      { token: 'comment', foreground: mutedFg.replace('#', ''), fontStyle: 'italic' },
+      { token: 'string', foreground: dark ? 'ce9178' : 'a31515' },
+      { token: 'number', foreground: dark ? 'b5cea8' : '098658' },
+      { token: 'operator', foreground: fg.replace('#', '') },
+    ],
+    colors: {
+      'editor.background': bg,
+      'editor.foreground': fg,
+      'editor.lineHighlightBackground': accent,
+      'editor.selectionBackground': dark ? '#264f78' : '#add6ff',
+      'editorLineNumber.foreground': mutedFg,
+      'editorCursor.foreground': fg,
+      'editor.inactiveSelectionBackground': muted,
+      'editorWidget.background': bg,
+      'editorWidget.border': border,
+      'editorSuggestWidget.background': bg,
+      'editorSuggestWidget.border': border,
+      'editorSuggestWidget.selectedBackground': accent,
+      'input.background': muted,
+      'input.border': border,
+      'input.foreground': fg,
+    },
+  });
+}
+
 // Track if we already registered a provider (global — Monaco providers are global per language)
 let completionProviderRegistered = false;
 
@@ -242,7 +312,8 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
   const fontSize = usePreferencesStore((s) => s.editorFontSize);
   const showLineNumbers = usePreferencesStore((s) => s.editorShowLineNumbers);
   const wordWrap = usePreferencesStore((s) => s.editorWordWrap);
-  const theme = usePreferencesStore((s) => s.theme);
+  const activeTheme = useThemeStore((s) => s.themes.find((t) => t.id === s.activeThemeId));
+  const isDark = activeTheme?.isDark ?? true;
 
   // Keep stable refs for callbacks used inside Monaco
   const onExecuteRef = useRef(onExecute);
@@ -292,6 +363,11 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
     (editor: any, monaco: any) => {
       editorRef.current = editor;
       monacoRef.current = monaco;
+
+      // Define and apply custom theme that reads CSS variables
+      const currentTheme = useThemeStore.getState().getActiveTheme();
+      defineDataforgeTheme(monaco, currentTheme.isDark);
+      monaco.editor.setTheme('dataforge');
 
       // Helper: convert ShortcutBinding → Monaco keybinding number
       const toMonacoKeybinding = (id: string) => {
@@ -532,6 +608,19 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
     };
   }, []);
 
+  // Re-apply Monaco theme when app theme changes (dark/light toggle or theme switch)
+  const activeThemeId = useThemeStore((s) => s.activeThemeId);
+  useEffect(() => {
+    const monaco = monacoRef.current;
+    if (!monaco) return;
+    // Small delay to let CSS variables update on DOM first
+    const timer = setTimeout(() => {
+      defineDataforgeTheme(monaco, isDark);
+      monaco.editor.setTheme('dataforge');
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [isDark, activeThemeId]);
+
   // Listen for toolbar format event (lazy-loaded)
   useEffect(() => {
     const handler = async () => {
@@ -571,7 +660,7 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
         defaultValue={value}
         onChange={handleChange}
         onMount={handleMount}
-        theme={theme === 'dark' ? 'vs-dark' : 'vs'}
+        theme="dataforge"
         options={{
           minimap: { enabled: false },
           fontSize,
