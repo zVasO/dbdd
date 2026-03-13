@@ -1,8 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type {
   ConnectionConfig, SavedConnection, QueryResult, ColumnarResult,
   DatabaseInfo, SchemaInfo, TableInfo, TableStructure, TableRef,
   QueryHistoryEntry,
+  StreamMeta, StreamChunk, StreamDone, StreamError,
 } from './types';
 
 /** In-flight request deduplication map */
@@ -90,4 +92,31 @@ export const ipc = {
 
   importCsvFile: () =>
     invoke<[string, string] | null>('import_csv_file'),
+
+  listenToStream: async (queryId: string, callbacks: {
+    onMeta: (meta: StreamMeta) => void;
+    onChunk: (chunk: StreamChunk) => void;
+    onDone: (done: StreamDone) => void;
+    onError: (error: StreamError) => void;
+  }): Promise<() => void> => {
+    const unlisteners = await Promise.all([
+      listen<Omit<StreamMeta, 'query_id'>>(
+        `query_meta_${queryId}`,
+        (e) => callbacks.onMeta({ ...e.payload, query_id: queryId }),
+      ),
+      listen<Omit<StreamChunk, 'query_id'>>(
+        `query_chunk_${queryId}`,
+        (e) => callbacks.onChunk({ ...e.payload, query_id: queryId }),
+      ),
+      listen<Omit<StreamDone, 'query_id'>>(
+        `query_done_${queryId}`,
+        (e) => callbacks.onDone({ ...e.payload, query_id: queryId }),
+      ),
+      listen<Omit<StreamError, 'query_id'>>(
+        `query_error_${queryId}`,
+        (e) => callbacks.onError({ ...e.payload, query_id: queryId }),
+      ),
+    ]);
+    return () => unlisteners.forEach((fn) => fn());
+  },
 };
