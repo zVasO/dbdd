@@ -200,3 +200,32 @@ export type AppEvent =
   | { event_type: 'QueryCompleted'; payload: { query_id: string; row_count: number; elapsed_ms: number } }
   | { event_type: 'QueryError'; payload: { query_id: string; error: string } }
   | { event_type: 'QueryCancelled'; payload: { query_id: string } };
+
+// === STREAMING QUERY EVENTS ===
+// Payloads for Tauri streaming events (matches Rust query.rs:229-301)
+// Note: Rust emits query_id in the event name, not the payload.
+// The listener helper injects query_id into these interfaces for convenience.
+
+export interface StreamMeta {
+  query_id: string;
+  columns: ColumnMeta[];
+  result_type: string;
+  warnings: string[];
+}
+
+export interface StreamChunk {
+  query_id: string;
+  offset: number;
+  data: ColumnData[];
+}
+
+export interface StreamDone {
+  query_id: string;
+  total_rows: number;
+  execution_time_ms: number;
+}
+
+export interface StreamError {
+  query_id: string;
+  error: string;
+}

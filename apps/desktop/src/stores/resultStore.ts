@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { QueryResult, ColumnMeta, ColumnarResult, ColumnData } from '../lib/types';
+import type { QueryResult, ColumnMeta, ColumnarResult, ColumnData, StreamMeta, ResultType } from '../lib/types';
 
 export interface TabResult {
   columns: ColumnMeta[];
@@ -11,10 +11,16 @@ export interface TabResult {
   totalRows: number;
   isExecuting: boolean;
   isStreaming: boolean;
+  /** Number of rows received so far during streaming */
+  streamProgress: number;
   error: string | null;
   /** Full results for multi-statement (kept as ColumnarResult[]) */
   allColumnarResults: ColumnarResult[];
   activeResultIndex: number;
+  /** Metadata preserved from stream init for finishStream */
+  _streamResultType: ResultType | null;
+  _streamQueryId: string | null;
+  _streamWarnings: string[];
   /** Legacy: row-based view built lazily on first access */
   _rowsCache: QueryResult['rows'] | null;
   _allResultsCache: QueryResult[] | null;
@@ -75,17 +81,9 @@ interface ResultState {
   setColumnarResults: (tabId: string, results: ColumnarResult[], error: string | null) => void;
   setError: (tabId: string, error: string) => void;
   setActiveResultIndex: (tabId: string, index: number) => void;
-  initStream: (tabId: string, meta: {
-    columns: ColumnMeta[];
-    rowCount: number;
-    executionTimeMs: number;
-    resultType: string;
-    warnings: string[];
-    affectedRows: number | null;
-    queryId: string;
-  }) => void;
+  initStream: (tabId: string, meta: StreamMeta) => void;
   appendChunk: (tabId: string, offset: number, chunkData: ColumnData[]) => void;
-  finishStream: (tabId: string) => void;
+  finishStream: (tabId: string, totalRows: number, executionTimeMs: number) => void;
   clearResult: (tabId: string) => void;
   clearAll: () => void;
 
@@ -106,13 +104,17 @@ export const useResultStore = create<ResultState>((set, get) => ({
           [tabId]: {
             // Preserve previous data so the grid stays mounted during re-query
             ...(existing ?? {
+              ...EMPTY_COLUMNAR_DEFAULTS,
               columns: [],
               totalRows: 0,
               isStreaming: false,
+              streamProgress: 0,
               activeResultIndex: 0,
+              _streamResultType: null,
+              _streamQueryId: null,
+              _streamWarnings: [],
               _rowsCache: null,
               _allResultsCache: null,
-              ...EMPTY_COLUMNAR_DEFAULTS,
             }),
             isExecuting: true,
             error: null,
@@ -127,15 +129,19 @@ export const useResultStore = create<ResultState>((set, get) => ({
       results: {
         ...s.results,
         [tabId]: {
+          ...EMPTY_COLUMNAR_DEFAULTS,
           columns: result.columns,
           totalRows: result.rows.length,
           isExecuting: false,
           isStreaming: false,
+          streamProgress: 0,
           error: null,
           activeResultIndex: 0,
+          _streamResultType: null,
+          _streamQueryId: null,
+          _streamWarnings: [],
           _rowsCache: result.rows,
           _allResultsCache: [result],
-          ...EMPTY_COLUMNAR_DEFAULTS,
         },
       },
     }));
@@ -147,15 +153,19 @@ export const useResultStore = create<ResultState>((set, get) => ({
       results: {
         ...s.results,
         [tabId]: {
+          ...EMPTY_COLUMNAR_DEFAULTS,
           columns: first?.columns ?? [],
           totalRows: first?.rows.length ?? 0,
           isExecuting: false,
           isStreaming: false,
+          streamProgress: 0,
           error,
           activeResultIndex: 0,
+          _streamResultType: null,
+          _streamQueryId: null,
+          _streamWarnings: [],
           _rowsCache: first?.rows ?? [],
           _allResultsCache: results,
-          ...EMPTY_COLUMNAR_DEFAULTS,
         },
       },
     }));
@@ -174,9 +184,13 @@ export const useResultStore = create<ResultState>((set, get) => ({
           executionTimeMs: result.execution_time_ms,
           isExecuting: false,
           isStreaming: false,
+          streamProgress: 0,
           error: null,
           allColumnarResults: [result],
           activeResultIndex: 0,
+          _streamResultType: null,
+          _streamQueryId: null,
+          _streamWarnings: [],
           _rowsCache: null,
           _allResultsCache: null,
         },
@@ -197,9 +211,13 @@ export const useResultStore = create<ResultState>((set, get) => ({
           executionTimeMs: first?.execution_time_ms ?? 0,
           isExecuting: false,
           isStreaming: false,
+          streamProgress: 0,
           error,
           allColumnarResults: results,
           activeResultIndex: 0,
+          _streamResultType: null,
+          _streamQueryId: null,
+          _streamWarnings: [],
           _rowsCache: null,
           _allResultsCache: null,
         },
@@ -213,13 +231,17 @@ export const useResultStore = create<ResultState>((set, get) => ({
         ...s.results,
         [tabId]: {
           ...(s.results[tabId] ?? {
+            ...EMPTY_COLUMNAR_DEFAULTS,
             columns: [],
             totalRows: 0,
             isStreaming: false,
+            streamProgress: 0,
             activeResultIndex: 0,
+            _streamResultType: null,
+            _streamQueryId: null,
+            _streamWarnings: [],
             _rowsCache: null,
             _allResultsCache: null,
-            ...EMPTY_COLUMNAR_DEFAULTS,
           }),
           isExecuting: false,
           isStreaming: false,
@@ -255,14 +277,18 @@ export const useResultStore = create<ResultState>((set, get) => ({
   },
 
   initStream: (tabId, meta) => {
-    // Pre-allocate full-size arrays for streaming
+    // Create empty column arrays — rows will grow dynamically via appendChunk
+    // since total row count is unknown at stream start
     const emptyData: ColumnData[] = meta.columns.map((col) => {
-      const kind = col.data_type === 'integer' ? 'Integers'
-        : col.data_type === 'float' ? 'Floats'
-        : col.data_type === 'boolean' ? 'Booleans'
-        : col.data_type === 'json' ? 'Json'
+      const dataType = typeof col.data_type === 'string'
+        ? col.data_type
+        : 'string';
+      const kind = dataType === 'integer' ? 'Integers'
+        : dataType === 'float' ? 'Floats'
+        : dataType === 'boolean' ? 'Booleans'
+        : dataType === 'json' ? 'Json'
         : 'Strings';
-      return { kind, values: new Array(meta.rowCount) } as ColumnData;
+      return { kind, values: [] } as ColumnData;
     });
 
     set((s) => ({
@@ -271,14 +297,18 @@ export const useResultStore = create<ResultState>((set, get) => ({
         [tabId]: {
           columns: meta.columns,
           data: emptyData,
-          rowCount: meta.rowCount,
-          executionTimeMs: meta.executionTimeMs,
-          totalRows: meta.rowCount,
+          rowCount: 0,
+          executionTimeMs: 0,
+          totalRows: 0,
           isExecuting: true,
           isStreaming: true,
+          streamProgress: 0,
           error: null,
           allColumnarResults: [],
           activeResultIndex: 0,
+          _streamResultType: (meta.result_type as ResultType) ?? 'Select',
+          _streamQueryId: meta.query_id,
+          _streamWarnings: [...meta.warnings],
           _rowsCache: null,
           _allResultsCache: null,
         },
@@ -286,23 +316,22 @@ export const useResultStore = create<ResultState>((set, get) => ({
     }));
   },
 
-  appendChunk: (tabId, offset, chunkData) => {
+  appendChunk: (tabId, _offset, chunkData) => {
     set((s) => {
       const current = s.results[tabId];
       if (!current) return s;
 
-      // Write directly into pre-allocated arrays — O(chunk) instead of O(total)
+      const chunkRowCount = chunkData[0]?.values?.length ?? 0;
+      if (chunkRowCount === 0) return s;
+
+      // Concat chunk values onto existing arrays — creates new references for React reactivity
       const newData = current.data.map((col, i) => {
         const chunk = chunkData[i];
         if (!chunk) return col;
-        // Create a new array reference so React detects the change,
-        // but copy the existing values by reference (cheap for the backing store)
-        const values = [...col.values];
-        for (let j = 0; j < chunk.values.length; j++) {
-          values[offset + j] = chunk.values[j];
-        }
-        return { ...col, values } as ColumnData;
+        return { ...col, values: [...col.values, ...chunk.values] } as ColumnData;
       });
+
+      const newRowCount = current.rowCount + chunkRowCount;
 
       return {
         results: {
@@ -310,6 +339,9 @@ export const useResultStore = create<ResultState>((set, get) => ({
           [tabId]: {
             ...current,
             data: newData,
+            rowCount: newRowCount,
+            totalRows: newRowCount,
+            streamProgress: newRowCount,
             _rowsCache: null,
             _allResultsCache: null,
           },
@@ -318,20 +350,20 @@ export const useResultStore = create<ResultState>((set, get) => ({
     });
   },
 
-  finishStream: (tabId) => {
+  finishStream: (tabId, totalRows, executionTimeMs) => {
     set((s) => {
       const current = s.results[tabId];
       if (!current) return s;
 
       const columnarResult: ColumnarResult = {
-        query_id: '',
+        query_id: current._streamQueryId ?? '',
         columns: current.columns,
         data: current.data,
-        row_count: current.rowCount,
+        row_count: totalRows,
         affected_rows: null,
-        execution_time_ms: current.executionTimeMs,
-        warnings: [],
-        result_type: 'Select',
+        execution_time_ms: executionTimeMs,
+        warnings: current._streamWarnings,
+        result_type: current._streamResultType ?? 'Select',
       };
 
       return {
@@ -341,7 +373,14 @@ export const useResultStore = create<ResultState>((set, get) => ({
             ...current,
             isExecuting: false,
             isStreaming: false,
+            rowCount: totalRows,
+            totalRows: totalRows,
+            executionTimeMs,
+            streamProgress: totalRows,
             allColumnarResults: [columnarResult],
+            _streamResultType: null,
+            _streamQueryId: null,
+            _streamWarnings: [],
             _rowsCache: null,
             _allResultsCache: null,
           },
