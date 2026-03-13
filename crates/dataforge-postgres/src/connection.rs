@@ -187,50 +187,57 @@ fn convert_pg_row(row: &PgRow, col_types: &[String]) -> Row {
     Row { cells }
 }
 
+fn extract_pg_result(rows: &[PgRow]) -> (Vec<ColumnMeta>, Vec<Row>) {
+    let (columns, col_types): (Vec<ColumnMeta>, Vec<String>) =
+        if let Some(first_row) = rows.first() {
+            let cols: Vec<ColumnMeta> = first_row
+                .columns()
+                .iter()
+                .map(|col| {
+                    let (data_type, native_type) = map_pg_column_meta(col);
+                    ColumnMeta {
+                        name: col.name().to_string(),
+                        data_type,
+                        native_type,
+                        nullable: true,
+                        is_primary_key: false,
+                        max_length: None,
+                    }
+                })
+                .collect();
+            let types: Vec<String> = first_row
+                .columns()
+                .iter()
+                .map(|c| c.type_info().name().to_string())
+                .collect();
+            (cols, types)
+        } else {
+            (vec![], vec![])
+        };
+
+    let mut result_rows: Vec<Row> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let mut cells: Vec<CellValue> = Vec::with_capacity(col_types.len());
+        for (i, ct) in col_types.iter().enumerate() {
+            cells.push(pg_typed_cell(row, i, ct));
+        }
+        result_rows.push(Row { cells });
+    }
+
+    (columns, result_rows)
+}
+
 #[async_trait]
 impl DatabaseConnection for PostgresConnection {
     async fn execute(&self, sql: &str) -> Result<QueryResult> {
+        let start = std::time::Instant::now();
+
         let rows: Vec<PgRow> = sqlx::query(sql)
             .fetch_all(&self.pool)
             .await
             .map_err(|e| DataForgeError::QueryExecution(e.to_string()))?;
 
-        let (columns, col_types): (Vec<ColumnMeta>, Vec<String>) =
-            if let Some(first_row) = rows.first() {
-                let cols: Vec<ColumnMeta> = first_row
-                    .columns()
-                    .iter()
-                    .map(|col| {
-                        let (data_type, native_type) = map_pg_column_meta(col);
-                        ColumnMeta {
-                            name: col.name().to_string(),
-                            data_type,
-                            native_type,
-                            nullable: true,
-                            is_primary_key: false,
-                            max_length: None,
-                        }
-                    })
-                    .collect();
-                let types: Vec<String> = first_row
-                    .columns()
-                    .iter()
-                    .map(|c| c.type_info().name().to_string())
-                    .collect();
-                (cols, types)
-            } else {
-                (vec![], vec![])
-            };
-
-        let mut result_rows: Vec<Row> = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let mut cells: Vec<CellValue> = Vec::with_capacity(col_types.len());
-            for (i, ct) in col_types.iter().enumerate() {
-                cells.push(pg_typed_cell(row, i, ct));
-            }
-            result_rows.push(Row { cells });
-        }
-
+        let (columns, result_rows) = extract_pg_result(&rows);
         let row_count = result_rows.len() as u64;
 
         Ok(QueryResult {
@@ -239,7 +246,7 @@ impl DatabaseConnection for PostgresConnection {
             rows: result_rows,
             total_rows: Some(row_count),
             affected_rows: None,
-            execution_time_ms: 0,
+            execution_time_ms: start.elapsed().as_millis() as u64,
             warnings: vec![],
             result_type: ResultType::Select,
         })
@@ -250,6 +257,8 @@ impl DatabaseConnection for PostgresConnection {
         sql: &str,
         params: &[CellValue],
     ) -> Result<QueryResult> {
+        let start = std::time::Instant::now();
+
         // Build the query with bound parameters
         let mut query = sqlx::query(sql);
         for param in params {
@@ -277,42 +286,7 @@ impl DatabaseConnection for PostgresConnection {
             .await
             .map_err(|e| DataForgeError::QueryExecution(e.to_string()))?;
 
-        let (columns, col_types): (Vec<ColumnMeta>, Vec<String>) =
-            if let Some(first_row) = rows.first() {
-                let cols: Vec<ColumnMeta> = first_row
-                    .columns()
-                    .iter()
-                    .map(|col| {
-                        let (data_type, native_type) = map_pg_column_meta(col);
-                        ColumnMeta {
-                            name: col.name().to_string(),
-                            data_type,
-                            native_type,
-                            nullable: true,
-                            is_primary_key: false,
-                            max_length: None,
-                        }
-                    })
-                    .collect();
-                let types: Vec<String> = first_row
-                    .columns()
-                    .iter()
-                    .map(|c| c.type_info().name().to_string())
-                    .collect();
-                (cols, types)
-            } else {
-                (vec![], vec![])
-            };
-
-        let mut result_rows: Vec<Row> = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let mut cells: Vec<CellValue> = Vec::with_capacity(col_types.len());
-            for (i, ct) in col_types.iter().enumerate() {
-                cells.push(pg_typed_cell(row, i, ct));
-            }
-            result_rows.push(Row { cells });
-        }
-
+        let (columns, result_rows) = extract_pg_result(&rows);
         let row_count = result_rows.len() as u64;
 
         Ok(QueryResult {
@@ -321,7 +295,7 @@ impl DatabaseConnection for PostgresConnection {
             rows: result_rows,
             total_rows: Some(row_count),
             affected_rows: None,
-            execution_time_ms: 0,
+            execution_time_ms: start.elapsed().as_millis() as u64,
             warnings: vec![],
             result_type: ResultType::Select,
         })
