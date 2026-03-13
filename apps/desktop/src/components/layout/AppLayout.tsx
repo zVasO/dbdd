@@ -114,8 +114,6 @@ export function AppLayout() {
     }
   }, [activeConnectionId, loadDatabases, activeConfig?.database]);
 
-  // Re-render when shortcut overrides change
-  const _shortcutOverrides = useShortcutStore((s) => s.overrides);
   const sc = useShortcutStore((s) => s.getBinding);
 
   const isModalOpen = useUIStore((s) => s.isModalOpen);
@@ -266,9 +264,11 @@ export function AppLayout() {
             </Panel>
           </PanelGroup>
         )}
-        <Suspense fallback={null}>
-          <AiChatPanel />
-        </Suspense>
+        {useAIStore((s) => s.chatOpen) && (
+          <Suspense fallback={null}>
+            <AiChatPanel />
+          </Suspense>
+        )}
       </div>
       <ActivityBar />
       <StatusBar

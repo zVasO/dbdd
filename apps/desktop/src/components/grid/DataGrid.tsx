@@ -6,7 +6,8 @@ import { Key, Plus, Search, Trash2, X, Filter, Eye, ChevronUp, ChevronDown, Chev
 import { copyAsJson, copyAsInsert, copyAsCsv, copyAsMarkdown, copyAsTsv, copyCellAsJson, copyCellAsText, copyToClipboard } from '@/lib/copyFormats';
 import type { QueryResult, CellValue, ColumnData } from '@/lib/types';
 import { ipc } from '@/lib/ipc';
-import { useChangeStore } from '@/stores/changeStore';
+import { useChangeStore, type Change } from '@/stores/changeStore';
+import { useShallow } from 'zustand/shallow';
 import { useFilterStore } from '@/stores/filterStore';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useQueryStore } from '@/stores/queryStore';
@@ -219,6 +220,13 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
   // Column resize state
   const [columnWidths, setColumnWidths] = useState<Record<number, number>>({});
   const resizingRef = useRef<{ colIndex: number; startX: number; startWidth: number } | null>(null);
+  const resizeRafRef = useRef<number>(0);
+  // Snapshot ref for resize handler — avoids stale closure in the [] effect
+  const resizeSnapshotRef = useRef<{
+    visibleColumns: typeof visibleColumns;
+    visibleColIndexMap: number[];
+    columnWidths: Record<number, number>;
+  }>({ visibleColumns: [], visibleColIndexMap: [], columnWidths: {} });
 
   // Drag selection state (rows)
   const isDraggingRef = useRef(false);
@@ -235,14 +243,14 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
   const alternatingRowColors = usePreferencesStore((s) => s.alternatingRowColors);
   const defaultCopyFormat = usePreferencesStore((s) => s.defaultCopyFormat);
 
-  // Change tracking
+  // Change tracking — subscribe only to changes for this specific table
   const addChange = useChangeStore((s) => s.addChange);
-  const pending = useChangeStore((s) => s.pending);
-  const pendingChanges = useMemo(
-    () => database && table
-      ? pending.filter((c) => c.database === database && c.table === table)
-      : [],
-    [pending, database, table]
+  const pendingChanges: Change[] = useChangeStore(
+    useShallow((s: { pending: Change[] }) =>
+      database && table
+        ? s.pending.filter((c: Change) => c.database === database && c.table === table)
+        : [],
+    ),
   );
 
   // Column visibility
@@ -493,12 +501,33 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     }
   }, [editingCell]);
 
+  // Keep resize snapshot ref current for the [] effect closure
+  resizeSnapshotRef.current = { visibleColumns, visibleColIndexMap, columnWidths };
+
   // Global mouseup for drag selection + column resize
   useEffect(() => {
     const handleMouseUp = () => {
       if (isDraggingRef.current) isDraggingRef.current = false;
       if (isCellDraggingRef.current) isCellDraggingRef.current = false;
       if (resizingRef.current) {
+        // Cancel any pending rAF
+        if (resizeRafRef.current) {
+          cancelAnimationFrame(resizeRafRef.current);
+          resizeRafRef.current = 0;
+        }
+        // Commit final width from CSS variable to React state
+        const container = parentRef.current;
+        const colIdx = resizingRef.current.colIndex;
+        if (container) {
+          const cssVal = container.style.getPropertyValue(`--col-${colIdx}-w`);
+          const finalWidth = parseInt(cssVal, 10);
+          if (finalWidth) {
+            setColumnWidths((prev) => ({ ...prev, [colIdx]: finalWidth }));
+          }
+          // Clean up all resize CSS variables
+          container.style.removeProperty(`--col-${colIdx}-w`);
+          container.style.removeProperty('--total-content-width');
+        }
         resizingRef.current = null;
         document.body.style.cursor = '';
         document.body.style.userSelect = '';
@@ -507,9 +536,30 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
 
     const handleMouseMove = (e: MouseEvent) => {
       if (resizingRef.current) {
-        const delta = e.clientX - resizingRef.current.startX;
-        const newWidth = Math.max(MIN_COL_WIDTH, resizingRef.current.startWidth + delta);
-        setColumnWidths((prev) => ({ ...prev, [resizingRef.current!.colIndex]: newWidth }));
+        const clientX = e.clientX;
+        if (resizeRafRef.current) return; // Already have a pending frame
+        resizeRafRef.current = requestAnimationFrame(() => {
+          resizeRafRef.current = 0;
+          if (!resizingRef.current) return;
+          const delta = clientX - resizingRef.current.startX;
+          const newWidth = Math.max(MIN_COL_WIDTH, resizingRef.current.startWidth + delta);
+          const container = parentRef.current;
+          if (container) {
+            container.style.setProperty(`--col-${resizingRef.current.colIndex}-w`, `${newWidth}px`);
+            // Also update total content width CSS variable for scroll container
+            const snap = resizeSnapshotRef.current;
+            const rowNumWidth = 50;
+            let total = rowNumWidth;
+            const colCount = snap.visibleColumns.length;
+            for (let i = 0; i < colCount; i++) {
+              const idx = snap.visibleColIndexMap[i];
+              total += idx === resizingRef.current.colIndex
+                ? newWidth
+                : (snap.columnWidths[idx] ?? DEFAULT_COL_WIDTH);
+            }
+            container.style.setProperty('--total-content-width', `${total}px`);
+          }
+        });
       }
     };
 
@@ -532,11 +582,15 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     document.body.style.userSelect = 'none';
   }, [columnWidths]);
 
-  const getColWidth = useCallback((colIndex: number) => {
-    return columnWidths[colIndex] ?? DEFAULT_COL_WIDTH;
+  // Returns a CSS width that reads from a CSS custom property during resize,
+  // falling back to the React state width. This avoids re-renders during drag.
+  const getColWidthStyle = useCallback((colIndex: number): string => {
+    const stateWidth = columnWidths[colIndex] ?? DEFAULT_COL_WIDTH;
+    return `var(--col-${colIndex}-w, ${stateWidth}px)`;
   }, [columnWidths]);
 
-  // Total content width for horizontal scroll: row-number col + all visible column widths
+  // Total content width for horizontal scroll: row-number col + all visible column widths.
+  // During resize, the CSS variable --total-content-width overrides this via style binding.
   const totalContentWidth = useMemo(() => {
     const rowNumWidth = 50; // matches w-[50px]
     return rowNumWidth + visibleColumns.reduce((sum, _, visIdx) => {
@@ -544,6 +598,13 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       return sum + (columnWidths[colIdx] ?? DEFAULT_COL_WIDTH);
     }, 0);
   }, [visibleColumns, visibleColIndexMap, columnWidths]);
+
+  // CSS minWidth that reads from the CSS variable during resize,
+  // falling back to the computed React state total.
+  const totalWidthStyle = useMemo(
+    () => `var(--total-content-width, ${totalContentWidth}px)`,
+    [totalContentWidth],
+  );
 
   // ─── Column sorting ────────────────────────────────────────────────────────
 
@@ -1134,20 +1195,19 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       }}
     >
       {/* Column headers */}
-      <div className="sticky top-0 z-10 flex border-b-2 border-border bg-muted" style={{ minWidth: totalContentWidth }}>
+      <div className="sticky top-0 z-10 flex border-b-2 border-border bg-muted" style={{ minWidth: totalWidthStyle }}>
         <div className="flex w-[50px] shrink-0 items-center justify-center border-r border-border px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           #
         </div>
         {visibleColumns.map((col, visIdx) => {
           const colIdx = visibleColIndexMap[visIdx];
-          const width = getColWidth(colIdx);
           const sortDir = getSortDirection(colIdx);
 
           return (
             <div
               key={col.name}
               className="relative flex shrink-0 items-center gap-1 border-r border-border px-2 py-1.5 cursor-pointer hover:bg-accent/30"
-              style={{ width }}
+              style={{ width: getColWidthStyle(colIdx) }}
               onClick={(e) => handleHeaderClick(colIdx, e.shiftKey)}
             >
               {col.is_primary_key && (
@@ -1188,7 +1248,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       </div>
 
       {/* Filter bar */}
-      <div className="sticky top-[calc(2rem+8px)] z-10 flex items-center gap-2 border-b border-border bg-card px-2 py-1" style={{ minWidth: totalContentWidth }}>
+      <div className="sticky top-[calc(2rem+8px)] z-10 flex items-center gap-2 border-b border-border bg-card px-2 py-1" style={{ minWidth: totalWidthStyle }}>
         <Search className="h-3 w-3 text-muted-foreground" />
         <input
           className="flex-1 bg-transparent text-xs text-foreground placeholder:text-muted-foreground outline-none"
@@ -1209,7 +1269,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       {/* Virtualized body */}
       <div
         className="relative"
-        style={{ height: `${rowVirtualizer.getTotalSize()}px`, minWidth: totalContentWidth }}
+        style={{ height: `${rowVirtualizer.getTotalSize()}px`, minWidth: totalWidthStyle }}
       >
         {rowVirtualizer.getVirtualItems().map((virtualRow) => {
           const actualRowIndex = paginatedIndexMap[virtualRow.index];
@@ -1234,7 +1294,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
               style={{
                 height: `${virtualRow.size}px`,
                 transform: `translateY(${virtualRow.start}px)`,
-                minWidth: totalContentWidth,
+                minWidth: totalWidthStyle,
               }}
               onMouseEnter={() => handleRowMouseEnter(virtualRow.index)}
               onContextMenu={(e) => {
@@ -1262,7 +1322,6 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
               {/* Cells */}
               {visibleColumns.map((col, visIdx) => {
                 const colIdx = visibleColIndexMap[visIdx];
-                const width = getColWidth(colIdx);
                 const cell = columnarCellValue(columnarData, colIdx, actualRowIndex);
                 const isEditing =
                   editingCell?.rowIndex === virtualRow.index &&
@@ -1282,7 +1341,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
                       !isEditing && !isFocused && isCellSelected && 'ring-2 ring-inset ring-primary/60 bg-primary/10',
                       pendingEdit && !isEditing && 'bg-yellow-500/15',
                     )}
-                    style={{ width }}
+                    style={{ width: getColWidthStyle(colIdx) }}
                     onMouseDown={(e) => handleCellMouseDown(e, virtualRow.index, colIdx)}
                     onMouseEnter={() => handleCellMouseEnter(virtualRow.index, colIdx)}
                     onContextMenu={(e) => {
@@ -1396,19 +1455,18 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
         <div
           key={insert.id}
           className="flex bg-green-500/10 border-b border-border"
-          style={{ height: 32, minWidth: totalContentWidth }}
+          style={{ height: 32, minWidth: totalWidthStyle }}
         >
           <div className="flex w-[50px] shrink-0 items-center justify-center border-r border-border bg-green-500/10 text-[10px] text-green-600">
             +{idx + 1}
           </div>
           {visibleColumns.map((col, visIdx) => {
             const colIdx = visibleColIndexMap[visIdx];
-            const width = getColWidth(colIdx);
             return (
               <div
                 key={col.name}
                 className="flex shrink-0 items-center border-r border-border px-2 text-xs text-green-600 dark:text-green-400"
-                style={{ width }}
+                style={{ width: getColWidthStyle(colIdx) }}
               >
                 {insert.values[col.name] === null ? (
                   <span className="italic text-green-400/60">NULL</span>
@@ -1423,7 +1481,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
 
       {/* Footer with pagination */}
       {columnarRowCount > 0 && (
-        <div className="sticky bottom-0 flex items-center gap-3 border-t border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground" style={{ minWidth: totalContentWidth }}>
+        <div className="sticky bottom-0 flex items-center gap-3 border-t border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground" style={{ minWidth: totalWidthStyle }}>
           {/* Row info */}
           <span>
             {totalSortedRows > 0

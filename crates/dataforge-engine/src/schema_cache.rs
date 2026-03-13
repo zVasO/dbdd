@@ -102,10 +102,12 @@ impl SchemaCache {
 
 /// Returns `true` when the SQL statement is a DDL command that may
 /// alter the database schema (CREATE, ALTER, DROP, TRUNCATE).
+///
+/// Uses case-insensitive byte comparison to avoid allocating a new String.
 pub fn is_ddl(sql: &str) -> bool {
-    let trimmed = sql.trim_start().to_uppercase();
-    trimmed.starts_with("CREATE")
-        || trimmed.starts_with("ALTER")
-        || trimmed.starts_with("DROP")
-        || trimmed.starts_with("TRUNCATE")
+    let trimmed = sql.trim_start();
+    trimmed.get(..6).map_or(false, |s| s.eq_ignore_ascii_case("CREATE"))
+        || trimmed.get(..5).map_or(false, |s| s.eq_ignore_ascii_case("ALTER"))
+        || trimmed.get(..4).map_or(false, |s| s.eq_ignore_ascii_case("DROP"))
+        || trimmed.get(..8).map_or(false, |s| s.eq_ignore_ascii_case("TRUNCATE"))
 }
