@@ -252,7 +252,7 @@ function GridSection() {
     <div className="space-y-6">
       <SectionTitle title="Data Grid" description="Configure data display settings." />
 
-      <SettingRow label="Default page size" description="Number of rows loaded per page.">
+      <SettingRow label="Default row limit" description="Number of rows fetched when opening a table. 'All' fetches every row (up to 50k safety limit).">
         <Select
           value={String(prefs.defaultPageSize)}
           onValueChange={(v) => set('defaultPageSize', Number(v))}
@@ -261,10 +261,12 @@ function GridSection() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="50">50</SelectItem>
             <SelectItem value="100">100</SelectItem>
             <SelectItem value="300">300</SelectItem>
             <SelectItem value="500">500</SelectItem>
             <SelectItem value="1000">1000</SelectItem>
+            <SelectItem value="0">All</SelectItem>
           </SelectContent>
         </Select>
       </SettingRow>

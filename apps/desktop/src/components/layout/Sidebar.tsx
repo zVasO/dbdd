@@ -53,6 +53,7 @@ import { ipc } from '@/lib/ipc';
 import { cn } from '@/lib/utils';
 import { getFuzzySearchBridge, type ScoredItem } from '@/lib/fuzzy-search-bridge';
 import { useFavoritesStore } from '@/stores/favoritesStore';
+import { usePreferencesStore } from '@/stores/preferencesStore';
 import type { TableInfo, ColumnInfo } from '@/lib/types';
 
 /** Safely convert data_type to string - backend may return objects like {Varchar: 255} */
@@ -197,7 +198,10 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
       setActiveTab(existing.id);
       return;
     }
-    const sql = `SELECT * FROM \`${tableName}\` LIMIT 500`;
+    const pageSize = usePreferencesStore.getState().defaultPageSize;
+    const sql = pageSize > 0
+      ? `SELECT * FROM \`${tableName}\` LIMIT ${pageSize}`
+      : `SELECT * FROM \`${tableName}\``;
     const tabId = createTab(tableName, { editorVisible: false, database: db, table: tableName });
     updateSql(tabId, sql);
     executeQuery(activeConnectionId, tabId);
@@ -1135,7 +1139,8 @@ function TableNode({
           </ContextMenuItem>
           <ContextMenuSeparator />
           <ContextMenuItem onClick={() => {
-            navigator.clipboard.writeText(`SELECT * FROM \`${table.name}\` LIMIT 500`);
+            const _ps = usePreferencesStore.getState().defaultPageSize;
+            navigator.clipboard.writeText(_ps > 0 ? `SELECT * FROM \`${table.name}\` LIMIT ${_ps}` : `SELECT * FROM \`${table.name}\``);
           }}>
             <Terminal className="mr-2 h-3.5 w-3.5" /> Copy SELECT Query
           </ContextMenuItem>
