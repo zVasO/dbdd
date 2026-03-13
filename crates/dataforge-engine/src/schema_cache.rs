@@ -7,6 +7,7 @@ use uuid::Uuid;
 use dataforge_core::models::schema::{TableInfo, TableRef, TableStructure};
 
 const DEFAULT_TTL: Duration = Duration::from_secs(300);
+const MAX_ENTRIES_PER_CONNECTION: usize = 200;
 
 type TableCacheKey = (Uuid, String, Option<String>);
 
@@ -31,20 +32,31 @@ impl SchemaCache {
         }
     }
 
+    /// Returns `(cached_value, needs_refresh)`.
+    ///
+    /// The caller receives stale-but-valid data while `needs_refresh` is `true`,
+    /// allowing a background task to repopulate the cache before the TTL expires.
     pub fn get_tables(
         &self,
         conn_id: &Uuid,
         db: &str,
         schema: Option<&str>,
-    ) -> Option<Arc<Vec<TableInfo>>> {
+    ) -> (Option<Arc<Vec<TableInfo>>>, bool) {
         let key = (*conn_id, db.to_string(), schema.map(|s| s.to_string()));
-        let entry = self.tables.get(&key)?;
-        if entry.1.elapsed() < self.ttl {
-            Some(Arc::clone(&entry.0))
-        } else {
-            drop(entry);
-            self.tables.remove(&key);
-            None
+        match self.tables.get(&key) {
+            Some(entry) => {
+                let elapsed = entry.1.elapsed();
+                if elapsed < self.ttl {
+                    // Signal refresh when 80% of TTL has elapsed
+                    let needs_refresh = elapsed > (self.ttl * 4 / 5);
+                    (Some(Arc::clone(&entry.0)), needs_refresh)
+                } else {
+                    drop(entry);
+                    self.tables.remove(&key);
+                    (None, true)
+                }
+            }
+            None => (None, true),
         }
     }
 
@@ -55,12 +67,45 @@ impl SchemaCache {
         schema: Option<String>,
         tables: Vec<TableInfo>,
     ) {
+        let key = (conn_id, db, schema);
         self.tables
-            .insert((conn_id, db, schema), (Arc::new(tables), Instant::now()));
+            .insert(key.clone(), (Arc::new(tables), Instant::now()));
+        self.evict_oldest_for_connection(&key.0);
     }
 
     pub fn invalidate_connection(&self, conn_id: &Uuid) {
         self.tables.retain(|k, _| &k.0 != conn_id);
         self.structures.retain(|k, _| &k.0 != conn_id);
     }
+
+    /// Evict the oldest entries when a single connection exceeds the cap.
+    fn evict_oldest_for_connection(&self, connection_id: &Uuid) {
+        let conn_entries: Vec<_> = self
+            .tables
+            .iter()
+            .filter(|e| &e.key().0 == connection_id)
+            .map(|e| (e.key().clone(), e.value().1))
+            .collect();
+
+        if conn_entries.len() > MAX_ENTRIES_PER_CONNECTION {
+            let mut sorted = conn_entries;
+            sorted.sort_by_key(|(_, instant)| *instant);
+            for (old_key, _) in sorted
+                .iter()
+                .take(sorted.len() - MAX_ENTRIES_PER_CONNECTION)
+            {
+                self.tables.remove(old_key);
+            }
+        }
+    }
+}
+
+/// Returns `true` when the SQL statement is a DDL command that may
+/// alter the database schema (CREATE, ALTER, DROP, TRUNCATE).
+pub fn is_ddl(sql: &str) -> bool {
+    let trimmed = sql.trim_start().to_uppercase();
+    trimmed.starts_with("CREATE")
+        || trimmed.starts_with("ALTER")
+        || trimmed.starts_with("DROP")
+        || trimmed.starts_with("TRUNCATE")
 }

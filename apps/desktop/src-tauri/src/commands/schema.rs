@@ -51,12 +51,33 @@ pub async fn list_tables(
     database: String,
     schema: Option<String>,
 ) -> Result<Vec<TableInfo>, String> {
-    if let Some(cached) =
-        state
-            .schema_cache
-            .get_tables(&connection_id, &database, schema.as_deref())
-    {
-        return Ok(cached.as_ref().clone());
+    let (cached, needs_refresh) = state
+        .schema_cache
+        .get_tables(&connection_id, &database, schema.as_deref());
+
+    if let Some(tables) = cached {
+        if !needs_refresh {
+            return Ok(tables.as_ref().clone());
+        }
+        // Return stale data immediately but spawn a background refresh
+        let cache = state.schema_cache.clone();
+        let conn_id = connection_id;
+        let db = database.clone();
+        let sch = schema.clone();
+        let result = tables.as_ref().clone();
+        // Clone the inspector out of the DashMap guard so it can be sent to the task
+        let inspector = state
+            .connection_manager
+            .get(&conn_id)
+            .map(|active| Arc::clone(&active.schema_inspector));
+        if let Some(inspector) = inspector {
+            tokio::spawn(async move {
+                if let Ok(fresh) = inspector.list_tables(&db, sch.as_deref()).await {
+                    cache.set_tables(conn_id, db, sch, fresh);
+                }
+            });
+        }
+        return Ok(result);
     }
 
     let inspector = {
