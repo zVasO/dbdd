@@ -3,10 +3,22 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use dataforge_core::error::Result;
-use dataforge_core::models::query::CellValue;
+use std::collections::BTreeMap;
+
+use dataforge_core::models::query::{CellValue, QueryResult, ResultType};
 use dataforge_core::models::schema::*;
 use dataforge_core::ports::connection::DatabaseConnection;
 use dataforge_core::ports::schema::SchemaInspector;
+
+fn pg_fk_action(c: &str) -> FkAction {
+    match c {
+        "c" => FkAction::Cascade,
+        "n" => FkAction::SetNull,
+        "d" => FkAction::SetDefault,
+        "r" => FkAction::Restrict,
+        _ => FkAction::NoAction, // "a" = no action
+    }
+}
 
 pub struct PostgresSchemaInspector {
     conn: Arc<dyn DatabaseConnection>,
@@ -242,14 +254,300 @@ impl SchemaInspector for PostgresSchemaInspector {
             })
         };
 
+        // --- Indexes ---
+        let idx_sql = "SELECT ic.relname AS index_name, \
+             a.attname AS column_name, \
+             ix.indisunique AS is_unique, \
+             ix.indisprimary AS is_primary, \
+             am.amname AS index_type \
+             FROM pg_catalog.pg_index ix \
+             JOIN pg_catalog.pg_class t ON t.oid = ix.indrelid \
+             JOIN pg_catalog.pg_class ic ON ic.oid = ix.indexrelid \
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
+             JOIN pg_catalog.pg_am am ON am.oid = ic.relam \
+             CROSS JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS u(attnum, ord) \
+             JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attnum = u.attnum \
+             WHERE n.nspname = $1 AND t.relname = $2 \
+             ORDER BY ic.relname, u.ord";
+        let idx_result = self
+            .conn
+            .execute_with_params(
+                idx_sql,
+                &[
+                    CellValue::Text(schema_name.to_string()),
+                    CellValue::Text(table.table.clone()),
+                ],
+            )
+            .await
+            .unwrap_or_else(|_| QueryResult {
+                query_id: uuid::Uuid::new_v4(),
+                columns: vec![],
+                rows: vec![],
+                total_rows: Some(0),
+                affected_rows: None,
+                execution_time_ms: 0,
+                warnings: vec![],
+                result_type: ResultType::Select,
+            });
+
+        let mut idx_map: BTreeMap<String, (Vec<String>, bool, bool, String)> = BTreeMap::new();
+        for row in &idx_result.rows {
+            if row.cells.len() < 5 {
+                continue;
+            }
+            let name = match &row.cells[0] {
+                CellValue::Text(s) => s.clone(),
+                _ => continue,
+            };
+            let col = match &row.cells[1] {
+                CellValue::Text(s) => s.clone(),
+                _ => continue,
+            };
+            let is_unique = match &row.cells[2] {
+                CellValue::Boolean(b) => *b,
+                CellValue::Integer(n) => *n != 0,
+                _ => false,
+            };
+            let is_primary = match &row.cells[3] {
+                CellValue::Boolean(b) => *b,
+                CellValue::Integer(n) => *n != 0,
+                _ => false,
+            };
+            let idx_type = match &row.cells[4] {
+                CellValue::Text(s) => s.clone(),
+                _ => "btree".to_string(),
+            };
+            let entry = idx_map
+                .entry(name)
+                .or_insert_with(|| (vec![], is_unique, is_primary, idx_type));
+            entry.0.push(col);
+        }
+        let indexes: Vec<IndexInfo> = idx_map
+            .into_iter()
+            .map(|(name, (columns, is_unique, is_primary, index_type))| IndexInfo {
+                name,
+                columns,
+                is_unique,
+                is_primary,
+                index_type,
+            })
+            .collect();
+
+        // --- Foreign Keys ---
+        let fk_sql = "SELECT con.conname AS name, \
+             a.attname AS column_name, \
+             fn.nspname AS ref_schema, \
+             fc.relname AS ref_table, \
+             fa.attname AS ref_column, \
+             con.confupdtype, con.confdeltype \
+             FROM pg_catalog.pg_constraint con \
+             JOIN pg_catalog.pg_class t ON t.oid = con.conrelid \
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
+             JOIN pg_catalog.pg_class fc ON fc.oid = con.confrelid \
+             JOIN pg_catalog.pg_namespace fn ON fn.oid = fc.relnamespace \
+             CROSS JOIN LATERAL unnest(con.conkey, con.confkey) WITH ORDINALITY AS u(local_attnum, ref_attnum, ord) \
+             JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attnum = u.local_attnum \
+             JOIN pg_catalog.pg_attribute fa ON fa.attrelid = fc.oid AND fa.attnum = u.ref_attnum \
+             WHERE con.contype = 'f' AND n.nspname = $1 AND t.relname = $2 \
+             ORDER BY con.conname, u.ord";
+        let fk_result = self
+            .conn
+            .execute_with_params(
+                fk_sql,
+                &[
+                    CellValue::Text(schema_name.to_string()),
+                    CellValue::Text(table.table.clone()),
+                ],
+            )
+            .await
+            .unwrap_or_else(|_| QueryResult {
+                query_id: uuid::Uuid::new_v4(),
+                columns: vec![],
+                rows: vec![],
+                total_rows: Some(0),
+                affected_rows: None,
+                execution_time_ms: 0,
+                warnings: vec![],
+                result_type: ResultType::Select,
+            });
+
+        let mut fk_map: BTreeMap<
+            String,
+            (Vec<String>, String, String, Vec<String>, String, String),
+        > = BTreeMap::new();
+        for row in &fk_result.rows {
+            if row.cells.len() < 7 {
+                continue;
+            }
+            let name = match &row.cells[0] {
+                CellValue::Text(s) => s.clone(),
+                _ => continue,
+            };
+            let col = match &row.cells[1] {
+                CellValue::Text(s) => s.clone(),
+                _ => continue,
+            };
+            let ref_schema = match &row.cells[2] {
+                CellValue::Text(s) => s.clone(),
+                _ => String::new(),
+            };
+            let ref_table = match &row.cells[3] {
+                CellValue::Text(s) => s.clone(),
+                _ => continue,
+            };
+            let ref_col = match &row.cells[4] {
+                CellValue::Text(s) => s.clone(),
+                _ => continue,
+            };
+            let upd_type = match &row.cells[5] {
+                CellValue::Text(s) => s.clone(),
+                _ => "a".to_string(),
+            };
+            let del_type = match &row.cells[6] {
+                CellValue::Text(s) => s.clone(),
+                _ => "a".to_string(),
+            };
+            let entry = fk_map
+                .entry(name)
+                .or_insert_with(|| (vec![], ref_schema, ref_table, vec![], upd_type, del_type));
+            entry.0.push(col);
+            entry.3.push(ref_col);
+        }
+        let foreign_keys: Vec<ForeignKeyInfo> = fk_map
+            .into_iter()
+            .map(
+                |(name, (columns, ref_schema, ref_table, ref_cols, on_update, on_delete))| {
+                    ForeignKeyInfo {
+                        name,
+                        columns,
+                        referenced_table: TableRef {
+                            database: None,
+                            schema: Some(ref_schema),
+                            table: ref_table,
+                        },
+                        referenced_columns: ref_cols,
+                        on_update: pg_fk_action(&on_update),
+                        on_delete: pg_fk_action(&on_delete),
+                    }
+                },
+            )
+            .collect();
+
+        // --- Constraints ---
+        let cst_sql = "SELECT con.conname AS name, \
+             con.contype, \
+             pg_get_constraintdef(con.oid) AS definition, \
+             ARRAY(SELECT a.attname FROM pg_catalog.pg_attribute a \
+                   WHERE a.attrelid = con.conrelid AND a.attnum = ANY(con.conkey)) AS col_names \
+             FROM pg_catalog.pg_constraint con \
+             JOIN pg_catalog.pg_class t ON t.oid = con.conrelid \
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
+             WHERE n.nspname = $1 AND t.relname = $2 \
+             ORDER BY con.conname";
+        let cst_result = self
+            .conn
+            .execute_with_params(
+                cst_sql,
+                &[
+                    CellValue::Text(schema_name.to_string()),
+                    CellValue::Text(table.table.clone()),
+                ],
+            )
+            .await
+            .unwrap_or_else(|_| QueryResult {
+                query_id: uuid::Uuid::new_v4(),
+                columns: vec![],
+                rows: vec![],
+                total_rows: Some(0),
+                affected_rows: None,
+                execution_time_ms: 0,
+                warnings: vec![],
+                result_type: ResultType::Select,
+            });
+
+        let constraints: Vec<ConstraintInfo> = cst_result
+            .rows
+            .iter()
+            .filter_map(|row| {
+                if row.cells.len() < 4 {
+                    return None;
+                }
+                let name = match &row.cells[0] {
+                    CellValue::Text(s) => s.clone(),
+                    _ => return None,
+                };
+                let contype = match &row.cells[1] {
+                    CellValue::Text(s) => s.clone(),
+                    _ => return None,
+                };
+                let definition = match &row.cells[2] {
+                    CellValue::Text(s) => Some(s.clone()),
+                    _ => None,
+                };
+                // col_names comes as an Array or Text like "{col1,col2}"
+                let columns = match &row.cells[3] {
+                    CellValue::Text(s) => s
+                        .trim_matches(|c| c == '{' || c == '}')
+                        .split(',')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .collect(),
+                    CellValue::Array(items) => items
+                        .iter()
+                        .filter_map(|item| match item {
+                            CellValue::Text(s) => Some(s.clone()),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => vec![],
+                };
+                let constraint_type = match contype.as_str() {
+                    "p" => ConstraintType::PrimaryKey,
+                    "u" => ConstraintType::Unique,
+                    "c" => ConstraintType::Check,
+                    "x" => ConstraintType::Exclusion,
+                    "f" => ConstraintType::ForeignKey,
+                    _ => ConstraintType::Check,
+                };
+                Some(ConstraintInfo {
+                    name,
+                    constraint_type,
+                    columns,
+                    definition,
+                })
+            })
+            .collect();
+
+        // --- Table Comment ---
+        let comment_sql = "SELECT obj_description(c.oid) FROM pg_catalog.pg_class c \
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = $1 AND c.relname = $2";
+        let comment = self
+            .conn
+            .execute_with_params(
+                comment_sql,
+                &[
+                    CellValue::Text(schema_name.to_string()),
+                    CellValue::Text(table.table.clone()),
+                ],
+            )
+            .await
+            .ok()
+            .and_then(|r| {
+                r.rows.first().and_then(|row| match &row.cells[0] {
+                    CellValue::Text(s) if !s.is_empty() => Some(s.clone()),
+                    _ => None,
+                })
+            });
+
         Ok(TableStructure {
             table_ref: table.clone(),
             columns,
             primary_key,
-            indexes: vec![],
-            foreign_keys: vec![],
-            constraints: vec![],
-            comment: None,
+            indexes,
+            foreign_keys,
+            constraints,
+            comment,
         })
     }
 }
