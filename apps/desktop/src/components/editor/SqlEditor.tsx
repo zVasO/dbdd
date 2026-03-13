@@ -1,10 +1,15 @@
 import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
+import { loader } from '@monaco-editor/react';
+import * as monaco from 'monaco-editor';
 import { usePreferencesStore } from '@/stores/preferencesStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useShortcutStore } from '@/stores/shortcutStore';
 import { getFuzzySearchBridge, type SearchContext } from '@/lib/fuzzy-search-bridge';
+
+// Use local monaco-editor instead of CDN (CSP blocks external fetches in Tauri production builds)
+loader.config({ monaco });
 
 const MonacoEditor = lazy(() => import('@monaco-editor/react'));
 
@@ -359,15 +364,17 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
     };
   }, []);
 
+  // Define custom theme before editor is created (avoids race condition in production builds)
+  const handleBeforeMount = useCallback((monaco: any) => {
+    monacoRef.current = monaco;
+    const currentTheme = useThemeStore.getState().getActiveTheme();
+    defineDataforgeTheme(monaco, currentTheme.isDark);
+  }, []);
+
   const handleMount = useCallback(
     (editor: any, monaco: any) => {
       editorRef.current = editor;
       monacoRef.current = monaco;
-
-      // Define and apply custom theme that reads CSS variables
-      const currentTheme = useThemeStore.getState().getActiveTheme();
-      defineDataforgeTheme(monaco, currentTheme.isDark);
-      monaco.editor.setTheme('dataforge');
 
       // Helper: convert ShortcutBinding → Monaco keybinding number
       const toMonacoKeybinding = (id: string) => {
@@ -659,6 +666,7 @@ export function SqlEditor({ value, onChange, onExecute }: Props) {
         defaultLanguage="sql"
         defaultValue={value}
         onChange={handleChange}
+        beforeMount={handleBeforeMount}
         onMount={handleMount}
         theme="dataforge"
         options={{
