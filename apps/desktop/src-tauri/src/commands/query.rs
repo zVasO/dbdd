@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use dataforge_core::models::query::{QueryHistoryEntry, QueryResult, QueryStatus};
 use dataforge_engine::event_bus::AppEvent;
+use dataforge_engine::schema_cache;
 
 use crate::state::AppState;
 
@@ -70,6 +71,8 @@ pub async fn execute_query(
             let row_count = result.rows.len() as u64;
             tracing::Span::current().record("row_count", row_count);
 
+            let is_ddl = schema_cache::is_ddl(&sql);
+
             let history_entry = QueryHistoryEntry {
                 id: query_id,
                 connection_id,
@@ -93,6 +96,11 @@ pub async fn execute_query(
                 row_count,
                 elapsed_ms: result.execution_time_ms,
             });
+
+            // Auto-invalidate schema cache on DDL statements
+            if is_ddl {
+                state.schema_cache.invalidate_connection(&connection_id);
+            }
 
             Ok(result)
         }
@@ -181,6 +189,13 @@ pub async fn execute_batch(
         .collect();
 
     let results = futures::future::join_all(futures).await;
+
+    // Auto-invalidate schema cache if any statement was DDL
+    let has_ddl = statements.iter().any(|sql| schema_cache::is_ddl(sql));
+    if has_ddl {
+        state.schema_cache.invalidate_connection(&connection_id);
+    }
+
     Ok(results)
 }
 
