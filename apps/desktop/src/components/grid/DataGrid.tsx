@@ -101,8 +101,8 @@ function useGridWorker(
   const [state, setState] = useState<WorkerState>({ filteredIndices: null, sortedIndices: null });
   const useWorker = rowCount > 1000 && !!data && data.length > 0;
 
+  // Create worker once on mount, terminate on unmount
   useEffect(() => {
-    if (!useWorker) return;
     const worker = new Worker(
       new URL('../../workers/grid.worker.ts', import.meta.url),
       { type: 'module' },
@@ -122,15 +122,22 @@ function useGridWorker(
       worker.terminate();
       workerRef.current = null;
     };
+  }, []);
+
+  // Clear worker state when worker is not active
+  useEffect(() => {
+    if (!useWorker) {
+      setState({ filteredIndices: null, sortedIndices: null });
+    }
   }, [useWorker]);
 
-  // Post filter
+  // Post filter — only when worker is active
   useEffect(() => {
     if (!useWorker || !data || !workerRef.current) return;
     workerRef.current.postMessage({ type: 'filter', data, filterText });
   }, [useWorker, data, filterText]);
 
-  // Post sort
+  // Post sort — only when worker is active
   useEffect(() => {
     if (!useWorker || !data || !workerRef.current || sortColumns.length === 0) {
       setState((prev) => ({ ...prev, sortedIndices: null }));
@@ -325,12 +332,11 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
   // ─── Data pipeline: filter → sort → paginate ──────────────────────────────
 
   // Filter pipeline — works directly on columnar data (no row conversion)
+  // When worker is active, return cheap identity array; worker computes real filter
   const filteredIndexMap = useMemo(() => {
     const rowCount = columnarRowCount;
-    if (!filterText) {
-      const indices: number[] = [];
-      for (let i = 0; i < rowCount; i++) indices.push(i);
-      return indices;
+    if (useWorker || !filterText) {
+      return Array.from({ length: rowCount }, (_, i) => i);
     }
     const lowerFilter = filterText.toLowerCase();
     const indices: number[] = [];
@@ -346,11 +352,12 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       if (match) indices.push(r);
     }
     return indices;
-  }, [filterText, columnarData, columnarRowCount]);
+  }, [filterText, columnarData, columnarRowCount, useWorker]);
 
   // Sort pipeline — works directly on columnar data (no row conversion)
+  // When worker is active, skip sorting; worker handles it
   const sortedIndexMap = useMemo(() => {
-    if (sortColumns.length === 0) {
+    if (useWorker || sortColumns.length === 0) {
       return filteredIndexMap;
     }
 
@@ -380,7 +387,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     });
 
     return indices;
-  }, [filteredIndexMap, sortColumns, columnarData]);
+  }, [filteredIndexMap, sortColumns, columnarData, useWorker]);
 
   // When using worker, override the filtered/sorted index maps
   const finalSortedIndexMap = useMemo(() => {
