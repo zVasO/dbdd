@@ -37,10 +37,46 @@ impl MySqlConnection {
     }
 }
 
+fn extract_mysql_result(result: &[mysql_async::Row]) -> (Vec<ColumnMeta>, Vec<Row>) {
+    let columns = if let Some(first_row) = result.first() {
+        first_row
+            .columns_ref()
+            .iter()
+            .map(|col| {
+                let (data_type, native_type) = crate::type_mapping::map_column_meta(col);
+                ColumnMeta {
+                    name: col.name_str().to_string(),
+                    data_type,
+                    native_type,
+                    nullable: true,
+                    is_primary_key: false,
+                    max_length: None,
+                }
+            })
+            .collect()
+    } else {
+        vec![]
+    };
+
+    let col_count = result.first().map(|r| r.len()).unwrap_or(0);
+    let mut rows: Vec<Row> = Vec::with_capacity(result.len());
+    for row in result {
+        let mut cells: Vec<CellValue> = Vec::with_capacity(col_count);
+        for i in 0..row.len() {
+            cells.push(crate::type_mapping::mysql_value_to_cell(row, i));
+        }
+        rows.push(Row { cells });
+    }
+
+    (columns, rows)
+}
+
 #[async_trait]
 impl DatabaseConnection for MySqlConnection {
     async fn execute(&self, sql: &str) -> Result<QueryResult> {
         use mysql_async::prelude::*;
+
+        let start = std::time::Instant::now();
 
         let mut conn = self
             .pool
@@ -53,36 +89,7 @@ impl DatabaseConnection for MySqlConnection {
             .await
             .map_err(|e| DataForgeError::QueryExecution(e.to_string()))?;
 
-        let columns = if let Some(first_row) = result.first() {
-            first_row
-                .columns_ref()
-                .iter()
-                .map(|col| {
-                    let (data_type, native_type) = crate::type_mapping::map_column_meta(col);
-                    ColumnMeta {
-                        name: col.name_str().to_string(),
-                        data_type,
-                        native_type,
-                        nullable: true,
-                        is_primary_key: false,
-                        max_length: None,
-                    }
-                })
-                .collect()
-        } else {
-            vec![]
-        };
-
-        let col_count = result.first().map(|r| r.len()).unwrap_or(0);
-        let mut rows: Vec<Row> = Vec::with_capacity(result.len());
-        for row in &result {
-            let mut cells: Vec<CellValue> = Vec::with_capacity(col_count);
-            for i in 0..row.len() {
-                cells.push(crate::type_mapping::mysql_value_to_cell(row, i));
-            }
-            rows.push(Row { cells });
-        }
-
+        let (columns, rows) = extract_mysql_result(&result);
         let row_count = rows.len() as u64;
 
         Ok(QueryResult {
@@ -91,7 +98,7 @@ impl DatabaseConnection for MySqlConnection {
             rows,
             total_rows: Some(row_count),
             affected_rows: None,
-            execution_time_ms: 0,
+            execution_time_ms: start.elapsed().as_millis() as u64,
             warnings: vec![],
             result_type: ResultType::Select,
         })
@@ -103,6 +110,8 @@ impl DatabaseConnection for MySqlConnection {
         params: &[CellValue],
     ) -> Result<QueryResult> {
         use mysql_async::prelude::*;
+
+        let start = std::time::Instant::now();
 
         let mut conn = self
             .pool
@@ -139,36 +148,7 @@ impl DatabaseConnection for MySqlConnection {
             .await
             .map_err(|e| DataForgeError::QueryExecution(e.to_string()))?;
 
-        let columns = if let Some(first_row) = result.first() {
-            first_row
-                .columns_ref()
-                .iter()
-                .map(|col| {
-                    let (data_type, native_type) = crate::type_mapping::map_column_meta(col);
-                    ColumnMeta {
-                        name: col.name_str().to_string(),
-                        data_type,
-                        native_type,
-                        nullable: true,
-                        is_primary_key: false,
-                        max_length: None,
-                    }
-                })
-                .collect()
-        } else {
-            vec![]
-        };
-
-        let col_count = result.first().map(|r| r.len()).unwrap_or(0);
-        let mut rows: Vec<Row> = Vec::with_capacity(result.len());
-        for row in &result {
-            let mut cells: Vec<CellValue> = Vec::with_capacity(col_count);
-            for i in 0..row.len() {
-                cells.push(crate::type_mapping::mysql_value_to_cell(row, i));
-            }
-            rows.push(Row { cells });
-        }
-
+        let (columns, rows) = extract_mysql_result(&result);
         let row_count = rows.len() as u64;
 
         Ok(QueryResult {
@@ -177,7 +157,7 @@ impl DatabaseConnection for MySqlConnection {
             rows,
             total_rows: Some(row_count),
             affected_rows: None,
-            execution_time_ms: 0,
+            execution_time_ms: start.elapsed().as_millis() as u64,
             warnings: vec![],
             result_type: ResultType::Select,
         })
