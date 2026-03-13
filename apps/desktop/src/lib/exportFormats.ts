@@ -1,5 +1,4 @@
 import Papa from 'papaparse';
-import * as XLSX from 'xlsx';
 import type { QueryResult, CellValue } from '@/lib/types';
 
 /** Convert a tagged CellValue union to a plain JS primitive. */
@@ -90,7 +89,8 @@ export function toJSON(result: QueryResult, options?: JsonOptions): string {
   return JSON.stringify(data);
 }
 
-export function toExcel(result: QueryResult): ArrayBuffer {
+export async function toExcel(result: QueryResult): Promise<ArrayBuffer> {
+  const XLSX = await import('xlsx');
   const data = resultToObjectArray(result);
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();

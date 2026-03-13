@@ -1,14 +1,7 @@
 import { create } from 'zustand';
 import Papa from 'papaparse';
 import { ipc } from '@/lib/ipc';
-import {
-  toCSV,
-  toJSON,
-  toExcel,
-  toSQLInsert,
-  toSQLCreateAndInsert,
-  toMarkdown,
-} from '@/lib/exportFormats';
+import { toExcel } from '@/lib/exportFormats';
 import type { QueryResult } from '@/lib/types';
 
 type ImportFileType = 'csv' | 'json' | 'sql';
@@ -338,40 +331,59 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
     try {
       const safeName = tableName || 'export';
 
-      switch (exportFormat) {
-        case 'csv': {
-          const content = toCSV(result);
-          triggerDownload(content, `${safeName}.csv`, 'text/csv');
-          break;
-        }
-        case 'json': {
-          const content = toJSON(result, { pretty: true });
-          triggerDownload(content, `${safeName}.json`, 'application/json');
-          break;
-        }
-        case 'excel': {
-          const buffer = toExcel(result);
-          triggerDownload(buffer, `${safeName}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-          break;
-        }
-        case 'sql-insert': {
-          const content = toSQLInsert(result, safeName);
-          triggerDownload(content, `${safeName}_insert.sql`, 'text/sql');
-          break;
-        }
-        case 'sql-create': {
-          const content = toSQLCreateAndInsert(result, safeName);
-          triggerDownload(content, `${safeName}_create.sql`, 'text/sql');
-          break;
-        }
-        case 'markdown': {
-          const content = toMarkdown(result);
-          triggerDownload(content, `${safeName}.md`, 'text/markdown');
-          break;
-        }
+      if (exportFormat === 'excel') {
+        // Excel: dynamic import, runs on main thread (xlsx needs DOM-like env)
+        const buffer = await toExcel(result);
+        triggerDownload(buffer, `${safeName}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        set({ exportLoading: false, exportDialogOpen: false });
+        return;
       }
 
-      set({ exportLoading: false, exportDialogOpen: false });
+      // All other formats: offload to worker
+      const worker = new Worker(
+        new URL('../workers/export.worker.ts', import.meta.url),
+        { type: 'module' },
+      );
+
+      const mimeTypes: Record<string, string> = {
+        csv: 'text/csv',
+        json: 'application/json',
+        'sql-insert': 'text/sql',
+        'sql-create': 'text/sql',
+        markdown: 'text/markdown',
+      };
+      const extensions: Record<string, string> = {
+        csv: '.csv',
+        json: '.json',
+        'sql-insert': '_insert.sql',
+        'sql-create': '_create.sql',
+        markdown: '.md',
+      };
+
+      worker.onmessage = (e: MessageEvent) => {
+        if (e.data.type === 'export-result') {
+          triggerDownload(e.data.content, `${safeName}${extensions[exportFormat]}`, mimeTypes[exportFormat]);
+          set({ exportLoading: false, exportDialogOpen: false });
+        } else if (e.data.type === 'export-error') {
+          console.error('Export worker error:', e.data.error);
+          set({ exportLoading: false });
+        }
+        worker.terminate();
+      };
+
+      worker.onerror = () => {
+        set({ exportLoading: false });
+        worker.terminate();
+      };
+
+      worker.postMessage({
+        type: 'export',
+        format: exportFormat,
+        columns: result.columns,
+        rows: result.rows,
+        tableName: safeName,
+        options: { pretty: true },
+      });
     } catch (err) {
       set({ exportLoading: false });
       throw err;
