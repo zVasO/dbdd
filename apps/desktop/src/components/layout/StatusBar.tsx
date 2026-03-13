@@ -10,7 +10,7 @@ import { useThemeStore } from '@/stores/themeStore';
 import { ConnectionStatus } from '@/components/connection/ConnectionStatus';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { Moon, Sun, ChevronDown, Unplug, ArrowRightLeft, Database, Plus, Check, Settings } from 'lucide-react';
+import { Moon, Sun, Palette, ChevronDown, Unplug, ArrowRightLeft, Database, Plus, Check, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -180,32 +180,20 @@ export function StatusBar({ connected, dbType, onDisconnect, onOpenConnectionDia
         )}
         {activeTab?.isExecuting && <span>Executing...</span>}
         <kbd className="rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px] text-muted-foreground">Ctrl+K</kbd>
+        {/* Theme selector dropdown */}
         <div className="relative" ref={themeDropdownRef}>
           <Button
             variant="ghost"
             size="icon-xs"
             onClick={() => setThemeDropdownOpen(!themeDropdownOpen)}
             className="text-muted-foreground hover:text-foreground"
-            title="Theme options"
+            title="Select theme"
           >
-            {theme === 'dark' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+            <Palette className="h-3.5 w-3.5" />
           </Button>
 
           {themeDropdownOpen && (
             <div className="absolute bottom-full right-0 mb-1 w-52 rounded-md border border-border bg-popover p-1 shadow-lg z-50">
-              <button
-                onClick={() => {
-                  toggleTheme();
-                  setThemeDropdownOpen(false);
-                }}
-                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent transition-colors"
-              >
-                {theme === 'dark' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
-                <span>Toggle Light/Dark</span>
-              </button>
-
-              <div className="my-1 border-t border-border" />
-
               <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Themes
               </div>
@@ -241,6 +229,17 @@ export function StatusBar({ connected, dbType, onDisconnect, onOpenConnectionDia
             </div>
           )}
         </div>
+
+        {/* Light/Dark toggle */}
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={toggleTheme}
+          className="text-muted-foreground hover:text-foreground"
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {theme === 'dark' ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
+        </Button>
       </div>
     </div>
   );

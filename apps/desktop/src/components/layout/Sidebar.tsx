@@ -192,10 +192,18 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   const handleTableClick = (db: string, tableName: string) => {
     if (!activeConnectionId) return;
     trackTableOpen(activeConnectionId, tableName);
-    // Reuse existing tab for same table + database
+    // Reuse existing tab for same table + database, re-query if limit changed
     const existing = tabs.find((t) => t.table === tableName && t.database === db);
     if (existing) {
       setActiveTab(existing.id);
+      const pageSize = usePreferencesStore.getState().defaultPageSize;
+      const expectedSql = pageSize > 0
+        ? `SELECT * FROM \`${tableName}\` LIMIT ${pageSize}`
+        : `SELECT * FROM \`${tableName}\``;
+      if (existing.sql !== expectedSql) {
+        updateSql(existing.id, expectedSql);
+        executeQuery(activeConnectionId, existing.id);
+      }
       return;
     }
     const pageSize = usePreferencesStore.getState().defaultPageSize;
