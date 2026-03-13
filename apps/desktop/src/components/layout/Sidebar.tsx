@@ -85,17 +85,24 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   const { loadTables, loadTableStructure, setActiveDatabase } = useSchemaStore.getState();
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const activeConfig = useConnectionStore((s) => s.activeConfig);
-  const tabs = useQueryStore((s) => s.tabs);
   const { createTab, updateSql, executeQuery, setActiveTab } = useQueryStore.getState();
 
-  const getFavorites = useFavoritesStore((s) => s.getFavorites);
+  const favoritesMap = useFavoritesStore((s) => s.favorites);
   const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
   const isFavorite = useFavoritesStore((s) => s.isFavorite);
-  const favorites = activeConnectionId ? getFavorites(activeConnectionId) : [];
+  const favorites = useMemo(
+    () => (activeConnectionId ? favoritesMap[activeConnectionId] ?? [] : []),
+    [favoritesMap, activeConnectionId],
+  );
 
-  const getRecentTables = useActivityStore((s) => s.getRecentTables);
+  const recentTablesRaw = useActivityStore((s) => s.recentTables);
   const trackTableOpen = useActivityStore((s) => s.trackTableOpen);
-  const recentTables = activeConnectionId ? getRecentTables(activeConnectionId) : [];
+  const recentTables = useMemo(
+    () => activeConnectionId
+      ? recentTablesRaw.filter((r) => r.connectionId === activeConnectionId).map((r) => r.table)
+      : [],
+    [recentTablesRaw, activeConnectionId],
+  );
 
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedDbs, setExpandedDbs] = useState<Set<string>>(new Set());
@@ -193,7 +200,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     if (!activeConnectionId) return;
     trackTableOpen(activeConnectionId, tableName);
     // Reuse existing tab for same table + database, re-query if limit changed
-    const existing = tabs.find((t) => t.table === tableName && t.database === db);
+    const existing = useQueryStore.getState().tabs.find((t) => t.table === tableName && t.database === db);
     if (existing) {
       setActiveTab(existing.id);
       const pageSize = usePreferencesStore.getState().defaultPageSize;

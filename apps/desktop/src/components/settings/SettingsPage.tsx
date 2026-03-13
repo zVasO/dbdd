@@ -127,8 +127,9 @@ function NavItem({ icon, label, active, onClick }: { icon: React.ReactNode; labe
 // === SECTIONS ===
 
 function AppearanceSection() {
-  const prefs = usePreferencesStore();
-  const set = prefs.setPreference;
+  const darkModeSchedule = usePreferencesStore((s) => s.darkModeSchedule);
+  const alternatingRowColors = usePreferencesStore((s) => s.alternatingRowColors);
+  const set = usePreferencesStore((s) => s.setPreference);
   const themes = useThemeStore((s) => s.themes);
   const activeThemeId = useThemeStore((s) => s.activeThemeId);
   const setActiveTheme = useThemeStore((s) => s.setActiveTheme);
@@ -157,9 +158,9 @@ function AppearanceSection() {
 
       <SettingRow label="Theme mode" description="Control when dark mode is active.">
         <Select
-          value={prefs.darkModeSchedule?.mode || 'manual'}
+          value={darkModeSchedule?.mode || 'manual'}
           onValueChange={(v) => set('darkModeSchedule', {
-            ...prefs.darkModeSchedule,
+            ...darkModeSchedule,
             mode: v as DarkModeScheduleMode,
           })}
         >
@@ -174,16 +175,16 @@ function AppearanceSection() {
         </Select>
       </SettingRow>
 
-      {prefs.darkModeSchedule?.mode === 'schedule' && (
+      {darkModeSchedule?.mode === 'schedule' && (
         <div className="flex gap-4 pl-1">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Light mode from</Label>
             <Input
               type="time"
               className="w-32 text-xs"
-              value={prefs.darkModeSchedule.lightFrom || '07:00'}
+              value={darkModeSchedule.lightFrom || '07:00'}
               onChange={(e) => set('darkModeSchedule', {
-                ...prefs.darkModeSchedule,
+                ...darkModeSchedule,
                 lightFrom: e.target.value,
               })}
             />
@@ -193,9 +194,9 @@ function AppearanceSection() {
             <Input
               type="time"
               className="w-32 text-xs"
-              value={prefs.darkModeSchedule.darkFrom || '19:00'}
+              value={darkModeSchedule.darkFrom || '19:00'}
               onChange={(e) => set('darkModeSchedule', {
-                ...prefs.darkModeSchedule,
+                ...darkModeSchedule,
                 darkFrom: e.target.value,
               })}
             />
@@ -204,15 +205,18 @@ function AppearanceSection() {
       )}
 
       <SettingRow label="Alternating row colors" description="Stripe every other row in the data grid.">
-        <Toggle checked={prefs.alternatingRowColors} onChange={(v) => set('alternatingRowColors', v)} />
+        <Toggle checked={alternatingRowColors} onChange={(v) => set('alternatingRowColors', v)} />
       </SettingRow>
     </div>
   );
 }
 
 function EditorSection() {
-  const prefs = usePreferencesStore();
-  const set = prefs.setPreference;
+  const editorFontSize = usePreferencesStore((s) => s.editorFontSize);
+  const editorShowLineNumbers = usePreferencesStore((s) => s.editorShowLineNumbers);
+  const editorWordWrap = usePreferencesStore((s) => s.editorWordWrap);
+  const autoUppercaseKeywords = usePreferencesStore((s) => s.autoUppercaseKeywords);
+  const set = usePreferencesStore((s) => s.setPreference);
 
   return (
     <div className="space-y-6">
@@ -224,29 +228,30 @@ function EditorSection() {
           className="w-20 text-xs"
           min={10}
           max={24}
-          value={prefs.editorFontSize}
+          value={editorFontSize}
           onChange={(e) => set('editorFontSize', Number(e.target.value) || 13)}
         />
       </SettingRow>
 
       <SettingRow label="Show line numbers">
-        <Toggle checked={prefs.editorShowLineNumbers} onChange={(v) => set('editorShowLineNumbers', v)} />
+        <Toggle checked={editorShowLineNumbers} onChange={(v) => set('editorShowLineNumbers', v)} />
       </SettingRow>
 
       <SettingRow label="Word wrap">
-        <Toggle checked={prefs.editorWordWrap} onChange={(v) => set('editorWordWrap', v)} />
+        <Toggle checked={editorWordWrap} onChange={(v) => set('editorWordWrap', v)} />
       </SettingRow>
 
       <SettingRow label="Auto uppercase keywords" description="Automatically capitalize SQL keywords as you type.">
-        <Toggle checked={prefs.autoUppercaseKeywords} onChange={(v) => set('autoUppercaseKeywords', v)} />
+        <Toggle checked={autoUppercaseKeywords} onChange={(v) => set('autoUppercaseKeywords', v)} />
       </SettingRow>
     </div>
   );
 }
 
 function GridSection() {
-  const prefs = usePreferencesStore();
-  const set = prefs.setPreference;
+  const defaultPageSize = usePreferencesStore((s) => s.defaultPageSize);
+  const defaultCopyFormat = usePreferencesStore((s) => s.defaultCopyFormat);
+  const set = usePreferencesStore((s) => s.setPreference);
 
   return (
     <div className="space-y-6">
@@ -254,7 +259,7 @@ function GridSection() {
 
       <SettingRow label="Default row limit" description="Number of rows fetched when opening a table. 'All' fetches every row (up to 50k safety limit).">
         <Select
-          value={String(prefs.defaultPageSize)}
+          value={String(defaultPageSize)}
           onValueChange={(v) => set('defaultPageSize', Number(v))}
         >
           <SelectTrigger className="w-24">
@@ -273,7 +278,7 @@ function GridSection() {
 
       <SettingRow label="Default copy format" description="Format used when copying cells or rows with Ctrl+C.">
         <Select
-          value={prefs.defaultCopyFormat}
+          value={defaultCopyFormat}
           onValueChange={(v) => set('defaultCopyFormat', v as CopyFormat)}
         >
           <SelectTrigger className="w-32">
@@ -293,25 +298,26 @@ function GridSection() {
 }
 
 function NotificationsSection() {
-  const prefs = usePreferencesStore();
-  const set = prefs.setPreference;
+  const notifyOnLongQueries = usePreferencesStore((s) => s.notifyOnLongQueries);
+  const longQueryThreshold = usePreferencesStore((s) => s.longQueryThreshold);
+  const set = usePreferencesStore((s) => s.setPreference);
 
   return (
     <div className="space-y-6">
       <SectionTitle title="Notifications" description="Configure when DataForge sends system notifications." />
 
       <SettingRow label="Notify on long queries" description="Send a notification when a query takes longer than the threshold (only when window is not focused).">
-        <Toggle checked={prefs.notifyOnLongQueries} onChange={(v) => set('notifyOnLongQueries', v)} />
+        <Toggle checked={notifyOnLongQueries} onChange={(v) => set('notifyOnLongQueries', v)} />
       </SettingRow>
 
-      {prefs.notifyOnLongQueries && (
+      {notifyOnLongQueries && (
         <SettingRow label="Threshold" description="Minimum query duration before a notification is sent.">
           <div className="flex items-center gap-2">
             <Input
               type="number"
               min={1}
               className="w-16 text-xs"
-              value={prefs.longQueryThreshold / 1000}
+              value={longQueryThreshold / 1000}
               onChange={(e) => set('longQueryThreshold', Number(e.target.value) * 1000)}
             />
             <span className="text-sm text-muted-foreground">seconds</span>
@@ -323,8 +329,8 @@ function NotificationsSection() {
 }
 
 function SecuritySection() {
-  const prefs = usePreferencesStore();
-  const set = prefs.setPreference;
+  const safeModeLevel = usePreferencesStore((s) => s.safeModeLevel);
+  const set = usePreferencesStore((s) => s.setPreference);
 
   return (
     <div className="space-y-6">
@@ -332,7 +338,7 @@ function SecuritySection() {
 
       <SettingRow label="Safe Mode" description="Choose when to show confirmation dialogs for destructive queries.">
         <Select
-          value={prefs.safeModeLevel}
+          value={safeModeLevel}
           onValueChange={(v) => set('safeModeLevel', v as Preferences['safeModeLevel'])}
         >
           <SelectTrigger className="w-44">

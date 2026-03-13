@@ -1,14 +1,25 @@
 use std::sync::Arc;
 
+use futures::stream::{self, StreamExt};
 use tauri::{Emitter, State};
 use tracing::instrument;
 use uuid::Uuid;
 
+use serde::Serialize;
+
+use dataforge_core::models::columnar::ColumnData;
 use dataforge_core::models::query::{QueryHistoryEntry, QueryResult, QueryStatus};
 use dataforge_engine::event_bus::AppEvent;
 use dataforge_engine::schema_cache;
 
 use crate::state::AppState;
+
+/// Payload emitted for each streaming chunk, avoiding double serialization.
+#[derive(Clone, Serialize)]
+struct ChunkPayload {
+    offset: usize,
+    data: Vec<ColumnData>,
+}
 
 /// Maximum rows returned for a SELECT without explicit LIMIT.
 const SAFETY_ROW_LIMIT: usize = 50_000;
@@ -20,11 +31,16 @@ fn needs_safety_limit(sql: &str) -> bool {
     if !trimmed.get(..6).is_some_and(|s| s.eq_ignore_ascii_case("SELECT")) {
         return false;
     }
-    // Check the tail of the query for LIMIT (avoids triple-allocation)
+    // Case-insensitive search for LIMIT in the tail without allocating
     let len = trimmed.len();
     let start = len.saturating_sub(200);
     let tail = &trimmed[start..];
-    !tail.to_uppercase().contains("LIMIT")
+    let tail_bytes = tail.as_bytes();
+    let limit_bytes = b"LIMIT";
+    let has_limit = tail_bytes.windows(limit_bytes.len()).any(|window| {
+        window.eq_ignore_ascii_case(limit_bytes)
+    });
+    !has_limit
 }
 
 fn apply_safety_limit(sql: &str) -> String {
@@ -174,24 +190,25 @@ pub async fn execute_batch(
         Arc::clone(&active.connection)
     };
 
-    let futures: Vec<_> = statements
-        .iter()
-        .map(|sql| {
-            let conn = Arc::clone(&conn);
-            let sql = sql.clone();
-            async move {
-                match conn.execute(&sql).await {
-                    Ok(result) => Ok(result),
-                    Err(e) => Err(e.to_string()),
-                }
-            }
-        })
-        .collect();
+    const MAX_BATCH_CONCURRENCY: usize = 4;
 
-    let results = futures::future::join_all(futures).await;
+    // Check for DDL before consuming statements
+    let has_ddl = statements.iter().any(|sql| schema_cache::is_ddl(sql));
+
+    let results: Vec<Result<QueryResult, String>> = stream::iter(statements.into_iter().map(|sql| {
+        let conn = Arc::clone(&conn);
+        async move {
+            match conn.execute(&sql).await {
+                Ok(result) => Ok(result),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+    }))
+    .buffered(MAX_BATCH_CONCURRENCY)
+    .collect()
+    .await;
 
     // Auto-invalidate schema cache if any statement was DDL
-    let has_ddl = statements.iter().any(|sql| schema_cache::is_ddl(sql));
     if has_ddl {
         state.schema_cache.invalidate_connection(&connection_id);
     }
@@ -235,6 +252,12 @@ pub async fn execute_query_stream(
         sql.clone()
     };
 
+    // Pre-compute event names to avoid per-iteration allocations
+    let event_meta = format!("query_meta_{}", query_id);
+    let event_chunk = format!("query_chunk_{}", query_id);
+    let event_error = format!("query_error_{}", query_id);
+    let event_done = format!("query_done_{}", query_id);
+
     tokio::spawn(async move {
         match conn.execute_stream(&effective_sql, chunk_size).await {
             Ok((columns, mut rx)) => {
@@ -242,7 +265,7 @@ pub async fn execute_query_stream(
 
                 // Emit metadata (row_count unknown until stream completes)
                 let _ = app_clone.emit(
-                    &format!("query_meta_{}", query_id),
+                    &event_meta,
                     serde_json::json!({
                         "query_id": query_id.to_string(),
                         "columns": columns,
@@ -261,20 +284,18 @@ pub async fn execute_query_stream(
                             let chunk_len = rows.len();
                             total_rows += chunk_len;
 
-                            let chunk_data: Vec<serde_json::Value> =
+                            // Pass ColumnData directly; emit serializes once
+                            let chunk_data: Vec<ColumnData> =
                                 dataforge_core::models::columnar::rows_to_columnar_chunk(
                                     &rows, col_count,
-                                )
-                                .into_iter()
-                                .map(|col| serde_json::to_value(&col).unwrap_or_default())
-                                .collect();
+                                );
 
                             let _ = app_clone.emit(
-                                &format!("query_chunk_{}", query_id),
-                                serde_json::json!({
-                                    "offset": offset,
-                                    "data": chunk_data,
-                                }),
+                                &event_chunk,
+                                ChunkPayload {
+                                    offset,
+                                    data: chunk_data,
+                                },
                             );
                             offset += chunk_len;
                         }
@@ -282,7 +303,7 @@ pub async fn execute_query_stream(
                             had_error = true;
                             let elapsed_ms = start.elapsed().as_millis() as u64;
                             let _ = app_clone.emit(
-                                &format!("query_error_{}", query_id),
+                                &event_error,
                                 serde_json::json!({ "error": e.to_string() }),
                             );
                             event_bus.emit(AppEvent::QueryError {
@@ -309,7 +330,7 @@ pub async fn execute_query_stream(
                     let elapsed_ms = start.elapsed().as_millis() as u64;
 
                     let _ = app_clone.emit(
-                        &format!("query_done_{}", query_id),
+                        &event_done,
                         serde_json::json!({
                             "total_rows": total_rows,
                             "execution_time_ms": elapsed_ms
@@ -338,7 +359,7 @@ pub async fn execute_query_stream(
             Err(e) => {
                 let elapsed_ms = start.elapsed().as_millis() as u64;
                 let _ = app_clone.emit(
-                    &format!("query_error_{}", query_id),
+                    &event_error,
                     serde_json::json!({ "error": e.to_string() }),
                 );
                 event_bus.emit(AppEvent::QueryError {
