@@ -107,6 +107,51 @@ const EMPTY_COLUMNAR_DEFAULTS = {
   allColumnarResults: [] as ColumnarResult[],
 };
 
+// --- Stream buffering (module-level, outside Zustand to avoid unnecessary re-renders) ---
+const FLUSH_THRESHOLD = 5000;
+
+interface StreamBuffer {
+  pendingChunks: ColumnData[][];
+  pendingRowCount: number;
+}
+
+const streamBuffers = new Map<string, StreamBuffer>();
+
+/**
+ * Efficiently merge multiple column-data chunks into a base array.
+ * Pre-allocates the final array size to avoid O(n^2) spreading.
+ */
+function mergeColumnArrays(
+  base: ColumnData[],
+  chunks: ColumnData[][],
+): { merged: ColumnData[]; addedRows: number } {
+  if (chunks.length === 0) return { merged: base, addedRows: 0 };
+
+  const addedRows = chunks.reduce(
+    (sum, c) => sum + (c[0]?.values?.length ?? 0),
+    0,
+  );
+
+  const merged = base.map((col, colIdx) => {
+    const chunkLengths = chunks.map(
+      (c) => c[colIdx]?.values?.length ?? 0,
+    );
+    const totalLen = col.values.length + chunkLengths.reduce((a, b) => a + b, 0);
+    const values = new Array(totalLen) as unknown[];
+    let offset = 0;
+    for (let i = 0; i < col.values.length; i++) values[offset++] = col.values[i];
+    for (let ci = 0; ci < chunks.length; ci++) {
+      const chunkCol = chunks[ci][colIdx];
+      if (chunkCol) {
+        for (let i = 0; i < chunkCol.values.length; i++) values[offset++] = chunkCol.values[i];
+      }
+    }
+    return { ...col, values } as ColumnData;
+  });
+
+  return { merged, addedRows };
+}
+
 // --- Memory tracking ---
 const memoryEntries = new Map<string, TabMemoryEntry>();
 
@@ -405,48 +450,64 @@ export const useResultStore = create<ResultState>((set, get) => ({
   },
 
   appendChunk: (tabId, _offset, chunkData) => {
-    set((s) => {
-      const current = s.results[tabId];
-      if (!current) return s;
+    const chunkRowCount = chunkData[0]?.values?.length ?? 0;
+    if (chunkRowCount === 0) return;
 
-      const chunkRowCount = chunkData[0]?.values?.length ?? 0;
-      if (chunkRowCount === 0) return s;
+    let buffer = streamBuffers.get(tabId);
+    if (!buffer) {
+      buffer = { pendingChunks: [], pendingRowCount: 0 };
+      streamBuffers.set(tabId, buffer);
+    }
+    buffer.pendingChunks.push(chunkData);
+    buffer.pendingRowCount += chunkRowCount;
 
-      // Concat chunk values onto existing arrays — creates new references for React reactivity
-      const newData = current.data.map((col, i) => {
-        const chunk = chunkData[i];
-        if (!chunk) return col;
-        return { ...col, values: [...col.values, ...chunk.values] } as ColumnData;
-      });
+    // Flush when accumulated enough rows to reduce O(n^2) copies and re-renders
+    if (buffer.pendingRowCount >= FLUSH_THRESHOLD) {
+      const chunks = buffer.pendingChunks;
+      const addedTotal = buffer.pendingRowCount;
+      buffer.pendingChunks = [];
+      buffer.pendingRowCount = 0;
 
-      const newRowCount = current.rowCount + chunkRowCount;
-
-      return {
-        results: {
-          ...s.results,
-          [tabId]: {
-            ...current,
-            data: newData,
-            rowCount: newRowCount,
-            totalRows: newRowCount,
-            streamProgress: newRowCount,
-            _rowsCache: null,
-            _allResultsCache: null,
+      set((s) => {
+        const current = s.results[tabId];
+        if (!current) return s;
+        const { merged } = mergeColumnArrays(current.data, chunks);
+        const newRowCount = current.rowCount + addedTotal;
+        return {
+          results: {
+            ...s.results,
+            [tabId]: {
+              ...current,
+              data: merged,
+              rowCount: newRowCount,
+              totalRows: newRowCount,
+              streamProgress: newRowCount,
+              _rowsCache: null,
+              _allResultsCache: null,
+            },
           },
-        },
-      };
-    });
+        };
+      });
+    }
   },
 
   finishStream: (tabId, totalRows, executionTimeMs) => {
+    // Flush any remaining buffered chunks before finalizing
+    const buffer = streamBuffers.get(tabId);
+    const pendingChunks = buffer?.pendingChunks ?? [];
+    streamBuffers.delete(tabId);
+
     set((s) => {
       const current = s.results[tabId];
       if (!current) return s;
+
+      // Merge any remaining buffered data
+      const { merged } = mergeColumnArrays(current.data, pendingChunks);
 
       const columnarResult: ColumnarResult = {
         query_id: current._streamQueryId ?? '',
         columns: current.columns,
-        data: current.data,
+        data: merged,
         row_count: totalRows,
         affected_rows: null,
         execution_time_ms: executionTimeMs,
@@ -458,6 +519,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
         ...s.results,
         [tabId]: {
           ...current,
+          data: merged,
           isExecuting: false,
           isStreaming: false,
           isStale: false,
@@ -474,7 +536,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
         },
       };
 
-      return { results: trackAndEvict(tabId, current.data, updatedResults) };
+      return { results: trackAndEvict(tabId, merged, updatedResults) };
     });
   },
 
@@ -521,6 +583,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
   },
 
   clearResult: (tabId) => {
+    streamBuffers.delete(tabId);
     memoryEntries.delete(tabId);
     set((s) => {
       const { [tabId]: _, ...rest } = s.results;
@@ -529,6 +592,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
   },
 
   clearAll: () => {
+    streamBuffers.clear();
     memoryEntries.clear();
     set({ results: {} });
   },
