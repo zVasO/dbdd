@@ -30,6 +30,12 @@ interface Props {
   database?: string;
   table?: string;
   onServerSort?: (sorts: SortRequest[]) => void;
+  /** Server-side pagination: called when user navigates to a different page (browse mode only) */
+  onServerPageChange?: (page: number, pageSize: number) => void;
+  /** Server-side pagination: total row count of the table (from COUNT(*)) */
+  serverTotalRows?: number;
+  /** Server-side pagination: current server page (0-based) */
+  serverPage?: number;
 }
 
 interface EditingCell {
@@ -184,7 +190,7 @@ function buildRowsOnDemand(
   }));
 }
 
-export const DataGrid = memo(function DataGrid({ result, database, table, onServerSort }: Props) {
+export const DataGrid = memo(function DataGrid({ result, database, table, onServerSort, onServerPageChange, serverTotalRows, serverPage }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [lastSelectedRow, setLastSelectedRow] = useState<number | null>(null);
@@ -409,17 +415,26 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     return sortedIndexMap;
   }, [useWorker, workerFilteredIndices, workerSortedIndices, sortedIndexMap]);
 
+  // Server-side pagination mode: when browsing a table with onServerPageChange
+  const isServerPagination = Boolean(onServerPageChange && table);
+
   // Paginate — now purely index-based (no row objects)
   const totalSortedRows = finalSortedIndexMap.length;
-  const totalPages = pageSize === Infinity ? 1 : Math.max(1, Math.ceil(totalSortedRows / pageSize));
-  const safePage = Math.min(currentPage, totalPages - 1);
+  const totalPages = isServerPagination
+    ? (serverTotalRows != null && pageSize !== Infinity ? Math.max(1, Math.ceil(serverTotalRows / pageSize)) : 1)
+    : (pageSize === Infinity ? 1 : Math.max(1, Math.ceil(totalSortedRows / pageSize)));
+  const safePage = isServerPagination
+    ? (serverPage ?? 0)
+    : Math.min(currentPage, totalPages - 1);
 
   const paginatedIndexMap = useMemo(() => {
+    // In server pagination mode, all returned rows are already the current page
+    if (isServerPagination) return finalSortedIndexMap;
     if (pageSize === Infinity) return finalSortedIndexMap;
     const start = safePage * pageSize;
     const end = start + pageSize;
     return finalSortedIndexMap.slice(start, end);
-  }, [finalSortedIndexMap, safePage, pageSize]);
+  }, [finalSortedIndexMap, safePage, pageSize, isServerPagination]);
 
   const handleDuplicateRow = useCallback((paginatedIdx: number) => {
     if (!database || !table) return;
@@ -1179,14 +1194,32 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     setCurrentPage(0);
     // Persist to preferences store (0 = All)
     usePreferencesStore.getState().setPreference('defaultPageSize', size === Infinity ? 0 : size);
-  }, []);
+    // In server mode, re-fetch page 0 with the new size
+    if (isServerPagination) {
+      onServerPageChange?.(0, size === Infinity ? 0 : size);
+    }
+  }, [isServerPagination, onServerPageChange]);
 
-  const pageStart = pageSize === Infinity ? 0 : safePage * pageSize;
-  const pageEnd = pageSize === Infinity ? totalSortedRows : Math.min(pageStart + pageSize, totalSortedRows);
+  const handleServerPageNav = useCallback((page: number) => {
+    if (isServerPagination) {
+      onServerPageChange?.(page, pageSize === Infinity ? 0 : pageSize);
+    } else {
+      setCurrentPage(page);
+    }
+  }, [isServerPagination, onServerPageChange, pageSize]);
+
+  const pageStart = isServerPagination
+    ? safePage * pageSize
+    : (pageSize === Infinity ? 0 : safePage * pageSize);
+  const pageEnd = isServerPagination
+    ? Math.min(pageStart + totalSortedRows, serverTotalRows ?? totalSortedRows)
+    : (pageSize === Infinity ? totalSortedRows : Math.min(pageStart + pageSize, totalSortedRows));
+  const displayTotalRows = isServerPagination ? (serverTotalRows ?? totalSortedRows) : totalSortedRows;
 
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
+    <div className="flex h-full flex-col" style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}>
     <div
       ref={parentRef}
       role="grid"
@@ -1195,8 +1228,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       aria-colcount={visibleColumns.length}
       tabIndex={0}
       onKeyDown={handleKeyDown}
-      className="h-full select-none overflow-auto bg-background outline-none focus:outline-none"
-      style={{ fontFamily: 'var(--font-mono)', fontSize: '12px' }}
+      className="flex-1 select-none overflow-auto bg-background outline-none focus:outline-none"
       onScroll={() => { if (contextMenu) setContextMenu(null); }}
       onClick={(e) => {
         if (e.target === parentRef.current) { setSelectedRows(new Set()); setSelectedCells(new Set()); setLastSelectedCellKey(null); }
@@ -1493,106 +1525,112 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
         </div>
       ))}
 
-      {/* Footer with pagination */}
+      </div>
+
+      {/* Footer toolbar — outside scroll container so it never scrolls horizontally */}
       {columnarRowCount > 0 && (
-        <div className="sticky bottom-0 flex items-center gap-3 border-t border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground" style={{ minWidth: totalWidthStyle }}>
-          {/* Row info */}
-          <span>
-            {totalSortedRows > 0
-              ? `${pageStart + 1}–${pageEnd} of ${totalSortedRows}`
-              : '0 rows'}
-          </span>
-          {selectedCells.size > 0 && (
-            <span className="text-primary">
-              {selectedCells.size} cell{selectedCells.size > 1 ? 's' : ''}
-            </span>
-          )}
-          {selectedCells.size === 0 && selectedRows.size > 0 && (
-            <span className="text-primary">{selectedRows.size} row{selectedRows.size > 1 ? 's' : ''}</span>
-          )}
-
-          {/* Pagination controls */}
-          {totalPages > 1 && (
+        <div className="flex shrink-0 items-center border-t border-border bg-muted px-3 py-1 text-[11px] text-muted-foreground">
+          {/* Left: page size selector + row info */}
+          <div className="flex items-center gap-2">
             <div className="flex items-center gap-1">
+              {PAGE_SIZES.map((size) => (
+                <button
+                  key={size}
+                  onClick={() => handlePageSizeChange(size)}
+                  className={cn(
+                    'rounded px-1.5 py-0.5',
+                    pageSize === size
+                      ? 'bg-primary/15 text-primary font-medium'
+                      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                  )}
+                >
+                  {size}
+                </button>
+              ))}
               <button
-                onClick={() => setCurrentPage(0)}
-                disabled={safePage === 0}
-                className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
-              >
-                <ChevronsLeft className="h-3.5 w-3.5" />
-              </button>
-              <button
-                onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
-                disabled={safePage === 0}
-                className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
-              >
-                <ChevronLeft className="h-3.5 w-3.5" />
-              </button>
-              <span className="px-1 tabular-nums text-xs">
-                Page{' '}
-                <input
-                  type="number"
-                  min={1}
-                  max={totalPages}
-                  value={safePage + 1}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    if (!isNaN(val)) {
-                      const clamped = Math.max(1, Math.min(totalPages, val));
-                      setCurrentPage(clamped - 1);
-                    }
-                  }}
-                  className="w-10 text-xs text-center rounded border border-border bg-transparent px-0.5 py-0 tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                />
-                {' '}of {totalPages}
-              </span>
-              <button
-                onClick={() => setCurrentPage((p) => Math.min(totalPages - 1, p + 1))}
-                disabled={safePage >= totalPages - 1}
-                className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
-              >
-                <ChevronRightIcon className="h-3.5 w-3.5" />
-              </button>
-              <button
-                onClick={() => setCurrentPage(totalPages - 1)}
-                disabled={safePage >= totalPages - 1}
-                className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
-              >
-                <ChevronsRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )}
-
-          {/* Page size selector */}
-          <div className="flex items-center gap-1">
-            {PAGE_SIZES.map((size) => (
-              <button
-                key={size}
-                onClick={() => handlePageSizeChange(size)}
+                onClick={() => handlePageSizeChange(Infinity)}
                 className={cn(
                   'rounded px-1.5 py-0.5',
-                  pageSize === size
+                  pageSize === Infinity
                     ? 'bg-primary/15 text-primary font-medium'
                     : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
                 )}
               >
-                {size}
+                All
               </button>
-            ))}
-            <button
-              onClick={() => handlePageSizeChange(Infinity)}
-              className={cn(
-                'rounded px-1.5 py-0.5',
-                pageSize === Infinity
-                  ? 'bg-primary/15 text-primary font-medium'
-                  : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
-              )}
-            >
-              All
-            </button>
+            </div>
+            <span className="text-muted-foreground/70">|</span>
+            <span>
+              {displayTotalRows > 0
+                ? `${pageStart + 1}–${pageEnd} of ${displayTotalRows}`
+                : '0 rows'}
+            </span>
+            {selectedCells.size > 0 && (
+              <span className="text-primary">
+                {selectedCells.size} cell{selectedCells.size > 1 ? 's' : ''}
+              </span>
+            )}
+            {selectedCells.size === 0 && selectedRows.size > 0 && (
+              <span className="text-primary">{selectedRows.size} row{selectedRows.size > 1 ? 's' : ''}</span>
+            )}
           </div>
 
-          <div className="ml-auto flex items-center gap-3">
+          {/* Center: pagination controls */}
+          <div className="flex flex-1 items-center justify-center">
+            {totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => handleServerPageNav(0)}
+                  disabled={safePage === 0}
+                  className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
+                >
+                  <ChevronsLeft className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => handleServerPageNav(Math.max(0, safePage - 1))}
+                  disabled={safePage === 0}
+                  className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <span className="px-1 tabular-nums text-xs">
+                  Page{' '}
+                  <input
+                    type="number"
+                    min={1}
+                    max={totalPages}
+                    value={safePage + 1}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      if (!isNaN(val)) {
+                        const clamped = Math.max(1, Math.min(totalPages, val));
+                        handleServerPageNav(clamped - 1);
+                      }
+                    }}
+                    className="w-10 text-xs text-center rounded border border-border bg-transparent px-0.5 py-0 tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  />
+                  {' '}of {totalPages}
+                </span>
+                <button
+                  onClick={() => handleServerPageNav(Math.min(totalPages - 1, safePage + 1))}
+                  disabled={safePage >= totalPages - 1}
+                  className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
+                >
+                  <ChevronRightIcon className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => handleServerPageNav(totalPages - 1)}
+                  disabled={safePage >= totalPages - 1}
+                  className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
+                >
+                  <ChevronsRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Right: actions + export */}
+          <div className="flex items-center gap-3">
             {database && table && (
               <Button
                 variant="outline"

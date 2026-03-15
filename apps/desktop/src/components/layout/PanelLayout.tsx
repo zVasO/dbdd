@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { cn } from '@/lib/utils';
 import { quoteIdentifier } from '@/lib/sql-utils';
+import { ipc } from '@/lib/ipc';
 import { Table2, Columns3 } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { usePreferencesStore } from '@/stores/preferencesStore';
@@ -152,6 +153,60 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
     updateSql(activeTab.id, sql);
     executeQuery(activeConnectionId, activeTab.id);
   }, [activeConnectionId, activeTab, buildTableSql, updateSql, executeQuery]);
+
+  // ─── Server-side pagination for table browse ─────────────────────────────
+  const [serverPage, setServerPage] = useState(0);
+  const [serverTotalRows, setServerTotalRows] = useState<number | undefined>(undefined);
+  const prevTableRef = useRef<string | undefined>(undefined);
+
+  // Fetch COUNT(*) once when a table is first opened
+  useEffect(() => {
+    if (!activeConnectionId || !activeTab?.table || !activeTab?.database) {
+      setServerTotalRows(undefined);
+      setServerPage(0);
+      return;
+    }
+    // Only re-count when the table changes
+    if (prevTableRef.current === activeTab.table) return;
+    prevTableRef.current = activeTab.table;
+    setServerPage(0);
+
+    const qt = quoteIdentifier(activeTab.table, dbType);
+    ipc.executeQueryColumnar(activeConnectionId, `SELECT COUNT(*) AS cnt FROM ${qt}`)
+      .then((res) => {
+        const count = res.data[0]?.values[0];
+        setServerTotalRows(typeof count === 'number' ? count : 0);
+      })
+      .catch(() => setServerTotalRows(undefined));
+  }, [activeConnectionId, activeTab?.table, activeTab?.database, dbType]);
+
+  const handleServerPageChange = useCallback((page: number, pageSize: number) => {
+    if (!activeConnectionId || !activeTab?.table || !activeTab?.database) return;
+    setServerPage(page);
+
+    const qt = quoteIdentifier(activeTab.table, dbType);
+    // Preserve existing WHERE / ORDER BY from current SQL
+    const whereMatch = currentSql.match(/WHERE\s+(.+?)(?:\s+ORDER\s+BY|\s+LIMIT|\s+OFFSET|$)/i);
+    const orderMatch = currentSql.match(/ORDER\s+BY\s+(.+?)(?:\s+LIMIT|\s+OFFSET|$)/i);
+    const whereClause = whereMatch ? ` WHERE ${whereMatch[1].trim()}` : '';
+    const orderByClause = orderMatch ? ` ORDER BY ${orderMatch[1].trim()}` : '';
+    const limitClause = pageSize > 0 ? ` LIMIT ${pageSize}` : '';
+    const offsetClause = page > 0 && pageSize > 0 ? ` OFFSET ${page * pageSize}` : '';
+
+    const sql = `SELECT * FROM ${qt}${whereClause}${orderByClause}${limitClause}${offsetClause}`;
+    updateSql(activeTab.id, sql);
+    executeQuery(activeConnectionId, activeTab.id);
+
+    // Re-fetch count if pageSize changed (filter might affect it)
+    if (whereClause) {
+      ipc.executeQueryColumnar(activeConnectionId, `SELECT COUNT(*) AS cnt FROM ${qt}${whereClause}`)
+        .then((res) => {
+          const count = res.data[0]?.values[0];
+          setServerTotalRows(typeof count === 'number' ? count : 0);
+        })
+        .catch(() => {});
+    }
+  }, [activeConnectionId, activeTab, dbType, currentSql, updateSql, executeQuery]);
 
   // Re-query active table tab when page size preference changes (or on remount after settings close)
   useEffect(() => {
@@ -320,7 +375,7 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
                       />
                     )}
                     <div className="flex-1 overflow-hidden">
-                      {renderResult(activeTab, tabResult, handleServerSort)}
+                      {renderResult(activeTab, tabResult, handleServerSort, handleServerPageChange, serverTotalRows, serverPage)}
                     </div>
                   </>
                 </SplitEditorResults>
@@ -385,7 +440,7 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
                       />
                     )}
                     <div className="flex-1 overflow-hidden">
-                      {renderResult(activeTab, tabResult, handleServerSort)}
+                      {renderResult(activeTab, tabResult, handleServerSort, handleServerPageChange, serverTotalRows, serverPage)}
                     </div>
                   </>
                 )}
@@ -402,7 +457,14 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
   );
 }
 
-function renderResult(tab: QueryTab, tabResult: TabResult | undefined, onServerSort?: (sorts: SortRequest[]) => void) {
+function renderResult(
+  tab: QueryTab,
+  tabResult: TabResult | undefined,
+  onServerSort?: (sorts: SortRequest[]) => void,
+  onServerPageChange?: (page: number, pageSize: number) => void,
+  serverTotalRows?: number,
+  serverPage?: number,
+) {
   if (tabResult?.error) {
     return (
       <div className="p-4 text-sm text-destructive">
@@ -417,7 +479,15 @@ function renderResult(tab: QueryTab, tabResult: TabResult | undefined, onServerS
     return (
       <ErrorBoundary>
         <div className="relative h-full">
-          <DataGrid result={activeQueryResult} database={tab.database} table={tab.table} onServerSort={tab.table ? onServerSort : undefined} />
+          <DataGrid
+            result={activeQueryResult}
+            database={tab.database}
+            table={tab.table}
+            onServerSort={tab.table ? onServerSort : undefined}
+            onServerPageChange={tab.table ? onServerPageChange : undefined}
+            serverTotalRows={tab.table ? serverTotalRows : undefined}
+            serverPage={tab.table ? serverPage : undefined}
+          />
           {isReloading && (
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/40">
               <p className="text-sm text-muted-foreground">Loading...</p>
