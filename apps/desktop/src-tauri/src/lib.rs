@@ -301,6 +301,18 @@ pub fn run() {
             );
             let schema_cache = Arc::new(dataforge_engine::schema_cache::SchemaCache::new());
 
+            // Background task: periodically evict expired schema cache entries
+            {
+                let cache = schema_cache.clone();
+                tokio::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+                    loop {
+                        interval.tick().await;
+                        cache.evict_expired();
+                    }
+                });
+            }
+
             app.manage(state::AppState {
                 connection_manager,
                 config_store,

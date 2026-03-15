@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { quoteIdentifier } from '@/lib/sql-utils';
 
 export type FilterOperator =
   | '='
@@ -51,7 +52,7 @@ interface FilterState {
 
   // Helpers
   getActiveFilters: () => RowFilter[];
-  generateWhereClause: () => string;
+  generateWhereClause: (dbType?: string) => string;
 }
 
 export const useFilterStore = create<FilterState>((set, get) => ({
@@ -105,13 +106,13 @@ export const useFilterStore = create<FilterState>((set, get) => ({
 
   getActiveFilters: () => get().rowFilters.filter((f) => f.enabled),
 
-  generateWhereClause: () => {
+  generateWhereClause: (dbType = 'mysql') => {
     const active = get().rowFilters.filter((f) => f.enabled && f.column);
     if (active.length === 0) return '';
 
     const conditions = active.map((f) => {
-      const col = f.column === '__raw__' ? f.value : `\`${f.column}\``;
       if (f.column === '__raw__') return f.value;
+      const col = quoteIdentifier(f.column, dbType);
 
       switch (f.operator) {
         case 'IS NULL': return `${col} IS NULL`;

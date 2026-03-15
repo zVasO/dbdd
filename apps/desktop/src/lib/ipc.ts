@@ -3,9 +3,21 @@ import { listen } from '@tauri-apps/api/event';
 import type {
   ConnectionConfig, SavedConnection, QueryResult, ColumnarResult,
   DatabaseInfo, SchemaInfo, TableInfo, TableStructure, TableRef,
-  QueryHistoryEntry,
+  QueryHistoryEntry, IpcError,
   StreamMeta, StreamChunk, StreamDone, StreamError,
 } from './types';
+
+/**
+ * Extract a human-readable error message from a Tauri IPC error.
+ * Handles structured IpcError { code, message } and plain strings/Error.
+ */
+export function extractErrorMessage(e: unknown): string {
+  if (e && typeof e === 'object' && 'message' in e) {
+    return String((e as IpcError).message);
+  }
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
 
 /** In-flight request deduplication map */
 const inFlight = new Map<string, Promise<unknown>>();

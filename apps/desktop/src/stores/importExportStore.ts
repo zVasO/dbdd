@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import Papa from 'papaparse';
-import { ipc } from '@/lib/ipc';
+import { ipc, extractErrorMessage } from '@/lib/ipc';
 import { toExcel } from '@/lib/exportFormats';
 import type { QueryResult } from '@/lib/types';
 
@@ -11,6 +11,7 @@ interface ImportExportState {
   importDialogOpen: boolean;
   importFile: { name: string; type: ImportFileType } | null;
   importPreview: { columns: string[]; rows: string[][]; detectedTypes: string[] } | null;
+  importAllRows: string[][] | null;
   importTargetTable: string;
   importMode: 'create' | 'insert';
   importLoading: boolean;
@@ -94,6 +95,7 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
   importDialogOpen: false,
   importFile: null,
   importPreview: null,
+  importAllRows: null,
   importTargetTable: '',
   importMode: 'create',
   importLoading: false,
@@ -110,6 +112,7 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
       set({
         importFile: null,
         importPreview: null,
+        importAllRows: null,
         importTargetTable: '',
         importMode: 'create',
         importError: null,
@@ -158,14 +161,16 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
           return detectColumnType(sampleValues);
         });
 
-        // Convert all cells to strings for preview
-        const previewRows = dataRows.slice(0, 100).map((row) =>
+        // Store all rows for import, but only show 100 in preview
+        const fullRows = dataRows.map((row) =>
           columns.map((_, i) => row[i] ?? '')
         );
+        const previewRows = fullRows.slice(0, 100);
 
         const tableName = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_]/g, '_');
         set({
           importPreview: { columns, rows: previewRows, detectedTypes },
+          importAllRows: fullRows,
           importTargetTable: tableName,
           importLoading: false,
         });
@@ -204,7 +209,7 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
         }
         const columns = Array.from(columnSet);
 
-        const dataRows = rows.slice(0, 100).map((row) =>
+        const fullRows = rows.map((row) =>
           columns.map((col) => {
             const val = (row as Record<string, unknown>)[col];
             if (val === null || val === undefined) return '';
@@ -213,14 +218,16 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
           })
         );
 
+        const previewRows = fullRows.slice(0, 100);
         const detectedTypes = columns.map((_, colIndex) => {
-          const sampleValues = dataRows.map((row) => row[colIndex]);
+          const sampleValues = previewRows.map((row) => row[colIndex]);
           return detectColumnType(sampleValues);
         });
 
         const tableName = file.name.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_]/g, '_');
         set({
-          importPreview: { columns, rows: dataRows, detectedTypes },
+          importPreview: { columns, rows: previewRows, detectedTypes },
+          importAllRows: fullRows,
           importTargetTable: tableName,
           importLoading: false,
         });
@@ -233,7 +240,7 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
         });
       }
     } catch (err) {
-      set({ importError: String(err), importLoading: false });
+      set({ importError: extractErrorMessage(err), importLoading: false });
     }
   },
 
@@ -260,9 +267,11 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
         return;
       }
 
-      const { columns, rows, detectedTypes } = importPreview;
+      const { columns, detectedTypes } = importPreview;
+      const allRows = get().importAllRows ?? importPreview.rows;
       const tableName = importTargetTable || 'imported_data';
       const statements: string[] = [];
+      // TODO: Use quoteIdentifier once dbType is available in import context
 
       // Use the database
       if (database) {
@@ -284,19 +293,8 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
         statements.push(`CREATE TABLE IF NOT EXISTS \`${tableName}\` (\n  ${colDefs.join(',\n  ')}\n)`);
       }
 
-      // Re-read the full file data for inserts (preview may be truncated)
-      // We'll use all the preview rows we have — for full import we'd re-parse the file
-      // but for the store-based approach we batch from what parseFile extracted
       const colNames = columns.map((c) => `\`${c}\``).join(', ');
       const BATCH_SIZE = 50;
-
-      // Get ALL rows — re-parse for full import if the file was a CSV or JSON
-      // We'll get the full rows from the import — parseFile capped at 100 for preview.
-      // For a real import we need to re-read. But we only have the file reference during parseFile.
-      // The best approach: during parseFile, we store ALL the data rows, but only show 100 in preview.
-      // Since we already parsed, we use what we have. For large files the user would drop again.
-      // Using the rows we have:
-      const allRows = rows;
 
       for (let i = 0; i < allRows.length; i += BATCH_SIZE) {
         const batch = allRows.slice(i, i + BATCH_SIZE);
@@ -320,7 +318,7 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
         set({ importLoading: false, importDialogOpen: false });
       }
     } catch (err) {
-      set({ importError: String(err), importLoading: false });
+      set({ importError: extractErrorMessage(err), importLoading: false });
     }
   },
 
@@ -400,6 +398,7 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
       importDialogOpen: false,
       importFile: null,
       importPreview: null,
+      importAllRows: null,
       importTargetTable: '',
       importMode: 'create',
       importLoading: false,

@@ -14,6 +14,7 @@ import type { ColumnMeta } from '@/lib/types';
 interface FilterBarProps {
   columns: ColumnMeta[];
   onApply: (whereClause: string) => void;
+  dbType?: string;
 }
 
 const OPERATORS: { value: FilterOperator; label: string }[] = [
@@ -33,7 +34,7 @@ const OPERATORS: { value: FilterOperator; label: string }[] = [
 
 const NO_VALUE_OPS: FilterOperator[] = ['IS NULL', 'IS NOT NULL'];
 
-export function FilterBar({ columns, onApply }: FilterBarProps) {
+export function FilterBar({ columns, onApply, dbType = 'mysql' }: FilterBarProps) {
   const filters = useFilterStore((s) => s.rowFilters);
   const addFilter = useFilterStore((s) => s.addFilter);
   const updateFilter = useFilterStore((s) => s.updateFilter);
@@ -46,7 +47,7 @@ export function FilterBar({ columns, onApply }: FilterBarProps) {
   if (!filterBarOpen) return null;
 
   const handleApply = () => {
-    const where = generateWhereClause();
+    const where = generateWhereClause(dbType);
     onApply(where);
   };
 
@@ -55,7 +56,7 @@ export function FilterBar({ columns, onApply }: FilterBarProps) {
     if (!filter.enabled) {
       toggleFilter(filter.id);
     }
-    const where = generateWhereClause();
+    const where = generateWhereClause(dbType);
     onApply(where);
   };
 
@@ -76,7 +77,7 @@ export function FilterBar({ columns, onApply }: FilterBarProps) {
           variant="ghost"
           size="xs"
           onClick={() => {
-            const w = generateWhereClause();
+            const w = generateWhereClause(dbType);
             if (w) navigator.clipboard.writeText(w);
           }}
           className="text-xs"

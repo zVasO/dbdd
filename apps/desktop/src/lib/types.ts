@@ -1,3 +1,10 @@
+// === IPC ERROR ===
+
+export interface IpcError {
+  code: string;
+  message: string;
+}
+
 // === CONNECTION ===
 
 export type DatabaseType = 'mysql' | 'sqlite' | 'postgres' | 'mongodb';

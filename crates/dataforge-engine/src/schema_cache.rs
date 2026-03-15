@@ -78,6 +78,14 @@ impl SchemaCache {
         self.structures.retain(|k, _| &k.0 != conn_id);
     }
 
+    /// Remove all expired entries from both caches.
+    /// Called periodically by a background task to prevent unbounded growth.
+    pub fn evict_expired(&self) {
+        let ttl = self.ttl;
+        self.tables.retain(|_, (_, created)| created.elapsed() < ttl);
+        self.structures.retain(|_, (_, created)| created.elapsed() < ttl);
+    }
+
     /// Evict the oldest entries when a single connection exceeds the cap.
     fn evict_oldest_for_connection(&self, connection_id: &Uuid) {
         let conn_entries: Vec<_> = self

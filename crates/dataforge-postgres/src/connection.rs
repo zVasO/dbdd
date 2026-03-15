@@ -2,11 +2,11 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use dataforge_core::error::{DataForgeError, Result};
-use dataforge_core::models::connection::ConnectionConfig;
+use dataforge_core::models::connection::{ConnectionConfig, SslMode};
 use dataforge_core::models::query::{CellValue, ColumnMeta, QueryResult, ResultType, Row};
 use dataforge_core::ports::connection::DatabaseConnection;
-use sqlx::postgres::{PgPoolOptions, PgRow};
-use sqlx::{Column, PgPool, Row as SqlxRow, TypeInfo};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgRow, PgSslMode};
+use sqlx::{Column, ConnectOptions, PgPool, Row as SqlxRow, TypeInfo};
 
 pub struct PostgresConnection {
     pool: PgPool,
@@ -14,11 +14,11 @@ pub struct PostgresConnection {
 
 impl PostgresConnection {
     pub async fn new(config: &ConnectionConfig, password: Option<&str>) -> Result<Self> {
-        let url = build_connection_url(config, password);
+        let opts = build_connect_options(config, password);
         let pool = PgPoolOptions::new()
             .max_connections(config.pool_size.unwrap_or(20))
             .acquire_timeout(std::time::Duration::from_secs(10))
-            .connect(&url)
+            .connect_with(opts)
             .await
             .map_err(|e| DataForgeError::Connection(e.to_string()))?;
 
@@ -26,40 +26,30 @@ impl PostgresConnection {
     }
 }
 
-fn url_encode(s: &str) -> String {
-    let mut encoded = String::with_capacity(s.len());
-    for ch in s.chars() {
-        match ch {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => encoded.push(ch),
-            _ => {
-                for b in ch.to_string().as_bytes() {
-                    encoded.push_str(&format!("%{:02X}", b));
-                }
-            }
-        }
-    }
-    encoded
-}
-
-fn build_connection_url(config: &ConnectionConfig, password: Option<&str>) -> String {
-    let user = url_encode(&config.username);
-    let pass = url_encode(password.unwrap_or(""));
-    let host = &config.host;
-    let port = config.port;
-    let db = config.database.as_deref().unwrap_or("postgres");
-
-    let sslmode = match config.ssl_mode {
-        dataforge_core::models::connection::SslMode::Disable => "disable",
-        dataforge_core::models::connection::SslMode::Prefer => "prefer",
-        dataforge_core::models::connection::SslMode::Require => "require",
-        dataforge_core::models::connection::SslMode::VerifyCa => "verify-ca",
-        dataforge_core::models::connection::SslMode::VerifyFull => "verify-full",
+fn build_connect_options(config: &ConnectionConfig, password: Option<&str>) -> PgConnectOptions {
+    let ssl_mode = match config.ssl_mode {
+        SslMode::Disable => PgSslMode::Disable,
+        SslMode::Prefer => PgSslMode::Prefer,
+        SslMode::Require => PgSslMode::Require,
+        SslMode::VerifyCa => PgSslMode::VerifyCa,
+        SslMode::VerifyFull => PgSslMode::VerifyFull,
     };
 
-    format!(
-        "postgres://{}:{}@{}:{}/{}?sslmode={}",
-        user, pass, host, port, db, sslmode
-    )
+    let mut opts = PgConnectOptions::new()
+        .host(&config.host)
+        .port(config.port)
+        .username(&config.username)
+        .ssl_mode(ssl_mode)
+        .database(config.database.as_deref().unwrap_or("postgres"));
+
+    if let Some(pw) = password {
+        opts = opts.password(pw);
+    }
+
+    // Disable sqlx query logging to avoid leaking SQL in trace logs
+    opts = opts.disable_statement_logging();
+
+    opts
 }
 
 fn hex_preview(bytes: &[u8], max_bytes: usize) -> String {

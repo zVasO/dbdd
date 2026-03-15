@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { ipc } from '@/lib/ipc';
+import { ipc, extractErrorMessage } from '@/lib/ipc';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { getProvider, autoDetectProvider } from '@/lib/dataGenProviders';
 import { cellValueToJS } from '@/lib/exportFormats';
@@ -134,7 +134,7 @@ export const useDataGenStore = create<DataGenState>((set, get) => ({
         set({ generating: false, dialogOpen: false });
       }
     } catch (err) {
-      set({ error: String(err), generating: false });
+      set({ error: extractErrorMessage(err), generating: false });
     }
   },
 

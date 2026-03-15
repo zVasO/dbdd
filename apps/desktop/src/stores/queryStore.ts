@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { ipc } from '../lib/ipc';
+import { ipc, extractErrorMessage } from '../lib/ipc';
 import { useActivityStore } from './activityStore';
 import { useConnectionStore } from './connectionStore';
 import { usePreferencesStore } from './preferencesStore';
@@ -321,11 +321,12 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       }
     } catch (e) {
       const durationMs = Math.round(performance.now() - startTime);
-      useActivityStore.getState().logError(activityId, durationMs, String(e));
-      useResultStore.getState().setError(tabId, String(e));
-      maybeNotifyQueryComplete(durationMs, 0, String(e));
+      const errMsg = extractErrorMessage(e);
+      useActivityStore.getState().logError(activityId, durationMs, errMsg);
+      useResultStore.getState().setError(tabId, errMsg);
+      maybeNotifyQueryComplete(durationMs, 0, errMsg);
 
-      set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null, error: String(e) })));
+      set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null, error: errMsg })));
     }
   },
 

@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use serde::Serialize;
 
+use dataforge_core::error::IpcError;
 use dataforge_core::models::columnar::ColumnData;
 use dataforge_core::models::query::{QueryHistoryEntry, QueryResult, QueryStatus};
 use dataforge_engine::event_bus::AppEvent;
@@ -24,13 +25,35 @@ struct ChunkPayload {
 /// Maximum rows returned for a SELECT without explicit LIMIT.
 const SAFETY_ROW_LIMIT: usize = 50_000;
 
+/// Strip leading SQL comments (line and block) to find the first real keyword.
+fn strip_leading_comments(sql: &str) -> &str {
+    let mut s = sql.trim_start();
+    loop {
+        if s.starts_with("--") {
+            s = s.find('\n').map_or("", |i| &s[i + 1..]).trim_start();
+        } else if s.starts_with("/*") {
+            s = s.get(2..).and_then(|r| r.find("*/").map(|i| &r[i + 2..])).unwrap_or("").trim_start();
+        } else {
+            break;
+        }
+    }
+    s
+}
+
 /// Detect whether a SQL string is a SELECT-like query missing a LIMIT clause.
+/// Handles CTEs (`WITH ... SELECT`) and leading SQL comments.
 fn needs_safety_limit(sql: &str) -> bool {
-    let trimmed = sql.trim().trim_end_matches(';').trim();
-    // Case-insensitive check without allocating a full uppercase copy
-    if !trimmed.get(..6).is_some_and(|s| s.eq_ignore_ascii_case("SELECT")) {
+    let stripped = strip_leading_comments(sql);
+    let trimmed = stripped.trim_end_matches(';').trim();
+
+    // Match SELECT or WITH (CTE) queries
+    let is_select = trimmed.get(..6).is_some_and(|s| s.eq_ignore_ascii_case("SELECT"));
+    let is_cte = trimmed.get(..4).is_some_and(|s| s.eq_ignore_ascii_case("WITH"));
+
+    if !is_select && !is_cte {
         return false;
     }
+
     // Case-insensitive search for LIMIT in the tail without allocating
     let len = trimmed.len();
     let start = len.saturating_sub(200);
@@ -54,14 +77,11 @@ pub async fn execute_query(
     state: State<'_, AppState>,
     connection_id: Uuid,
     sql: String,
-) -> Result<QueryResult, String> {
+) -> Result<QueryResult, IpcError> {
     let query_id = Uuid::new_v4();
     tracing::Span::current().record("query_id", query_id.to_string());
 
-    state.event_bus.emit(AppEvent::QueryStarted {
-        query_id,
-        sql: sql.clone(),
-    });
+    state.event_bus.emit(AppEvent::query_started(query_id, &sql));
 
     let start = std::time::Instant::now();
 
@@ -69,7 +89,7 @@ pub async fn execute_query(
         let active = state
             .connection_manager
             .get(&connection_id)
-            .ok_or("Connection not found")?;
+            .ok_or(IpcError::from("Connection not found"))?;
         Arc::clone(&active.connection)
     };
 
@@ -103,7 +123,9 @@ pub async fn execute_query(
                 let config_store = state.config_store.clone();
                 let entry = history_entry.clone();
                 tokio::spawn(async move {
-                    let _ = config_store.add_to_history(&entry).await;
+                    if let Err(e) = config_store.add_to_history(&entry).await {
+                        tracing::warn!(error = %e, "Failed to write query history");
+                    }
                 });
             }
 
@@ -125,7 +147,7 @@ pub async fn execute_query(
                 query_id,
                 error: e.to_string(),
             });
-            Err(e.to_string())
+            Err(IpcError::from(e))
         }
     }
 }
@@ -136,7 +158,7 @@ pub async fn execute_query_columnar(
     state: State<'_, AppState>,
     connection_id: Uuid,
     sql: String,
-) -> Result<dataforge_core::models::columnar::ColumnarResult, String> {
+) -> Result<dataforge_core::models::columnar::ColumnarResult, IpcError> {
     let result = execute_query(state, connection_id, sql).await?;
     Ok(dataforge_core::models::columnar::ColumnarResult::from(result))
 }
@@ -146,17 +168,17 @@ pub async fn cancel_query(
     state: State<'_, AppState>,
     connection_id: Uuid,
     query_id: Uuid,
-) -> Result<(), String> {
+) -> Result<(), IpcError> {
     let conn = {
         let active = state
             .connection_manager
             .get(&connection_id)
-            .ok_or("Connection not found")?;
+            .ok_or(IpcError::from("Connection not found"))?;
         Arc::clone(&active.connection)
     };
     conn.cancel_query(&query_id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(IpcError::from)?;
     state
         .event_bus
         .emit(AppEvent::QueryCancelled { query_id });
@@ -168,12 +190,12 @@ pub async fn get_query_history(
     state: State<'_, AppState>,
     connection_id: Uuid,
     limit: Option<u32>,
-) -> Result<Vec<QueryHistoryEntry>, String> {
+) -> Result<Vec<QueryHistoryEntry>, IpcError> {
     state
         .config_store
         .get_history(&connection_id, limit.unwrap_or(100))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(IpcError::from)
 }
 
 #[tauri::command]
@@ -181,32 +203,46 @@ pub async fn execute_batch(
     state: State<'_, AppState>,
     connection_id: Uuid,
     statements: Vec<String>,
-) -> Result<Vec<Result<QueryResult, String>>, String> {
+) -> Result<Vec<Result<QueryResult, IpcError>>, IpcError> {
     let conn = {
         let active = state
             .connection_manager
             .get(&connection_id)
-            .ok_or("Connection not found")?;
+            .ok_or(IpcError::from("Connection not found"))?;
         Arc::clone(&active.connection)
     };
-
-    const MAX_BATCH_CONCURRENCY: usize = 4;
 
     // Check for DDL before consuming statements
     let has_ddl = statements.iter().any(|sql| schema_cache::is_ddl(sql));
 
-    let results: Vec<Result<QueryResult, String>> = stream::iter(statements.into_iter().map(|sql| {
-        let conn = Arc::clone(&conn);
-        async move {
-            match conn.execute(&sql).await {
-                Ok(result) => Ok(result),
-                Err(e) => Err(e.to_string()),
-            }
+    let results: Vec<Result<QueryResult, IpcError>> = if has_ddl {
+        // DDL present — execute ALL statements sequentially to preserve ordering
+        // (e.g., CREATE TABLE must complete before INSERT INTO that table)
+        let mut results = Vec::with_capacity(statements.len());
+        for sql in statements {
+            let result = match conn.execute(&sql).await {
+                Ok(r) => Ok(r),
+                Err(e) => Err(IpcError::from(e)),
+            };
+            results.push(result);
         }
-    }))
-    .buffered(MAX_BATCH_CONCURRENCY)
-    .collect()
-    .await;
+        results
+    } else {
+        // Pure DML — safe to execute concurrently
+        const MAX_BATCH_CONCURRENCY: usize = 4;
+        stream::iter(statements.into_iter().map(|sql| {
+            let conn = Arc::clone(&conn);
+            async move {
+                match conn.execute(&sql).await {
+                    Ok(result) => Ok(result),
+                    Err(e) => Err(IpcError::from(e)),
+                }
+            }
+        }))
+        .buffered(MAX_BATCH_CONCURRENCY)
+        .collect()
+        .await
+    };
 
     // Auto-invalidate schema cache if any statement was DDL
     if has_ddl {
@@ -224,7 +260,7 @@ pub async fn execute_query_stream(
     connection_id: Uuid,
     sql: String,
     chunk_size: Option<usize>,
-) -> Result<String, String> {
+) -> Result<String, IpcError> {
     let query_id = Uuid::new_v4();
     let chunk_size = chunk_size.unwrap_or(1000);
 
@@ -232,14 +268,11 @@ pub async fn execute_query_stream(
         let active = state
             .connection_manager
             .get(&connection_id)
-            .ok_or("Connection not found")?;
+            .ok_or(IpcError::from("Connection not found"))?;
         Arc::clone(&active.connection)
     };
 
-    state.event_bus.emit(AppEvent::QueryStarted {
-        query_id,
-        sql: sql.clone(),
-    });
+    state.event_bus.emit(AppEvent::query_started(query_id, &sql));
 
     let start = std::time::Instant::now();
     let app_clone = app.clone();
@@ -320,7 +353,9 @@ pub async fn execute_query_stream(
                                 status: QueryStatus::Error,
                                 error_message: Some(e.to_string()),
                             };
-                            let _ = config_store.add_to_history(&entry).await;
+                            if let Err(e) = config_store.add_to_history(&entry).await {
+                                tracing::warn!(error = %e, "Failed to write query history");
+                            }
                             break;
                         }
                     }

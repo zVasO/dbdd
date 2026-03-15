@@ -187,6 +187,7 @@ function trackAndEvict(
           ...existing,
           data: [],
           rowCount: 0,
+          allColumnarResults: [],
           isStale: true,
           _rowsCache: null,
           _allResultsCache: null,

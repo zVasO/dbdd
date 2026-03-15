@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { ipc } from '@/lib/ipc';
+import { ipc, extractErrorMessage } from '@/lib/ipc';
 import type { TableStructure, ColumnInfo } from '@/lib/types';
 
 // === Types ===
@@ -302,7 +302,7 @@ export const useMigrationStore = create<MigrationState>((set, get) => ({
       // Auto-generate migration SQL
       get().generateMigration();
     } catch (e) {
-      set({ loading: false, error: String(e) });
+      set({ loading: false, error: extractErrorMessage(e) });
     }
   },
 

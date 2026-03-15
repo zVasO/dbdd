@@ -18,6 +18,9 @@ pub struct ActiveConnection {
     pub config_id: Uuid,
 }
 
+/// Maximum simultaneous connections for a desktop tool.
+const MAX_CONNECTIONS: usize = 20;
+
 pub struct ConnectionManager {
     connections: DashMap<Uuid, ActiveConnection>,
     pub driver_registry: Arc<DriverRegistry>,
@@ -36,6 +39,12 @@ impl ConnectionManager {
         config: &ConnectionConfig,
         password: Option<&str>,
     ) -> Result<Uuid> {
+        if self.connections.len() >= MAX_CONNECTIONS {
+            return Err(DataForgeError::Connection(
+                format!("Maximum number of simultaneous connections ({MAX_CONNECTIONS}) reached. Disconnect an existing connection first.")
+            ));
+        }
+
         let factory = self
             .driver_registry
             .get_factory(&config.db_type)
@@ -60,7 +69,11 @@ impl ConnectionManager {
 
     pub async fn disconnect(&self, connection_id: &Uuid) -> Result<()> {
         if let Some((_, active)) = self.connections.remove(connection_id) {
-            active.connection.close().await?;
+            // Connection already removed from the map — log close errors but don't fail.
+            // The caller (command handler) should emit ConnectionClosed regardless.
+            if let Err(e) = active.connection.close().await {
+                tracing::warn!(error = %e, "Connection close returned error, ignoring");
+            }
         }
         Ok(())
     }

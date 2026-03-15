@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { ipc } from '@/lib/ipc';
+import { ipc, extractErrorMessage } from '@/lib/ipc';
 import type { QueryResult } from '@/lib/types';
 import type { Layout, LayoutItem } from 'react-grid-layout';
 
@@ -235,7 +235,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     } catch (e) {
       get().updateWidget(dashboardId, widgetId, {
         loading: false,
-        error: String(e),
+        error: extractErrorMessage(e),
       });
     }
   },

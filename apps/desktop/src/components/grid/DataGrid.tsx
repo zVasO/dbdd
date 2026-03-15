@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { QuickLook } from './QuickLook';
 import { usePreferencesStore } from '@/stores/preferencesStore';
 import { useShortcutStore, matchesBinding } from '@/stores/shortcutStore';
+import { quoteIdentifier, escapeStringLiteral } from '@/lib/sql-utils';
 
 interface SortRequest {
   column: string;
@@ -300,10 +301,13 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     if (!fk) return;
     const connId = useConnectionStore.getState().activeConnectionId;
     if (!connId) return;
+    const connState = useConnectionStore.getState();
+    const dbType = connState.activeConnections.find((c) => c.connectionId === connId)?.config.db_type ?? 'mysql';
     const refDb = fk.refDb ?? database ?? '';
     const pageSize = usePreferencesStore.getState().defaultPageSize;
     const limitClause = pageSize > 0 ? ` LIMIT ${pageSize}` : '';
-    const sql = `SELECT * FROM \`${fk.refTable}\` WHERE \`${fk.refColumn}\` = '${cellValue.replace(/'/g, "''")}'${limitClause}`;
+    const qt = (name: string) => quoteIdentifier(name, dbType);
+    const sql = `SELECT * FROM ${qt(fk.refTable)} WHERE ${qt(fk.refColumn)} = '${escapeStringLiteral(cellValue)}'${limitClause}`;
     const tabId = useQueryStore.getState().createTab(`${fk.refTable} → ${cellValue}`, { editorVisible: true });
     useQueryStore.getState().updateSql(tabId, sql);
     useQueryStore.getState().executeQuery(connId, tabId);
@@ -1185,6 +1189,10 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
   return (
     <div
       ref={parentRef}
+      role="grid"
+      aria-label="Query results"
+      aria-rowcount={columnarRowCount}
+      aria-colcount={visibleColumns.length}
       tabIndex={0}
       onKeyDown={handleKeyDown}
       className="h-full select-none overflow-auto bg-background outline-none focus:outline-none"
@@ -1195,8 +1203,8 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       }}
     >
       {/* Column headers */}
-      <div className="sticky top-0 z-10 flex border-b-2 border-border bg-muted" style={{ minWidth: totalWidthStyle }}>
-        <div className="flex w-[50px] shrink-0 items-center justify-center border-r border-border px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <div role="row" aria-rowindex={1} className="sticky top-0 z-10 flex border-b-2 border-border bg-muted" style={{ minWidth: totalWidthStyle }}>
+        <div role="columnheader" className="flex w-[50px] shrink-0 items-center justify-center border-r border-border px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           #
         </div>
         {visibleColumns.map((col, visIdx) => {
@@ -1206,6 +1214,8 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
           return (
             <div
               key={col.name}
+              role="columnheader"
+              aria-sort={getSortDirection(colIdx) === 'asc' ? 'ascending' : getSortDirection(colIdx) === 'desc' ? 'descending' : 'none'}
               className="relative flex shrink-0 items-center gap-1 border-r border-border px-2 py-1.5 cursor-pointer hover:bg-accent/30"
               style={{ width: getColWidthStyle(colIdx) }}
               onClick={(e) => handleHeaderClick(colIdx, e.shiftKey)}
@@ -1281,6 +1291,8 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
           return (
             <div
               key={virtualRow.index}
+              role="row"
+              aria-rowindex={displayIndex + 2}
               className={cn(
                 'absolute left-0 top-0 flex cursor-pointer border-b border-border/30',
                 rowDeleted
@@ -1334,6 +1346,8 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
                 return (
                   <div
                     key={colIdx}
+                    role="gridcell"
+                    aria-colindex={visIdx + 1}
                     className={cn(
                       'flex shrink-0 items-center border-r border-border/30',
                       isEditing && 'ring-2 ring-inset ring-primary',

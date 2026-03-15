@@ -14,6 +14,7 @@ import { WelcomeScreen } from '@/components/layout/WelcomeScreen';
 import { Button } from '@/components/ui/button';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { cn } from '@/lib/utils';
+import { quoteIdentifier } from '@/lib/sql-utils';
 import { Table2, Columns3 } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { usePreferencesStore } from '@/stores/preferencesStore';
@@ -43,6 +44,10 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
   const secondaryActiveTabId = useUIStore((s) => s.secondaryActiveTabId);
   const activeTabId = paneId === 'secondary' ? secondaryActiveTabId : primaryActiveTabId;
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
+  const dbType = useConnectionStore((s) => {
+    const connId = s.activeConnectionId;
+    return connId ? s.activeConnections.find((c) => c.connectionId === connId)?.config.db_type ?? 'mysql' : 'mysql';
+  });
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const tabResult = useResultStore((s) => activeTab ? s.results[activeTab.id] : undefined);
 
@@ -59,12 +64,12 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
 
   const handleFilterApply = useCallback((whereClause: string) => {
     if (!activeConnectionId || !activeTab?.table || !activeTab?.database) return;
-    const base = `SELECT * FROM \`${activeTab.table}\``;
+    const base = `SELECT * FROM ${quoteIdentifier(activeTab.table, dbType)}`;
     const limit = defaultPageSize > 0 ? ` LIMIT ${defaultPageSize}` : '';
     const sql = whereClause ? `${base} WHERE ${whereClause}${limit}` : `${base}${limit}`;
     updateSql(activeTab.id, sql);
     executeQuery(activeConnectionId, activeTab.id);
-  }, [activeConnectionId, activeTab, defaultPageSize, updateSql, executeQuery]);
+  }, [activeConnectionId, activeTab, defaultPageSize, dbType, updateSql, executeQuery]);
 
   const currentSql = activeTab?.sql ?? '';
   const buildTableSql = useCallback((tableName: string, sorts: SortRequest[]): string => {
@@ -73,12 +78,12 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
     const whereClause = whereMatch ? ` WHERE ${whereMatch[1].trim()}` : '';
 
     const orderByClause = sorts.length > 0
-      ? ` ORDER BY ${sorts.map((s) => `\`${s.column}\` ${s.direction.toUpperCase()}`).join(', ')}`
+      ? ` ORDER BY ${sorts.map((s) => `${quoteIdentifier(s.column, dbType)} ${s.direction.toUpperCase()}`).join(', ')}`
       : '';
 
     const limitClause = defaultPageSize > 0 ? ` LIMIT ${defaultPageSize}` : '';
-    return `SELECT * FROM \`${tableName}\`${whereClause}${orderByClause}${limitClause}`;
-  }, [currentSql, defaultPageSize]);
+    return `SELECT * FROM ${quoteIdentifier(tableName, dbType)}${whereClause}${orderByClause}${limitClause}`;
+  }, [currentSql, defaultPageSize, dbType]);
 
   const handleServerSort = useCallback((sorts: SortRequest[]) => {
     if (!activeConnectionId || !activeTab?.table || !activeTab?.database) return;
@@ -91,10 +96,12 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
   useEffect(() => {
     if (!activeConnectionId || !activeTab?.table) return;
     const expectedLimit = defaultPageSize > 0 ? ` LIMIT ${defaultPageSize}` : '';
-    const expectedSql = `SELECT * FROM \`${activeTab.table}\`${expectedLimit}`;
+    const qt = quoteIdentifier(activeTab.table, dbType);
+    const expectedSql = `SELECT * FROM ${qt}${expectedLimit}`;
     if (activeTab.sql === expectedSql) return;
     // Only auto-update simple SELECT * queries (don't overwrite custom WHERE/ORDER BY)
-    const isSimpleSelect = /^SELECT \* FROM `[^`]+`(\s+LIMIT \d+)?$/i.test(activeTab.sql);
+    // Match both backtick-quoted and double-quote-quoted identifiers
+    const isSimpleSelect = /^SELECT \* FROM [`"][^`"]+[`"](\s+LIMIT \d+)?$/i.test(activeTab.sql);
     if (!isSimpleSelect) return;
     const tabId = activeTab.id;
     const connId = activeConnectionId;
@@ -102,7 +109,7 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
       updateSql(tabId, expectedSql);
       executeQuery(connId, tabId);
     });
-  }, [defaultPageSize, activeConnectionId, activeTab, updateSql, executeQuery]);
+  }, [defaultPageSize, activeConnectionId, activeTab, dbType, updateSql, executeQuery]);
 
   // No tabs open yet -- show welcome / empty state
   if (tabs.length === 0) {
@@ -250,6 +257,7 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
                       <FilterBar
                         columns={tabResult.columns}
                         onApply={handleFilterApply}
+                        dbType={dbType}
                       />
                     )}
                     <div className="flex-1 overflow-hidden">
@@ -314,6 +322,7 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
                       <FilterBar
                         columns={tabResult.columns}
                         onApply={handleFilterApply}
+                        dbType={dbType}
                       />
                     )}
                     <div className="flex-1 overflow-hidden">

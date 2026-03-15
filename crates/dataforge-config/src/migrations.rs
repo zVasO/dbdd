@@ -1,6 +1,14 @@
 use rusqlite::Connection;
 
 pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
+    // Enable WAL mode for better concurrent read performance and reduced lock contention.
+    // NORMAL synchronous is safe with WAL and reduces fsync overhead.
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;
+        PRAGMA synchronous=NORMAL;
+        PRAGMA busy_timeout=5000;"
+    )?;
+
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS connections (
             id TEXT PRIMARY KEY,
