@@ -42,7 +42,8 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
     try {
       const databases = await ipc.listDatabases(connectionId);
       set({ databases, loading: false });
-    } catch {
+    } catch (e) {
+      console.warn('[schemaStore] loadDatabases failed', e);
       set({ loading: false });
     }
   },
@@ -85,7 +86,8 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
           }));
         }
       }
-    } catch {
+    } catch (e) {
+      console.warn('[schemaStore] loadTables failed', e);
       if (generation === _loadGeneration) {
         set({ loading: false });
       }
@@ -109,7 +111,8 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
         structures: { ...s.structures, [key]: structure },
         structureLoading: { ...s.structureLoading, [key]: false },
       }));
-    } catch {
+    } catch (e) {
+      console.warn('[schemaStore] loadTableStructure failed', e);
       set((s) => ({ structureLoading: { ...s.structureLoading, [key]: false } }));
     }
   },

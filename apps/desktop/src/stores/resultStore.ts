@@ -3,6 +3,18 @@ import type { QueryResult, ColumnMeta, ColumnarResult, ColumnData, StreamMeta, R
 import { estimateTabMemory, selectEvictionCandidates } from '../lib/memory-manager';
 import type { TabMemoryEntry } from '../lib/memory-manager';
 
+// Callback to resolve adjacent tab IDs — set by queryStore to avoid circular imports
+let _getAdjacentTabIds: ((tabId: string) => string[]) | null = null;
+
+/** Called by queryStore at init time to wire up adjacent tab resolution */
+export function registerAdjacentTabResolver(fn: (tabId: string) => string[]): void {
+  _getAdjacentTabIds = fn;
+}
+
+function getAdjacentTabIds(tabId: string): string[] {
+  return _getAdjacentTabIds?.(tabId) ?? [];
+}
+
 export interface TabResult {
   columns: ColumnMeta[];
   /** Columnar data — the primary storage format */
@@ -169,10 +181,11 @@ function trackAndEvict(
     pinned: false,
   });
 
+  const adjacentIds = getAdjacentTabIds(tabId);
   const toEvict = selectEvictionCandidates(
     Array.from(memoryEntries.values()),
     tabId,
-    [],
+    adjacentIds,
   );
 
   if (toEvict.length === 0) return results;

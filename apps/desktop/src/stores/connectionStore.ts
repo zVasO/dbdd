@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { ipc, extractErrorMessage } from '../lib/ipc';
+import { showErrorToast } from './toastStore';
 import type { SavedConnection, ConnectionConfig } from '../lib/types';
 
 export interface ActiveConnection {
@@ -65,7 +66,9 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
       await get().loadSavedConnections();
       return connectionId;
     } catch (e) {
-      set({ connecting: false, error: extractErrorMessage(e) });
+      const msg = extractErrorMessage(e);
+      set({ connecting: false, error: msg });
+      showErrorToast(msg);
       throw e;
     }
   },

@@ -1,9 +1,10 @@
 import { create } from 'zustand';
 import { ipc, extractErrorMessage } from '../lib/ipc';
+import { showErrorToast } from './toastStore';
 import { useActivityStore } from './activityStore';
 import { useConnectionStore } from './connectionStore';
 import { usePreferencesStore } from './preferencesStore';
-import { useResultStore } from './resultStore';
+import { useResultStore, registerAdjacentTabResolver } from './resultStore';
 import { saveSession } from '../lib/sessionRecovery';
 import type { QueryResult, QueryHistoryEntry, ColumnarResult } from '../lib/types';
 
@@ -324,6 +325,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       const errMsg = extractErrorMessage(e);
       useActivityStore.getState().logError(activityId, durationMs, errMsg);
       useResultStore.getState().setError(tabId, errMsg);
+      showErrorToast(errMsg);
       maybeNotifyQueryComplete(durationMs, 0, errMsg);
 
       set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null, error: errMsg })));
@@ -368,6 +370,17 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     get()._syncVisibleTabs();
   },
 }));
+
+// Wire up adjacent tab resolution for memory eviction pinning
+registerAdjacentTabResolver((tabId) => {
+  const tabs = useQueryStore.getState().tabs;
+  const idx = tabs.findIndex((t) => t.id === tabId);
+  if (idx < 0) return [];
+  const adjacent: string[] = [];
+  if (idx > 0) adjacent.push(tabs[idx - 1].id);
+  if (idx < tabs.length - 1) adjacent.push(tabs[idx + 1].id);
+  return adjacent;
+});
 
 // Sync visible tabs whenever connection changes
 useConnectionStore.subscribe((state, prevState) => {

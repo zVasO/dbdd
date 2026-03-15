@@ -176,6 +176,10 @@ pub async fn cancel_query(
             .ok_or(IpcError::from("Connection not found"))?;
         Arc::clone(&active.connection)
     };
+    // Signal stream cancellation if this is a streaming query
+    if let Some((_, tx)) = state.stream_cancellers.remove(&query_id) {
+        let _ = tx.send(true);
+    }
     conn.cancel_query(&query_id)
         .await
         .map_err(IpcError::from)?;
@@ -285,6 +289,11 @@ pub async fn execute_query_stream(
         sql.clone()
     };
 
+    // Create a cancellation channel for this streaming query
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    state.stream_cancellers.insert(query_id, cancel_tx);
+    let cancellers = state.stream_cancellers.clone();
+
     // Pre-compute event names to avoid per-iteration allocations
     let event_meta = format!("query_meta_{}", query_id);
     let event_chunk = format!("query_chunk_{}", query_id);
@@ -310,8 +319,16 @@ pub async fn execute_query_stream(
                 let mut total_rows: usize = 0;
                 let mut offset: usize = 0;
                 let mut had_error = false;
+                let cancel_rx = cancel_rx;
 
                 while let Some(chunk_result) = rx.recv().await {
+                    // Check for cancellation between chunks
+                    if *cancel_rx.borrow() {
+                        event_bus.emit(AppEvent::QueryCancelled { query_id });
+                        cancellers.remove(&query_id);
+                        return;
+                    }
+
                     match chunk_result {
                         Ok(rows) => {
                             let chunk_len = rows.len();
@@ -360,6 +377,9 @@ pub async fn execute_query_stream(
                         }
                     }
                 }
+
+                // Clean up canceller for this query
+                cancellers.remove(&query_id);
 
                 if !had_error {
                     let elapsed_ms = start.elapsed().as_millis() as u64;

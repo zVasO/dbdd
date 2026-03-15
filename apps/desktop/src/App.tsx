@@ -6,6 +6,7 @@ import { useThemeStore } from "@/stores/themeStore";
 import { WelcomePage } from "@/pages/WelcomePage";
 import { WorkspacePage } from "@/pages/WorkspacePage";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { Toaster } from "@/components/ui/toaster";
 import { loadSession } from "@/lib/sessionRecovery";
 import { ipc } from "@/lib/ipc";
 import { setupMenuBridge, teardownMenuBridge } from "@/lib/menuBridge";
@@ -132,6 +133,7 @@ function App() {
           {activeConnectionId ? <WorkspacePage /> : <WelcomePage />}
         </div>
       </div>
+      <Toaster />
     </ErrorBoundary>
   );
 }

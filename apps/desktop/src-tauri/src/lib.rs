@@ -319,6 +319,7 @@ pub fn run() {
                 schema_cache,
                 event_bus,
                 driver_registry,
+                stream_cancellers: Arc::new(dashmap::DashMap::new()),
             });
 
             let menu = build_menu(app)?;
