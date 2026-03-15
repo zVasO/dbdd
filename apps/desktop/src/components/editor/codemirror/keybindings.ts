@@ -1,6 +1,7 @@
-import { keymap } from '@codemirror/view';
+import { keymap, type KeyBinding } from '@codemirror/view';
 import { toggleComment } from '@codemirror/commands';
 import type { Extension } from '@codemirror/state';
+import { Prec } from '@codemirror/state';
 import { useShortcutStore, type ShortcutBinding } from '@/stores/shortcutStore';
 
 // === Types ===
@@ -66,7 +67,9 @@ export function purrqlKeybindings(callbacks: KeybindingCallbacks): Extension {
   const formatBinding = getBinding('editor.format');
   const commentBinding = getBinding('editor.toggleComment');
 
-  return keymap.of([
+  // Execute binding gets highest priority so Mod-Enter always fires,
+  // even when the autocomplete popup is open.
+  const executeKeymap = Prec.highest(keymap.of([
     {
       key: bindingToCm6Key(executeBinding),
       run: () => {
@@ -75,6 +78,9 @@ export function purrqlKeybindings(callbacks: KeybindingCallbacks): Extension {
       },
       preventDefault: true,
     },
+  ]));
+
+  const otherKeymaps = keymap.of([
     {
       key: bindingToCm6Key(formatBinding),
       run: () => {
@@ -89,6 +95,8 @@ export function purrqlKeybindings(callbacks: KeybindingCallbacks): Extension {
       preventDefault: true,
     },
   ]);
+
+  return [executeKeymap, otherKeymaps];
 }
 
 export { bindingToCm6Key };
