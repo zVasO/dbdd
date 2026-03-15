@@ -32,7 +32,6 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          'monaco': ['monaco-editor'],
           'vendor': ['react', 'react-dom'],
           'tanstack': ['@tanstack/react-table', '@tanstack/react-virtual'],
           'xlsx': ['xlsx'],

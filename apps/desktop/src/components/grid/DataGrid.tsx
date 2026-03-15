@@ -1208,11 +1208,11 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     }
   }, [isServerPagination, onServerPageChange, pageSize]);
 
-  const pageStart = isServerPagination
-    ? safePage * pageSize
-    : (pageSize === Infinity ? 0 : safePage * pageSize);
+  const pageStart = (pageSize === Infinity || !isFinite(pageSize))
+    ? 0
+    : safePage * pageSize;
   const pageEnd = isServerPagination
-    ? Math.min(pageStart + totalSortedRows, serverTotalRows ?? totalSortedRows)
+    ? (pageSize === Infinity ? totalSortedRows : Math.min(pageStart + pageSize, serverTotalRows ?? totalSortedRows))
     : (pageSize === Infinity ? totalSortedRows : Math.min(pageStart + pageSize, totalSortedRows));
   const displayTotalRows = isServerPagination ? (serverTotalRows ?? totalSortedRows) : totalSortedRows;
 

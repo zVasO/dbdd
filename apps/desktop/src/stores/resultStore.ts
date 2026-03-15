@@ -80,6 +80,66 @@ function buildQueryResult(result: ColumnarResult): QueryResult {
   };
 }
 
+/** Map a CellValue type to ColumnData kind */
+function cellTypeToColumnKind(cellType: string): ColumnData['kind'] {
+  switch (cellType) {
+    case 'Integer': return 'Integers';
+    case 'Float': return 'Floats';
+    case 'Boolean': return 'Booleans';
+    case 'Json': return 'Json';
+    default: return 'Strings';
+  }
+}
+
+/** Convert row-based QueryResult to ColumnarResult (reverse of buildQueryResult) */
+function queryResultToColumnar(result: QueryResult): ColumnarResult {
+  const rowCount = result.rows.length;
+  const colCount = result.columns.length;
+
+  // Infer column kinds from first non-null cell in each column
+  const kinds: ColumnData['kind'][] = result.columns.map((_, colIdx) => {
+    for (let r = 0; r < rowCount; r++) {
+      const cell = result.rows[r]?.cells[colIdx];
+      if (cell && cell.type !== 'Null') {
+        return cellTypeToColumnKind(cell.type);
+      }
+    }
+    return 'Strings'; // Default to Strings for all-null columns
+  });
+
+  // Build columnar data
+  const data: ColumnData[] = kinds.map((kind, colIdx) => {
+    const values = new Array(rowCount);
+    for (let r = 0; r < rowCount; r++) {
+      const cell = result.rows[r]?.cells[colIdx];
+      if (!cell || cell.type === 'Null') {
+        values[r] = null;
+      } else if ('value' in cell) {
+        // For non-string types stored as Strings column, convert to string
+        if (kind === 'Strings' && typeof cell.value !== 'string') {
+          values[r] = cell.type === 'Json' ? JSON.stringify(cell.value) : String(cell.value);
+        } else {
+          values[r] = cell.value;
+        }
+      } else {
+        values[r] = null;
+      }
+    }
+    return { kind, values } as ColumnData;
+  });
+
+  return {
+    query_id: result.query_id,
+    columns: result.columns,
+    data,
+    row_count: rowCount,
+    affected_rows: result.affected_rows,
+    execution_time_ms: result.execution_time_ms,
+    warnings: result.warnings,
+    result_type: result.result_type,
+  };
+}
+
 /** Direct columnar cell access — O(1) per cell, no row conversion needed */
 export function getColumnarCell(data: ColumnData[], colIdx: number, rowIdx: number): { type: string; value: unknown } {
   const col = data[colIdx];
@@ -268,52 +328,59 @@ export const useResultStore = create<ResultState>((set, get) => ({
   },
 
   setResult: (tabId, result) => {
-    set((s) => ({
-      results: {
-        ...s.results,
-        [tabId]: {
-          ...EMPTY_COLUMNAR_DEFAULTS,
-          columns: result.columns,
-          totalRows: result.rows.length,
-          isExecuting: false,
-          isStreaming: false,
-          streamProgress: 0,
-          isStale: false,
-          error: null,
-          activeResultIndex: 0,
-          _streamResultType: null,
-          _streamQueryId: null,
-          _streamWarnings: [],
-          _rowsCache: result.rows,
-          _allResultsCache: [result],
-        },
-      },
-    }));
+    const columnar = queryResultToColumnar(result);
+    set((s) => {
+      const newTabResult: TabResult = {
+        columns: result.columns,
+        data: columnar.data,
+        rowCount: result.rows.length,
+        totalRows: result.rows.length,
+        executionTimeMs: result.execution_time_ms,
+        isExecuting: false,
+        isStreaming: false,
+        streamProgress: 0,
+        isStale: false,
+        error: null,
+        allColumnarResults: [columnar],
+        activeResultIndex: 0,
+        _streamResultType: null,
+        _streamQueryId: null,
+        _streamWarnings: [],
+        _rowsCache: result.rows,
+        _allResultsCache: [result],
+      };
+      const updatedResults = { ...s.results, [tabId]: newTabResult };
+      return { results: trackAndEvict(tabId, columnar.data, updatedResults) };
+    });
   },
 
   setResults: (tabId, results, error) => {
+    const columnarResults = results.map(queryResultToColumnar);
     const first = results[0] ?? null;
-    set((s) => ({
-      results: {
-        ...s.results,
-        [tabId]: {
-          ...EMPTY_COLUMNAR_DEFAULTS,
-          columns: first?.columns ?? [],
-          totalRows: first?.rows.length ?? 0,
-          isExecuting: false,
-          isStreaming: false,
-          streamProgress: 0,
-          isStale: false,
-          error,
-          activeResultIndex: 0,
-          _streamResultType: null,
-          _streamQueryId: null,
-          _streamWarnings: [],
-          _rowsCache: first?.rows ?? [],
-          _allResultsCache: results,
-        },
-      },
-    }));
+    const firstColumnar = columnarResults[0] ?? null;
+    set((s) => {
+      const newTabResult: TabResult = {
+        columns: first?.columns ?? [],
+        data: firstColumnar?.data ?? [],
+        rowCount: firstColumnar?.row_count ?? 0,
+        totalRows: first?.rows.length ?? 0,
+        executionTimeMs: firstColumnar?.execution_time_ms ?? 0,
+        isExecuting: false,
+        isStreaming: false,
+        streamProgress: 0,
+        isStale: false,
+        error,
+        allColumnarResults: columnarResults,
+        activeResultIndex: 0,
+        _streamResultType: null,
+        _streamQueryId: null,
+        _streamWarnings: [],
+        _rowsCache: first?.rows ?? [],
+        _allResultsCache: results,
+      };
+      const updatedResults = { ...s.results, [tabId]: newTabResult };
+      return { results: trackAndEvict(tabId, firstColumnar?.data ?? [], updatedResults) };
+    });
   },
 
   setColumnarResult: (tabId, result) => {

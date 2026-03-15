@@ -174,8 +174,9 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
     const qt = quoteIdentifier(activeTab.table, dbType);
     ipc.executeQueryColumnar(activeConnectionId, `SELECT COUNT(*) AS cnt FROM ${qt}`)
       .then((res) => {
-        const count = res.data[0]?.values[0];
-        setServerTotalRows(typeof count === 'number' ? count : 0);
+        const raw = res.data[0]?.values[0];
+        const count = Number(raw);
+        setServerTotalRows(Number.isFinite(count) ? count : 0);
       })
       .catch(() => setServerTotalRows(undefined));
   }, [activeConnectionId, activeTab?.table, activeTab?.database, dbType]);
@@ -201,8 +202,9 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
     if (whereClause) {
       ipc.executeQueryColumnar(activeConnectionId, `SELECT COUNT(*) AS cnt FROM ${qt}${whereClause}`)
         .then((res) => {
-          const count = res.data[0]?.values[0];
-          setServerTotalRows(typeof count === 'number' ? count : 0);
+          const raw = res.data[0]?.values[0];
+          const count = Number(raw);
+          setServerTotalRows(Number.isFinite(count) ? count : 0);
         })
         .catch(() => {});
     }
