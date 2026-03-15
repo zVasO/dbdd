@@ -182,6 +182,130 @@ fn extract_string(cells: &[CellValue], col_idx: usize) -> Option<String> {
     }
 }
 
+/// Consuming conversion from `QueryResult` into `ColumnarResult`.
+///
+/// Unlike the `From<QueryResult>` impl (which borrows cells via shared references
+/// and clones heap-allocated values like String and serde_json::Value),
+/// this method moves data out of each cell using `std::mem::take`, avoiding
+/// per-cell heap allocations for strings, JSON, byte previews, and arrays.
+///
+/// Use this when the `QueryResult` is no longer needed after conversion
+/// (e.g., the `execute_query_columnar` Tauri command).
+impl ColumnarResult {
+    pub fn from_query_result_consuming(mut result: QueryResult) -> Self {
+        let row_count = result.rows.len();
+        let col_count = result.columns.len();
+
+        // Determine column kinds by inspecting first non-null cell (read-only pass)
+        let kinds: Vec<ColumnKind> = (0..col_count)
+            .map(|col_idx| determine_column_kind(&result, col_idx))
+            .collect();
+
+        // Build columns by moving values out of cells (consuming pass)
+        let data = (0..col_count)
+            .map(|col_idx| {
+                build_column_consuming(&mut result.rows, col_idx, row_count, &kinds[col_idx])
+            })
+            .collect();
+
+        ColumnarResult {
+            query_id: result.query_id,
+            columns: result.columns,
+            data,
+            row_count,
+            affected_rows: result.affected_rows,
+            execution_time_ms: result.execution_time_ms,
+            warnings: result.warnings,
+            result_type: result.result_type,
+        }
+    }
+}
+
+fn build_column_consuming(
+    rows: &mut [super::query::Row],
+    col_idx: usize,
+    row_count: usize,
+    kind: &ColumnKind,
+) -> ColumnData {
+    match kind {
+        ColumnKind::Integer => {
+            let mut values = Vec::with_capacity(row_count);
+            for row in rows.iter() {
+                values.push(extract_integer(&row.cells, col_idx));
+            }
+            ColumnData::Integers { values }
+        }
+        ColumnKind::Float => {
+            let mut values = Vec::with_capacity(row_count);
+            for row in rows.iter() {
+                values.push(extract_float(&row.cells, col_idx));
+            }
+            ColumnData::Floats { values }
+        }
+        ColumnKind::Boolean => {
+            let mut values = Vec::with_capacity(row_count);
+            for row in rows.iter() {
+                values.push(extract_boolean(&row.cells, col_idx));
+            }
+            ColumnData::Booleans { values }
+        }
+        ColumnKind::Json => {
+            let mut values = Vec::with_capacity(row_count);
+            for row in rows.iter_mut() {
+                values.push(take_json(&mut row.cells, col_idx));
+            }
+            ColumnData::Json { values }
+        }
+        ColumnKind::String => {
+            let mut values = Vec::with_capacity(row_count);
+            for row in rows.iter_mut() {
+                values.push(take_string(&mut row.cells, col_idx));
+            }
+            ColumnData::Strings { values }
+        }
+    }
+}
+
+/// Move a string value out of the cell, replacing it with `CellValue::Null`.
+/// Avoids cloning heap-allocated strings.
+fn take_string(cells: &mut [CellValue], col_idx: usize) -> Option<String> {
+    match cells.get_mut(col_idx) {
+        Some(cell) => match std::mem::replace(cell, CellValue::Null) {
+            CellValue::Text(v) => Some(v),
+            CellValue::DateTime(v) => Some(v),
+            CellValue::Date(v) => Some(v),
+            CellValue::Time(v) => Some(v),
+            CellValue::Uuid(v) => Some(v),
+            CellValue::Bytes { preview, .. } => Some(preview),
+            CellValue::Array(items) => {
+                Some(serde_json::to_string(&items).unwrap_or_default())
+            }
+            CellValue::Integer(v) => Some(v.to_string()),
+            CellValue::Float(v) => Some(v.to_string()),
+            CellValue::Boolean(v) => Some(v.to_string()),
+            CellValue::Json(v) => Some(v.to_string()),
+            CellValue::Null => None,
+        },
+        None => None,
+    }
+}
+
+/// Move a JSON value out of the cell, replacing it with `CellValue::Null`.
+fn take_json(cells: &mut [CellValue], col_idx: usize) -> Option<serde_json::Value> {
+    match cells.get_mut(col_idx) {
+        Some(cell) => match std::mem::replace(cell, CellValue::Null) {
+            CellValue::Json(v) => Some(v),
+            CellValue::Null => None,
+            other => {
+                // Put back non-JSON values; this path should not occur in practice
+                *cell = other;
+                None
+            }
+        },
+        None => None,
+    }
+}
+
 /// Convert a chunk of rows into columnar ColumnData vectors.
 /// Used by streaming query execution to convert row chunks on-the-fly.
 pub fn rows_to_columnar_chunk(

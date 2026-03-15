@@ -152,15 +152,100 @@ pub async fn execute_query(
     }
 }
 
+/// Columnar variant of `execute_query`.
+///
+/// Instead of delegating to `execute_query` (which builds a row-based `QueryResult`)
+/// and then converting via `ColumnarResult::from`, this command inlines the same
+/// safety-limit / history / event logic and converts directly using
+/// `ColumnarResult::from_query_result_consuming`. The consuming path moves
+/// heap-allocated values (String, serde_json::Value) out of cells via
+/// `std::mem::take` rather than cloning them, saving one allocation per
+/// string/JSON cell.
+///
+/// The row-to-columnar transpose itself is unavoidable at the current driver
+/// level because all drivers return `QueryResult { rows: Vec<Row> }`.
+/// A native columnar return path in the driver trait would eliminate this
+/// transpose entirely, but that is a larger refactor tracked separately.
 #[tauri::command]
-#[instrument(skip(state))]
+#[instrument(skip(state), fields(query_id, row_count))]
 pub async fn execute_query_columnar(
     state: State<'_, AppState>,
     connection_id: Uuid,
     sql: String,
 ) -> Result<dataforge_core::models::columnar::ColumnarResult, IpcError> {
-    let result = execute_query(state, connection_id, sql).await?;
-    Ok(dataforge_core::models::columnar::ColumnarResult::from(result))
+    let query_id = Uuid::new_v4();
+    tracing::Span::current().record("query_id", query_id.to_string());
+
+    state.event_bus.emit(AppEvent::query_started(query_id, &sql));
+
+    let start = std::time::Instant::now();
+
+    let conn = {
+        let active = state
+            .connection_manager
+            .get(&connection_id)
+            .ok_or(IpcError::from("Connection not found"))?;
+        Arc::clone(&active.connection)
+    };
+
+    let effective_sql = if needs_safety_limit(&sql) {
+        apply_safety_limit(&sql)
+    } else {
+        sql.clone()
+    };
+
+    match conn.execute(&effective_sql).await {
+        Ok(mut result) => {
+            result.query_id = query_id;
+            result.execution_time_ms = start.elapsed().as_millis() as u64;
+
+            let row_count = result.rows.len() as u64;
+            tracing::Span::current().record("row_count", row_count);
+
+            let is_ddl = schema_cache::is_ddl(&sql);
+
+            let history_entry = QueryHistoryEntry {
+                id: query_id,
+                connection_id,
+                sql,
+                executed_at: chrono::Utc::now(),
+                duration_ms: result.execution_time_ms,
+                row_count: Some(row_count),
+                status: QueryStatus::Success,
+                error_message: None,
+            };
+            {
+                let config_store = state.config_store.clone();
+                let entry = history_entry.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = config_store.add_to_history(&entry).await {
+                        tracing::warn!(error = %e, "Failed to write query history");
+                    }
+                });
+            }
+
+            state.event_bus.emit(AppEvent::QueryCompleted {
+                query_id,
+                row_count,
+                elapsed_ms: result.execution_time_ms,
+            });
+
+            if is_ddl {
+                state.schema_cache.invalidate_connection(&connection_id);
+            }
+
+            // Convert directly via consuming path — moves strings/JSON out of
+            // cells instead of cloning, saving one heap allocation per cell.
+            Ok(dataforge_core::models::columnar::ColumnarResult::from_query_result_consuming(result))
+        }
+        Err(e) => {
+            state.event_bus.emit(AppEvent::QueryError {
+                query_id,
+                error: e.to_string(),
+            });
+            Err(IpcError::from(e))
+        }
+    }
 }
 
 #[tauri::command]

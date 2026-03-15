@@ -1,7 +1,13 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { X, Plus, GitBranch, LayoutDashboard, Activity, Search, Code2, Workflow, ArrowLeftRight, Bell, RefreshCw } from 'lucide-react';
+import { X, Plus, ChevronDown, GitBranch, LayoutDashboard, Activity, Search, Code2, Workflow, ArrowLeftRight, Bell, RefreshCw, FileCode } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import type { QueryTab } from '@/stores/queryStore';
 import { useQueryStore } from '@/stores/queryStore';
 import { useResultStore } from '@/stores/resultStore';
@@ -117,14 +123,42 @@ export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTa
           </div>
         );
       })}
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        onClick={onNewTab}
-        className="ml-1 text-muted-foreground hover:text-foreground"
-      >
-        <Plus className="size-3" />
-      </Button>
+      <div className="ml-1 flex items-center">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={onNewTab}
+          className="rounded-r-none text-muted-foreground hover:text-foreground"
+        >
+          <Plus className="size-3" />
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="size-4 rounded-l-none text-muted-foreground hover:text-foreground"
+            >
+              <ChevronDown className="size-2" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" sideOffset={4}>
+            <DropdownMenuItem onClick={onNewTab}>
+              <Code2 className="size-4" />
+              New Query Tab
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => {
+                console.log('New from Template');
+                onNewTab();
+              }}
+            >
+              <FileCode className="size-4" />
+              New from Template
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   );
 }

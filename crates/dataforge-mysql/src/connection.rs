@@ -201,6 +201,124 @@ impl DatabaseConnection for MySqlConnection {
         }
     }
 
+    async fn execute_stream(
+        &self,
+        sql: &str,
+        chunk_size: usize,
+    ) -> Result<(Vec<ColumnMeta>, tokio::sync::mpsc::Receiver<Result<Vec<Row>>>)> {
+        use futures::StreamExt;
+        use mysql_async::prelude::*;
+
+        let pool = self.pool.clone();
+        let sql = sql.to_string();
+        let chunk_size = chunk_size.max(1);
+        let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+
+        tokio::spawn(async move {
+            // Acquire a dedicated connection for streaming
+            let mut conn = match pool.get_conn().await {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = meta_tx.send(Err(DataForgeError::Connection(e.to_string())));
+                    return;
+                }
+            };
+
+            // Execute query and get an iterator-style result set
+            let query_result = match conn.query_iter(&sql).await {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = meta_tx.send(Err(DataForgeError::QueryExecution(e.to_string())));
+                    return;
+                }
+            };
+
+            // Extract column metadata from the result set before consuming rows
+            let columns_ref = query_result.columns().map(|arc| arc.to_vec());
+            let col_meta: Vec<ColumnMeta> = match &columns_ref {
+                Some(cols) => cols
+                    .iter()
+                    .map(|col| {
+                        let (data_type, native_type) = crate::type_mapping::map_column_meta(col);
+                        ColumnMeta {
+                            name: col.name_str().to_string(),
+                            data_type,
+                            native_type,
+                            nullable: true,
+                            is_primary_key: false,
+                            max_length: None,
+                        }
+                    })
+                    .collect(),
+                None => vec![],
+            };
+
+            let col_count = col_meta.len();
+
+            // Send column metadata back to the caller
+            if meta_tx.send(Ok(col_meta)).is_err() {
+                // Receiver dropped; drain the result set to return the connection
+                let _ = query_result.stream_and_drop::<mysql_async::Row>().await;
+                return;
+            }
+
+            // Stream rows using stream_and_drop for real cursor-based iteration
+            let mut stream = match query_result.stream_and_drop::<mysql_async::Row>().await {
+                Ok(Some(s)) => s,
+                Ok(None) => {
+                    // No result set (e.g. DDL statement) — nothing to stream
+                    return;
+                }
+                Err(e) => {
+                    let _ = tx
+                        .send(Err(DataForgeError::QueryExecution(e.to_string())))
+                        .await;
+                    return;
+                }
+            };
+
+            let mut chunk: Vec<Row> = Vec::with_capacity(chunk_size);
+
+            while let Some(result) = stream.next().await {
+                match result {
+                    Ok(row) => {
+                        let mut cells: Vec<CellValue> = Vec::with_capacity(col_count);
+                        for i in 0..row.len() {
+                            cells.push(crate::type_mapping::mysql_value_to_cell(&row, i));
+                        }
+                        chunk.push(Row { cells });
+
+                        if chunk.len() >= chunk_size {
+                            let full =
+                                std::mem::replace(&mut chunk, Vec::with_capacity(chunk_size));
+                            if tx.send(Ok(full)).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tx
+                            .send(Err(DataForgeError::QueryExecution(e.to_string())))
+                            .await;
+                        return;
+                    }
+                }
+            }
+
+            // Flush any remaining rows in the last partial chunk
+            if !chunk.is_empty() {
+                let _ = tx.send(Ok(chunk)).await;
+            }
+        });
+
+        let columns = meta_rx
+            .await
+            .map_err(|_| DataForgeError::QueryExecution("Stream task failed".to_string()))??;
+
+        Ok((columns, rx))
+    }
+
     async fn close(&self) -> Result<()> {
         self.pool
             .clone()
