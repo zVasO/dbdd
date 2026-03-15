@@ -285,8 +285,13 @@ export const useQueryStore = create<QueryState>((set, get) => ({
           set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null })));
         } else {
           // Streaming path — progressive delivery for large/unbounded results
-          const queryId = await ipc.executeQueryStream(connectionId, tab.sql);
-          // Store queryId on tab so the UI can cancel it
+          //
+          // IMPORTANT: Generate queryId client-side and register listeners BEFORE
+          // calling the backend. This prevents a race condition where fast-failing
+          // queries (syntax errors, missing tables) emit error events before the
+          // frontend has finished setting up listeners, leaving the query stuck
+          // in "running" state forever.
+          const queryId = crypto.randomUUID();
           set((s) => updateTab(s, tabId, (t) => ({ ...t, activeQueryId: queryId })));
 
           const cleanup = await ipc.listenToStream(queryId, {
@@ -315,6 +320,9 @@ export const useQueryStore = create<QueryState>((set, get) => ({
               set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null, error: err.error })));
             },
           });
+
+          // Now start the stream — listeners are already registered
+          await ipc.executeQueryStream(connectionId, tab.sql, undefined, queryId);
 
           // Streaming is event-driven — don't fall through to catch block
           return;

@@ -343,6 +343,13 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       values[col.name] = null;
     });
     addChange({ type: 'insert', table, database, values });
+    // Scroll to bottom so the new inserted row is visible
+    requestAnimationFrame(() => {
+      const container = parentRef.current;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    });
   }, [database, table, result.columns, addChange]);
 
   const insertedRows = pendingChanges.filter((c): c is RowInsert => c.type === 'insert');

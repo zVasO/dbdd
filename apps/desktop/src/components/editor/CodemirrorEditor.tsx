@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react';
 import { EditorView, type ViewUpdate } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { sql, PostgreSQL } from '@codemirror/lang-sql';
-import { autocompletion } from '@codemirror/autocomplete';
+import { autocompletion, acceptCompletion } from '@codemirror/autocomplete';
+import { keymap } from '@codemirror/view';
 
 import {
   baseSetup,
@@ -118,6 +119,7 @@ export function CodemirrorEditor({ value, onChange, onExecute }: Props) {
           activateOnTyping: true,
           maxRenderedOptions: 50,
         }),
+        keymap.of([{ key: 'Tab', run: acceptCompletion }]),
         dataforgeKeybindings({
           onExecute: () => executeRef.current(),
           onFormat: () => { void formatRef.current(); },

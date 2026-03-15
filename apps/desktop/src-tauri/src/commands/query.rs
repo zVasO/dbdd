@@ -349,8 +349,9 @@ pub async fn execute_query_stream(
     connection_id: Uuid,
     sql: String,
     chunk_size: Option<usize>,
+    query_id: Option<Uuid>,
 ) -> Result<String, IpcError> {
-    let query_id = Uuid::new_v4();
+    let query_id = query_id.unwrap_or_else(Uuid::new_v4);
     let chunk_size = chunk_size.unwrap_or(1000);
 
     let conn = {
