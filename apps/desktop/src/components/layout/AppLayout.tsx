@@ -134,7 +134,7 @@ export function AppLayout() {
     {
       ...sc('global.save'),
       handler: () => {
-        document.dispatchEvent(new CustomEvent('dataforge:commit'));
+        document.dispatchEvent(new CustomEvent('purrql:commit'));
       },
       when: () => !isModalOpen(),
     },

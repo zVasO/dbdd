@@ -3,8 +3,8 @@ import type { Theme, ThemeColors, ThemeTypography, ThemeLayout, ThemeShadows } f
 import { applyThemeToDOM, importTheme, parseCSSVariablesDual } from '@/lib/themeTypes';
 import { BUILT_IN_THEMES, DARK_DEFAULT } from '@/lib/builtInThemes';
 
-const STORAGE_KEY = 'dataforge:themes';
-const ACTIVE_KEY = 'dataforge:active-theme';
+const STORAGE_KEY = 'purrql:themes';
+const ACTIVE_KEY = 'purrql:active-theme';
 
 interface ThemeState {
   themes: Theme[];

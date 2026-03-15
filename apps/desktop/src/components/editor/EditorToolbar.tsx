@@ -94,8 +94,8 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
   // Listen for Ctrl+S commit event from AppLayout
   useEffect(() => {
     const handler = () => { handleCommit(); };
-    document.addEventListener('dataforge:commit', handler);
-    return () => document.removeEventListener('dataforge:commit', handler);
+    document.addEventListener('purrql:commit', handler);
+    return () => document.removeEventListener('purrql:commit', handler);
   }, [handleCommit]);
 
   return (
@@ -149,7 +149,7 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => document.dispatchEvent(new CustomEvent('dataforge:format'))}
+              onClick={() => document.dispatchEvent(new CustomEvent('purrql:format'))}
               className="gap-1.5 text-xs"
             >
               <Wand2 className="h-3.5 w-3.5" />

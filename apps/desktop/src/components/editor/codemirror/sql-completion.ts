@@ -32,7 +32,7 @@ function completionTypeForItem(itemType: 'table' | 'column'): string {
 // Main completer
 // ---------------------------------------------------------------------------
 
-export async function dataforgeSqlCompleter(
+export async function purrqlSqlCompleter(
   ctx: CompletionContext,
 ): Promise<CompletionResult | null> {
   const word = ctx.matchBefore(/\w*/);

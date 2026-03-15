@@ -14,9 +14,9 @@ import {
   lineNumbersExtension,
   wordWrapExtension,
 } from './codemirror/setup';
-import { themeCompartment, dataforgeTheme } from './codemirror/theme';
-import { dataforgeKeybindings } from './codemirror/keybindings';
-import { dataforgeSqlCompleter } from './codemirror/sql-completion';
+import { themeCompartment, purrqlTheme } from './codemirror/theme';
+import { purrqlKeybindings } from './codemirror/keybindings';
+import { purrqlSqlCompleter } from './codemirror/sql-completion';
 import { usePreferencesStore } from '@/stores/preferencesStore';
 import { useThemeStore } from '@/stores/themeStore';
 
@@ -112,15 +112,15 @@ export function CodemirrorEditor({ value, onChange, onExecute }: Props) {
         lineNumbersCompartment.of(lineNumbersExtension(showLineNumbers)),
         fontSizeCompartment.of(fontSizeExtension(fontSize)),
         wordWrapCompartment.of(wordWrapExtension(wordWrap)),
-        themeCompartment.of(dataforgeTheme(isDark)),
+        themeCompartment.of(purrqlTheme(isDark)),
         sql({ dialect: PostgreSQL }),
         autocompletion({
-          override: [dataforgeSqlCompleter],
+          override: [purrqlSqlCompleter],
           activateOnTyping: true,
           maxRenderedOptions: 50,
         }),
         keymap.of([{ key: 'Tab', run: acceptCompletion }]),
-        dataforgeKeybindings({
+        purrqlKeybindings({
           onExecute: () => executeRef.current(),
           onFormat: () => { void formatRef.current(); },
         }),
@@ -179,7 +179,7 @@ export function CodemirrorEditor({ value, onChange, onExecute }: Props) {
     // Small delay to let CSS variables update on DOM first
     const timer = setTimeout(() => {
       view.dispatch({
-        effects: themeCompartment.reconfigure(dataforgeTheme(isDark)),
+        effects: themeCompartment.reconfigure(purrqlTheme(isDark)),
       });
     }, THEME_SWITCH_DELAY_MS);
     return () => clearTimeout(timer);
@@ -219,8 +219,8 @@ export function CodemirrorEditor({ value, onChange, onExecute }: Props) {
   // --- Format event listener (toolbar button) ---
   useEffect(() => {
     const handler = () => { void formatRef.current(); };
-    document.addEventListener('dataforge:format', handler);
-    return () => document.removeEventListener('dataforge:format', handler);
+    document.addEventListener('purrql:format', handler);
+    return () => document.removeEventListener('purrql:format', handler);
   }, []);
 
   return <div ref={containerRef} className="h-full" />;

@@ -4,8 +4,8 @@ use dashmap::DashMap;
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use dataforge_config::store::ConfigStore;
-use dataforge_engine::{
+use purrql_config::store::ConfigStore;
+use purrql_engine::{
     connection_manager::ConnectionManager, driver_registry::DriverRegistry, event_bus::EventBus,
     schema_cache::SchemaCache,
 };

@@ -1,5 +1,5 @@
 [package]
-name = "dataforge-desktop"
+name = "purrql-desktop"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,12 +7,12 @@ edition = "2021"
 tauri-build = { workspace = true }
 
 [dependencies]
-dataforge-core = { path = "../../../crates/dataforge-core" }
-dataforge-engine = { path = "../../../crates/dataforge-engine" }
-dataforge-config = { path = "../../../crates/dataforge-config" }
-dataforge-mysql = { path = "../../../crates/dataforge-mysql" }
-dataforge-sqlite = { path = "../../../crates/dataforge-sqlite" }
-dataforge-postgres = { path = "../../../crates/dataforge-postgres" }
+purrql-core = { path = "../../../crates/purrql-core" }
+purrql-engine = { path = "../../../crates/purrql-engine" }
+purrql-config = { path = "../../../crates/purrql-config" }
+purrql-mysql = { path = "../../../crates/purrql-mysql" }
+purrql-sqlite = { path = "../../../crates/purrql-sqlite" }
+purrql-postgres = { path = "../../../crates/purrql-postgres" }
 tauri = { workspace = true }
 tauri-plugin-stronghold = "2"
 serde = { workspace = true }

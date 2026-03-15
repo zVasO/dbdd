@@ -23,7 +23,7 @@ interface NotesState {
   setEditingNoteId: (id: string | null) => void;
 }
 
-const STORAGE_KEY = 'dataforge:notes';
+const STORAGE_KEY = 'purrql:notes';
 
 function loadNotes(): Note[] {
   try {

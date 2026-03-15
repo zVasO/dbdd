@@ -54,7 +54,7 @@ interface DashboardState {
   executeAllWidgets: (dashboardId: string, connectionId: string) => Promise<void>;
 }
 
-const STORAGE_KEY = 'dataforge:dashboards';
+const STORAGE_KEY = 'purrql:dashboards';
 
 function persistDashboards(dashboards: Dashboard[]) {
   try {

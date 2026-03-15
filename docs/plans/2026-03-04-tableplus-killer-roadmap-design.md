@@ -1,4 +1,4 @@
-# DataForge — "TablePlus Killer" Roadmap Design
+# PurrQL — "TablePlus Killer" Roadmap Design
 
 **Date:** 2026-03-04
 **Positionnement:** Client database desktop ultra-rapide, beau, et intelligent. Parité TablePlus minimum, puis différenciation par l'IA et les plugins.
@@ -169,7 +169,7 @@ Objectif : Plus agréable et plus rapide que TablePlus.
 - **Connection colors** (P0)
 - **Environment tags** : Local/Dev/Testing/Staging/Production (P0)
 - **Connection groups** : Dossiers drag & drop (P1)
-- **Import/Export connections** : `.dataforge-connections` (P1)
+- **Import/Export connections** : `.purrql-connections` (P1)
 - **Connection URL import** : Coller URL → auto-fill (P0)
 - **Keep-alive pings** : 30s configurable (P0)
 
@@ -262,7 +262,7 @@ Objectif : Dépasser TablePlus. Devenir le #1.
 - **Database privileges** : Per-database (P2)
 - **Resource limits** (P3)
 
-### 3.7 DataForge Exclusives
+### 3.7 PurrQL Exclusives
 
 - **Query versioning** : Git-like history, diff, revert (P2)
 - **Schema diff** : Comparer 2 databases (P2)
@@ -275,7 +275,7 @@ Objectif : Dépasser TablePlus. Devenir le #1.
 
 ## Positionnement Prix
 
-| Tier | TablePlus | DataForge |
+| Tier | TablePlus | PurrQL |
 |------|-----------|-----------|
 | Free | 2 tabs, 2 windows | 3 tabs, 2 windows, AI limité (5 queries/jour) |
 | Pro | $89 one-time | $69 one-time OU $7/mois |
@@ -291,5 +291,5 @@ L'AI gratuit limité est le hook d'acquisition — aucun concurrent ne propose �
 |-------|----------|----------|
 | P1 | ~45 features | Produit utilisable en production |
 | P2 | ~50 features | Parité TablePlus atteinte |
-| P3 | ~35 features | DataForge > TablePlus |
+| P3 | ~35 features | PurrQL > TablePlus |
 | Total | ~130 features | #1 du marché |

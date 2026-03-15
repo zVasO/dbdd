@@ -48,8 +48,8 @@ interface AlertState {
   getUnreadCount: () => number;
 }
 
-const QUERIES_STORAGE_KEY = 'dataforge:scheduled-queries';
-const ALERTS_STORAGE_KEY = 'dataforge:alerts';
+const QUERIES_STORAGE_KEY = 'purrql:scheduled-queries';
+const ALERTS_STORAGE_KEY = 'purrql:alerts';
 
 // Module-level timers map (not in state since timers are not serializable)
 const timers = new Map<string, ReturnType<typeof setInterval>>();
@@ -182,7 +182,7 @@ async function executeAndCheck(query: ScheduledQuery): Promise<void> {
 
       state.updateScheduledQuery(query.id, { lastAlertAt: Date.now() });
 
-      sendNotification(`DataForge Alert: ${query.name}`, message);
+      sendNotification(`PurrQL Alert: ${query.name}`, message);
     }
   } catch (e) {
     // Update last run time even on error

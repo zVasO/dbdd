@@ -1,5 +1,5 @@
-const STORAGE_KEY = 'dataforge:session:v2';
-const LEGACY_KEY = 'dataforge:session';
+const STORAGE_KEY = 'purrql:session:v2';
+const LEGACY_KEY = 'purrql:session';
 
 interface SavedTab {
   id: string;

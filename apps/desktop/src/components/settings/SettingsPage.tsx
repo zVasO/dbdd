@@ -136,7 +136,7 @@ function AppearanceSection() {
 
   return (
     <div className="space-y-6">
-      <SectionTitle title="Appearance" description="Customize the look and feel of DataForge." />
+      <SectionTitle title="Appearance" description="Customize the look and feel of PurrQL." />
 
       <SettingRow label="Theme" description="Select a color theme for the interface.">
         <Select value={activeThemeId} onValueChange={setActiveTheme}>
@@ -304,7 +304,7 @@ function NotificationsSection() {
 
   return (
     <div className="space-y-6">
-      <SectionTitle title="Notifications" description="Configure when DataForge sends system notifications." />
+      <SectionTitle title="Notifications" description="Configure when PurrQL sends system notifications." />
 
       <SettingRow label="Notify on long queries" description="Send a notification when a query takes longer than the threshold (only when window is not focused).">
         <Toggle checked={notifyOnLongQueries} onChange={(v) => set('notifyOnLongQueries', v)} />
@@ -334,7 +334,7 @@ function SecuritySection() {
 
   return (
     <div className="space-y-6">
-      <SectionTitle title="Security" description="Control how DataForge handles dangerous operations." />
+      <SectionTitle title="Security" description="Control how PurrQL handles dangerous operations." />
 
       <SettingRow label="Safe Mode" description="Choose when to show confirmation dialogs for destructive queries.">
         <Select

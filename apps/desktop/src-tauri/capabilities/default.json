@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for DataForge",
+  "description": "Default capabilities for PurrQL",
   "windows": ["main"],
   "permissions": [
     "core:default",

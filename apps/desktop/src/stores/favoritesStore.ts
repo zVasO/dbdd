@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-const STORAGE_KEY = 'dataforge:favorites';
+const STORAGE_KEY = 'purrql:favorites';
 
 interface FavoritesState {
   favorites: Record<string, string[]>; // connectionId -> table names

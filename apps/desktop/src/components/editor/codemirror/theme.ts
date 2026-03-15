@@ -4,7 +4,7 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 
 /**
- * Compartment for hot-swapping the DataForge theme
+ * Compartment for hot-swapping the PurrQL theme
  * without recreating the entire editor instance.
  */
 export const themeCompartment = new Compartment();
@@ -48,12 +48,12 @@ function cssVarToHex(varName: string, fallback: string): string {
 }
 
 /**
- * Build the full DataForge theme extension for CodeMirror 6.
+ * Build the full PurrQL theme extension for CodeMirror 6.
  *
  * Reads CSS custom properties from :root at call time so the
  * theme stays in sync with the app's light/dark palette.
  */
-export function dataforgeTheme(isDark: boolean): Extension {
+export function purrqlTheme(isDark: boolean): Extension {
   const bg = cssVarToHex('--background', isDark ? '#1e1e1e' : '#ffffff');
   const fg = cssVarToHex('--foreground', isDark ? '#d4d4d4' : '#1e1e1e');
   const muted = cssVarToHex('--muted', isDark ? '#2d2d2d' : '#f5f5f5');

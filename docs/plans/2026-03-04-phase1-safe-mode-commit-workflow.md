@@ -754,7 +754,7 @@ Add these to the shortcuts array:
   modifiers: ['ctrl'],
   handler: () => {
     // Commit is handled by toolbar button logic — we trigger via a custom event
-    document.dispatchEvent(new CustomEvent('dataforge:commit'));
+    document.dispatchEvent(new CustomEvent('purrql:commit'));
   },
 },
 {
@@ -784,8 +784,8 @@ In `EditorToolbar.tsx`, add a `useEffect` to listen for the custom event:
 ```typescript
 useEffect(() => {
   const handler = () => handleCommit();
-  document.addEventListener('dataforge:commit', handler);
-  return () => document.removeEventListener('dataforge:commit', handler);
+  document.addEventListener('purrql:commit', handler);
+  return () => document.removeEventListener('purrql:commit', handler);
 }, [handleCommit]);
 ```
 

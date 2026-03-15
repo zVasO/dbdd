@@ -1,8 +1,8 @@
-# DATAFORGE — Cahier des Charges Technique
+# PURRQL — Cahier des Charges Technique
 
 ## Instructions pour l'agent IA
 
-Tu es un Staff Engineer spécialisé Rust + React/TypeScript. Tu dois implémenter **DataForge**, un outil de gestion de bases de données desktop (alternative moderne à TablePlus), en suivant ce cahier des charges **à la lettre**. Chaque section contient des instructions précises, des signatures de code, des patterns à respecter et des contraintes non négociables. Ne prends aucune liberté sur l'architecture — elle a été validée par le CTO.
+Tu es un Staff Engineer spécialisé Rust + React/TypeScript. Tu dois implémenter **PurrQL**, un outil de gestion de bases de données desktop (alternative moderne à TablePlus), en suivant ce cahier des charges **à la lettre**. Chaque section contient des instructions précises, des signatures de code, des patterns à respecter et des contraintes non négociables. Ne prends aucune liberté sur l'architecture — elle a été validée par le CTO.
 
 ---
 
@@ -30,7 +30,7 @@ Tu es un Staff Engineer spécialisé Rust + React/TypeScript. Tu dois implément
 
 ### 1.1 Produit
 
-**DataForge** est une application desktop multi-plateforme (macOS, Windows, Linux) de gestion de bases de données. Elle permet de se connecter à des moteurs SQL et NoSQL, naviguer dans les schémas, écrire et exécuter des requêtes, éditer des données inline, et exporter des résultats.
+**PurrQL** est une application desktop multi-plateforme (macOS, Windows, Linux) de gestion de bases de données. Elle permet de se connecter à des moteurs SQL et NoSQL, naviguer dans les schémas, écrire et exécuter des requêtes, éditer des données inline, et exporter des résultats.
 
 ### 1.2 Principes directeurs
 

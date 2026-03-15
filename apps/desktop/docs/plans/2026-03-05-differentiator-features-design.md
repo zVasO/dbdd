@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add 7 unique features that no competitor (TablePlus, DBeaver, DataGrip) offers built-in, making DataForge the most complete database management tool on the market.
+Add 7 unique features that no competitor (TablePlus, DBeaver, DataGrip) offers built-in, making PurrQL the most complete database management tool on the market.
 
 ## Features
 

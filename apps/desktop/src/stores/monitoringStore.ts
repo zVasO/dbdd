@@ -48,7 +48,7 @@ interface MonitoringState {
 // === Helpers ===
 
 const MAX_DATA_POINTS = 100;
-const ALERT_RULES_KEY = 'dataforge:alert-rules';
+const ALERT_RULES_KEY = 'purrql:alert-rules';
 
 function cellToNumber(cell: CellValue): number {
   switch (cell.type) {

@@ -38,7 +38,7 @@ export function PreferencesDialog({ open, onOpenChange, onOpenSettings }: Props)
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Preferences</DialogTitle>
-          <DialogDescription>Configure DataForge to your liking.</DialogDescription>
+          <DialogDescription>Configure PurrQL to your liking.</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5 max-h-[60vh] overflow-y-auto pr-1">

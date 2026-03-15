@@ -26,7 +26,7 @@ export interface Preferences {
   editorSplitRatio: number; // percentage of height for editor panel (0-100)
 }
 
-const STORAGE_KEY = 'dataforge:preferences';
+const STORAGE_KEY = 'purrql:preferences';
 
 const DEFAULTS: Preferences = {
   theme: 'dark',

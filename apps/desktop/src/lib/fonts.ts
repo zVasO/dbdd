@@ -1,6 +1,6 @@
 // === FONT MANAGEMENT ===
 
-const FONTS_STORAGE_KEY = 'dataforge:imported-fonts';
+const FONTS_STORAGE_KEY = 'purrql:imported-fonts';
 
 export interface FontEntry {
   name: string;

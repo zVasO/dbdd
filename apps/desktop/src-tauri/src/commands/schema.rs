@@ -3,8 +3,8 @@ use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
 
-use dataforge_core::error::IpcError;
-use dataforge_core::models::schema::*;
+use purrql_core::error::IpcError;
+use purrql_core::models::schema::*;
 
 use crate::state::AppState;
 

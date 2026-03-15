@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Add 7 unique differentiator features (Import/Export, Data Generator, Visual Query Builder, Real-time Monitoring, Schema Migration, Collaboration, Notifications) to make DataForge the most complete database management tool.
+**Goal:** Add 7 unique differentiator features (Import/Export, Data Generator, Visual Query Builder, Real-time Monitoring, Schema Migration, Collaboration, Notifications) to make PurrQL the most complete database management tool.
 
 **Architecture:** Each feature follows the established pattern: Zustand store + React components + lazy-loaded views. All stores use `create<T>((set, get) => ({...}))` with localStorage persistence where needed. Views are lazy-imported in PanelLayout and accessible via CommandPalette. No backend changes — all features are frontend-only using existing IPC calls.
 
@@ -390,7 +390,7 @@ interface NotesState {
   setPanelOpen: (open: boolean) => void;
 }
 
-// Persist to localStorage: 'dataforge:notes'
+// Persist to localStorage: 'purrql:notes'
 ```
 
 **NotesPanel:** Side panel (like AI chat) showing notes for the current context. If a table is selected, show table notes. Markdown preview + edit toggle.
@@ -496,7 +496,7 @@ interface AlertState {
   clearAlerts: () => void;
 }
 
-// Persist to localStorage: 'dataforge:scheduled-queries', 'dataforge:alerts'
+// Persist to localStorage: 'purrql:scheduled-queries', 'purrql:alerts'
 ```
 
 **notifications.ts:**

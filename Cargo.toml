@@ -2,12 +2,12 @@
 resolver = "2"
 members = [
     "apps/desktop/src-tauri",
-    "crates/dataforge-core",
-    "crates/dataforge-engine",
-    "crates/dataforge-mysql",
-    "crates/dataforge-sqlite",
-    "crates/dataforge-postgres",
-    "crates/dataforge-config",
+    "crates/purrql-core",
+    "crates/purrql-engine",
+    "crates/purrql-mysql",
+    "crates/purrql-sqlite",
+    "crates/purrql-postgres",
+    "crates/purrql-config",
 ]
 
 [workspace.dependencies]

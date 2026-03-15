@@ -11,7 +11,7 @@ export interface Snippet {
   updatedAt: number;
 }
 
-const STORAGE_KEY = 'dataforge:snippets';
+const STORAGE_KEY = 'purrql:snippets';
 
 function loadSnippets(): Snippet[] {
   try {

@@ -1,4 +1,4 @@
-# DataForge
+# PurrQL
 
 Modern, cross-platform database management tool built with Tauri, Rust, and React.
 

@@ -10,15 +10,15 @@ fn build_menu(app: &tauri::App) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::
 
     let handle = app.handle();
 
-    // DataForge (App) menu
+    // PurrQL (App) menu
     let app_menu = Submenu::with_items(
         handle,
-        "DataForge",
+        "PurrQL",
         true,
         &[
             &PredefinedMenuItem::about(
                 handle,
-                Some("About DataForge"),
+                Some("About PurrQL"),
                 Some(AboutMetadata::default()),
             )?,
             &PredefinedMenuItem::separator(handle)?,
@@ -30,11 +30,11 @@ fn build_menu(app: &tauri::App) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::
                 Some("CmdOrCtrl+,"),
             )?,
             &PredefinedMenuItem::separator(handle)?,
-            &PredefinedMenuItem::hide(handle, Some("Hide DataForge"))?,
+            &PredefinedMenuItem::hide(handle, Some("Hide PurrQL"))?,
             &PredefinedMenuItem::hide_others(handle, Some("Hide Others"))?,
             &PredefinedMenuItem::show_all(handle, Some("Show All"))?,
             &PredefinedMenuItem::separator(handle)?,
-            &PredefinedMenuItem::quit(handle, Some("Quit DataForge"))?,
+            &PredefinedMenuItem::quit(handle, Some("Quit PurrQL"))?,
         ],
     )?;
 
@@ -251,7 +251,7 @@ fn build_menu(app: &tauri::App) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::
         &[&MenuItem::with_id(
             handle,
             "help",
-            "DataForge Help",
+            "PurrQL Help",
             true,
             None::<&str>,
         )?],
@@ -276,7 +276,7 @@ pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "dataforge=info".into()),
+                .unwrap_or_else(|_| "purrql=info".into()),
         )
         .init();
 
@@ -289,17 +289,17 @@ pub fn run() {
                 .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
 
             let config_store =
-                Arc::new(dataforge_config::store::ConfigStore::new(&app_data_dir)?);
+                Arc::new(purrql_config::store::ConfigStore::new(&app_data_dir)?);
             let driver_registry =
-                Arc::new(dataforge_engine::driver_registry::DriverRegistry::new());
+                Arc::new(purrql_engine::driver_registry::DriverRegistry::new());
             let event_bus =
-                Arc::new(dataforge_engine::event_bus::EventBus::new(app.handle().clone()));
+                Arc::new(purrql_engine::event_bus::EventBus::new(app.handle().clone()));
             let connection_manager = Arc::new(
-                dataforge_engine::connection_manager::ConnectionManager::new(
+                purrql_engine::connection_manager::ConnectionManager::new(
                     driver_registry.clone(),
                 ),
             );
-            let schema_cache = Arc::new(dataforge_engine::schema_cache::SchemaCache::new());
+            let schema_cache = Arc::new(purrql_engine::schema_cache::SchemaCache::new());
 
             // Background task: periodically evict expired schema cache entries.
             // Use tauri::async_runtime::spawn (not tokio::spawn) because the

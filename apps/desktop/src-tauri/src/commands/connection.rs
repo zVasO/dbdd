@@ -3,9 +3,9 @@ use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
 
-use dataforge_core::error::IpcError;
-use dataforge_core::models::connection::{ConnectionConfig, SavedConnection};
-use dataforge_engine::event_bus::AppEvent;
+use purrql_core::error::IpcError;
+use purrql_core::models::connection::{ConnectionConfig, SavedConnection};
+use purrql_engine::event_bus::AppEvent;
 
 use crate::state::AppState;
 

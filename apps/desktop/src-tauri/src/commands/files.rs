@@ -1,4 +1,4 @@
-use dataforge_core::error::IpcError;
+use purrql_core::error::IpcError;
 use rfd::AsyncFileDialog;
 
 /// Maximum file size allowed for in-memory reads (100 MB).

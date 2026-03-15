@@ -1,4 +1,4 @@
-# DataForge Game-Breaker Features Design
+# PurrQL Game-Breaker Features Design
 
 **Date**: 2026-03-05
 **Approach**: Big Bang - All features implemented in parallel

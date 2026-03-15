@@ -1,8 +1,8 @@
-# DataForge Game-Breaker Features Implementation Plan
+# PurrQL Game-Breaker Features Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Implement 9 game-breaker features (AI Engine, ER Diagrams, Dashboard Builder, Query Profiler, Data Diff, Smart Snippets, Query Versioning, Data Masking, DB Health Monitor) to make DataForge the #1 database client.
+**Goal:** Implement 9 game-breaker features (AI Engine, ER Diagrams, Dashboard Builder, Query Profiler, Data Diff, Smart Snippets, Query Versioning, Data Masking, DB Health Monitor) to make PurrQL the #1 database client.
 
 **Architecture:** Each feature is a self-contained module (store + components + lib). Features integrate through the existing tab system (`queryStore.ts`) by extending `TabViewMode` and through the settings page. The AI Engine provides a shared service used by multiple features.
 
@@ -475,7 +475,7 @@ function getSchemaContext(): string {
 
 function loadPersistedConfig(): Partial<AIState> {
   try {
-    const raw = localStorage.getItem('dataforge:ai-config');
+    const raw = localStorage.getItem('purrql:ai-config');
     if (!raw) return {};
     const parsed = JSON.parse(raw);
     return {
@@ -561,7 +561,7 @@ export const useAIStore = create<AIState>((set, get) => {
       }));
 
       const schemaContext = getSchemaContext();
-      const systemPrompt = `You are DataForge AI, an expert database assistant. You help users write SQL queries, explain database concepts, optimize performance, and manage schemas.
+      const systemPrompt = `You are PurrQL AI, an expert database assistant. You help users write SQL queries, explain database concepts, optimize performance, and manage schemas.
 
 Current database schema:
 ${schemaContext}
@@ -720,7 +720,7 @@ Rules:
 
 function persistConfig(state: AIState) {
   localStorage.setItem(
-    'dataforge:ai-config',
+    'purrql:ai-config',
     JSON.stringify({
       providerType: state.providerType,
       apiKeys: state.apiKeys,
@@ -1707,7 +1707,7 @@ interface DashboardState {
 
 function loadDashboards(): Dashboard[] {
   try {
-    const raw = localStorage.getItem('dataforge:dashboards');
+    const raw = localStorage.getItem('purrql:dashboards');
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
@@ -1715,7 +1715,7 @@ function loadDashboards(): Dashboard[] {
 }
 
 function saveDashboards(dashboards: Dashboard[]) {
-  localStorage.setItem('dataforge:dashboards', JSON.stringify(
+  localStorage.setItem('purrql:dashboards', JSON.stringify(
     dashboards.map((d) => ({
       ...d,
       widgets: d.widgets.map((w) => ({ ...w, result: undefined, loading: false, error: undefined })),

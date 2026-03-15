@@ -38,7 +38,7 @@ export async function sendNotification(title: string, body: string): Promise<voi
     new Notification(title, {
       body,
       icon: '/icon.png',
-      tag: `dataforge-${Date.now()}`,
+      tag: `purrql-${Date.now()}`,
     });
   } catch {
     console.log(`[Notification] ${title}: ${body}`);

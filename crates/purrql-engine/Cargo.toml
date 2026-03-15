@@ -1,0 +1,27 @@
+[package]
+name = "purrql-engine"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = ["mysql", "sqlite", "postgres"]
+mysql = ["purrql-mysql"]
+sqlite = ["purrql-sqlite"]
+postgres = ["purrql-postgres"]
+
+[dependencies]
+purrql-core = { path = "../purrql-core" }
+purrql-config = { path = "../purrql-config" }
+purrql-mysql = { path = "../purrql-mysql", optional = true }
+purrql-sqlite = { path = "../purrql-sqlite", optional = true }
+purrql-postgres = { path = "../purrql-postgres", optional = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+futures = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+tauri = { workspace = true }

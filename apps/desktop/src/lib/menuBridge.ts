@@ -9,11 +9,11 @@ type MenuHandler = () => void;
 const menuHandlers: Record<string, MenuHandler> = {
   // File
   new_tab: () => useQueryStore.getState().createTab(),
-  open_file: () => window.dispatchEvent(new CustomEvent('dataforge:open-file')),
-  save: () => window.dispatchEvent(new CustomEvent('dataforge:commit')),
-  save_as: () => window.dispatchEvent(new CustomEvent('dataforge:save-file')),
-  import_csv: () => window.dispatchEvent(new CustomEvent('dataforge:import-csv')),
-  export: () => window.dispatchEvent(new CustomEvent('dataforge:export')),
+  open_file: () => window.dispatchEvent(new CustomEvent('purrql:open-file')),
+  save: () => window.dispatchEvent(new CustomEvent('purrql:commit')),
+  save_as: () => window.dispatchEvent(new CustomEvent('purrql:save-file')),
+  import_csv: () => window.dispatchEvent(new CustomEvent('purrql:import-csv')),
+  export: () => window.dispatchEvent(new CustomEvent('purrql:export')),
   close_tab: () => {
     const store = useQueryStore.getState();
     const tabId = store.activeTabId;
@@ -25,37 +25,37 @@ const menuHandlers: Record<string, MenuHandler> = {
   },
 
   // Edit (only custom items — predefined items like Undo/Copy are handled by the OS)
-  find: () => window.dispatchEvent(new CustomEvent('dataforge:search-filter')),
-  insert_snippet: () => window.dispatchEvent(new CustomEvent('dataforge:insert-snippet')),
+  find: () => window.dispatchEvent(new CustomEvent('purrql:search-filter')),
+  insert_snippet: () => window.dispatchEvent(new CustomEvent('purrql:insert-snippet')),
 
   // Query
-  execute_query: () => window.dispatchEvent(new CustomEvent('dataforge:execute-query')),
-  format_sql: () => window.dispatchEvent(new CustomEvent('dataforge:format-sql')),
-  toggle_comment: () => window.dispatchEvent(new CustomEvent('dataforge:toggle-comment')),
-  generate_data: () => window.dispatchEvent(new CustomEvent('dataforge:generate-data')),
-  preview_changes: () => window.dispatchEvent(new CustomEvent('dataforge:preview-changes')),
+  execute_query: () => window.dispatchEvent(new CustomEvent('purrql:execute-query')),
+  format_sql: () => window.dispatchEvent(new CustomEvent('purrql:format-sql')),
+  toggle_comment: () => window.dispatchEvent(new CustomEvent('purrql:toggle-comment')),
+  generate_data: () => window.dispatchEvent(new CustomEvent('purrql:generate-data')),
+  preview_changes: () => window.dispatchEvent(new CustomEvent('purrql:preview-changes')),
 
   // View
   toggle_sidebar: () => useUIStore.getState().toggleSidebar(),
   toggle_activity: () => useActivityStore.getState().toggleExpanded(),
-  column_filter: () => window.dispatchEvent(new CustomEvent('dataforge:column-filter')),
+  column_filter: () => window.dispatchEvent(new CustomEvent('purrql:column-filter')),
   command_palette: () => useUIStore.getState().setCommandPaletteOpen(true),
   open_anything: () => useUIStore.getState().setOpenAnythingOpen(true),
-  ai_assistant: () => window.dispatchEvent(new CustomEvent('dataforge:ai-assistant')),
+  ai_assistant: () => window.dispatchEvent(new CustomEvent('purrql:ai-assistant')),
   toggle_theme: () => useUIStore.getState().toggleTheme(),
 
   // Connection
-  manage_connections: () => window.dispatchEvent(new CustomEvent('dataforge:manage-connections')),
+  manage_connections: () => window.dispatchEvent(new CustomEvent('purrql:manage-connections')),
   disconnect: () => {
     const { activeConnectionId, disconnect } = useConnectionStore.getState();
     if (activeConnectionId) disconnect();
   },
 
   // Preferences
-  preferences: () => window.dispatchEvent(new CustomEvent('dataforge:preferences')),
+  preferences: () => window.dispatchEvent(new CustomEvent('purrql:preferences')),
 
   // Help
-  help: () => window.dispatchEvent(new CustomEvent('dataforge:help')),
+  help: () => window.dispatchEvent(new CustomEvent('purrql:help')),
 
   // Window — "bring_all_to_front" is our custom item
   bring_all_to_front: () => {

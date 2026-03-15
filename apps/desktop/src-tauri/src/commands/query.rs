@@ -7,11 +7,11 @@ use uuid::Uuid;
 
 use serde::Serialize;
 
-use dataforge_core::error::IpcError;
-use dataforge_core::models::columnar::ColumnData;
-use dataforge_core::models::query::{QueryHistoryEntry, QueryResult, QueryStatus};
-use dataforge_engine::event_bus::AppEvent;
-use dataforge_engine::schema_cache;
+use purrql_core::error::IpcError;
+use purrql_core::models::columnar::ColumnData;
+use purrql_core::models::query::{QueryHistoryEntry, QueryResult, QueryStatus};
+use purrql_engine::event_bus::AppEvent;
+use purrql_engine::schema_cache;
 
 use crate::state::AppState;
 
@@ -172,7 +172,7 @@ pub async fn execute_query_columnar(
     state: State<'_, AppState>,
     connection_id: Uuid,
     sql: String,
-) -> Result<dataforge_core::models::columnar::ColumnarResult, IpcError> {
+) -> Result<purrql_core::models::columnar::ColumnarResult, IpcError> {
     let query_id = Uuid::new_v4();
     tracing::Span::current().record("query_id", query_id.to_string());
 
@@ -236,7 +236,7 @@ pub async fn execute_query_columnar(
 
             // Convert directly via consuming path — moves strings/JSON out of
             // cells instead of cloning, saving one heap allocation per cell.
-            Ok(dataforge_core::models::columnar::ColumnarResult::from_query_result_consuming(result))
+            Ok(purrql_core::models::columnar::ColumnarResult::from_query_result_consuming(result))
         }
         Err(e) => {
             state.event_bus.emit(AppEvent::QueryError {
@@ -422,7 +422,7 @@ pub async fn execute_query_stream(
 
                             // Pass ColumnData directly; emit serializes once
                             let chunk_data: Vec<ColumnData> =
-                                dataforge_core::models::columnar::rows_to_columnar_chunk(
+                                purrql_core::models::columnar::rows_to_columnar_chunk(
                                     &rows, col_count,
                                 );
 

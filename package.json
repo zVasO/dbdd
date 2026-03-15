@@ -1,5 +1,5 @@
 {
-  "name": "dataforge",
+  "name": "purrql",
   "private": true,
   "scripts": {
     "dev": "pnpm --filter desktop tauri dev",
