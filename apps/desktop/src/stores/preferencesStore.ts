@@ -23,6 +23,7 @@ export interface Preferences {
   darkModeSchedule: DarkModeSchedule;
   notifyOnLongQueries: boolean;
   longQueryThreshold: number; // ms
+  editorSplitRatio: number; // percentage of height for editor panel (0-100)
 }
 
 const STORAGE_KEY = 'dataforge:preferences';
@@ -40,6 +41,7 @@ const DEFAULTS: Preferences = {
   darkModeSchedule: { mode: 'manual' },
   notifyOnLongQueries: true,
   longQueryThreshold: 5000,
+  editorSplitRatio: 40,
 };
 
 function loadFromStorage(): Preferences {
@@ -87,6 +89,7 @@ export const usePreferencesStore = create<PreferencesState>((set, get) => {
         darkModeSchedule: state.darkModeSchedule,
         notifyOnLongQueries: state.notifyOnLongQueries,
         longQueryThreshold: state.longQueryThreshold,
+        editorSplitRatio: state.editorSplitRatio,
       };
       if (key === 'theme') applyTheme(value as 'light' | 'dark');
       saveToStorage(prefs);

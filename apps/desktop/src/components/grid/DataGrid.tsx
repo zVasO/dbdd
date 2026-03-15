@@ -2,7 +2,7 @@ import { useRef, useState, useCallback, useEffect, useMemo, useDeferredValue, me
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { Key, Plus, Search, Trash2, X, Filter, Eye, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight as ChevronRightIcon, Copy, CopyPlus, ClipboardPaste, FileJson, Table2, FileCode, FileText } from 'lucide-react';
+import { Key, Plus, Search, Trash2, X, Filter, Eye, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight as ChevronRightIcon, ChevronsLeft, ChevronsRight, Copy, CopyPlus, ClipboardPaste, FileJson, Table2, FileCode, FileText } from 'lucide-react';
 import { copyAsJson, copyAsInsert, copyAsCsv, copyAsMarkdown, copyAsTsv, copyCellAsJson, copyCellAsText, copyToClipboard } from '@/lib/copyFormats';
 import type { QueryResult, CellValue, ColumnData } from '@/lib/types';
 import { ipc } from '@/lib/ipc';
@@ -1515,14 +1515,36 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
           {totalPages > 1 && (
             <div className="flex items-center gap-1">
               <button
+                onClick={() => setCurrentPage(0)}
+                disabled={safePage === 0}
+                className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
+              >
+                <ChevronsLeft className="h-3.5 w-3.5" />
+              </button>
+              <button
                 onClick={() => setCurrentPage((p) => Math.max(0, p - 1))}
                 disabled={safePage === 0}
                 className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
               >
                 <ChevronLeft className="h-3.5 w-3.5" />
               </button>
-              <span className="px-1 tabular-nums">
-                {safePage + 1}/{totalPages}
+              <span className="px-1 tabular-nums text-xs">
+                Page{' '}
+                <input
+                  type="number"
+                  min={1}
+                  max={totalPages}
+                  value={safePage + 1}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    if (!isNaN(val)) {
+                      const clamped = Math.max(1, Math.min(totalPages, val));
+                      setCurrentPage(clamped - 1);
+                    }
+                  }}
+                  className="w-10 text-xs text-center rounded border border-border bg-transparent px-0.5 py-0 tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                />
+                {' '}of {totalPages}
               </span>
               <button
                 onClick={() => setCurrentPage((p) => Math.min(totalPages - 1, p + 1))}
@@ -1530,6 +1552,13 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
                 className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
               >
                 <ChevronRightIcon className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => setCurrentPage(totalPages - 1)}
+                disabled={safePage >= totalPages - 1}
+                className="rounded p-0.5 hover:bg-accent disabled:opacity-30"
+              >
+                <ChevronsRight className="h-3.5 w-3.5" />
               </button>
             </div>
           )}

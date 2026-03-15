@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import Papa from 'papaparse';
 import { ipc, extractErrorMessage } from '@/lib/ipc';
 import { toExcel } from '@/lib/exportFormats';
+import { showErrorToast } from './toastStore';
 import type { QueryResult } from '@/lib/types';
 
 type ImportFileType = 'csv' | 'json' | 'sql';
@@ -240,7 +241,9 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
         });
       }
     } catch (err) {
-      set({ importError: extractErrorMessage(err), importLoading: false });
+      const errMsg = extractErrorMessage(err);
+      showErrorToast(errMsg);
+      set({ importError: errMsg, importLoading: false });
     }
   },
 
@@ -313,12 +316,15 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
         .map((r) => r.Err!);
 
       if (errors.length > 0) {
+        showErrorToast(errors[0]);
         set({ importError: errors.join('\n'), importLoading: false });
       } else {
         set({ importLoading: false, importDialogOpen: false });
       }
     } catch (err) {
-      set({ importError: extractErrorMessage(err), importLoading: false });
+      const errMsg = extractErrorMessage(err);
+      showErrorToast(errMsg);
+      set({ importError: errMsg, importLoading: false });
     }
   },
 

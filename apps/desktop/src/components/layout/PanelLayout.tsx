@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, lazy, Suspense } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { useQueryStore } from '@/stores/queryStore';
 import { useResultStore, type TabResult } from '@/stores/resultStore';
 import { useConnectionStore } from '@/stores/connectionStore';
@@ -32,6 +32,67 @@ const TableDesigner = lazy(() => import('@/components/schema/TableDesigner').the
 const ProcessList = lazy(() => import('@/components/admin/ProcessList').then(m => ({ default: m.ProcessList })));
 
 const LazyFallback = () => <div className="flex flex-1 items-center justify-center text-muted-foreground text-sm">Loading...</div>;
+
+const MIN_PANEL_PX = 100;
+
+interface SplitEditorResultsProps {
+  readonly children: [React.ReactNode, React.ReactNode];
+}
+
+function SplitEditorResults({ children }: SplitEditorResultsProps) {
+  const storedRatio = usePreferencesStore((s) => s.editorSplitRatio);
+  const [ratio, setRatio] = useState(storedRatio);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isDragging = useRef(false);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const containerHeight = rect.height;
+      if (containerHeight === 0) return;
+
+      const offsetY = moveEvent.clientY - rect.top;
+      const minRatio = (MIN_PANEL_PX / containerHeight) * 100;
+      const maxRatio = 100 - minRatio;
+      const newRatio = Math.min(maxRatio, Math.max(minRatio, (offsetY / containerHeight) * 100));
+      setRatio(newRatio);
+    };
+
+    const onMouseUp = () => {
+      isDragging.current = false;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      // Persist final ratio
+      setRatio((finalRatio) => {
+        usePreferencesStore.getState().setPreference('editorSplitRatio', finalRatio);
+        return finalRatio;
+      });
+    };
+
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }, []);
+
+  return (
+    <div ref={containerRef} className="flex flex-1 flex-col overflow-hidden">
+      <div className="overflow-hidden" style={{ height: `${ratio}%`, minHeight: `${MIN_PANEL_PX}px` }}>
+        {children[0]}
+      </div>
+      <div
+        className="h-1 shrink-0 cursor-row-resize bg-border transition-colors hover:bg-primary/30"
+        onMouseDown={handleMouseDown}
+      />
+      <div className="flex flex-1 flex-col overflow-hidden border-t border-border">
+        {children[1]}
+      </div>
+    </div>
+  );
+}
 
 interface PanelLayoutProps {
   readonly paneId?: 'primary' | 'secondary';
@@ -219,19 +280,17 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
                     }
                   }}
                 />
-                <div className="flex flex-1 flex-col overflow-hidden">
-                  <div className="overflow-hidden" style={{ minHeight: '150px', height: '40%' }}>
-                    <SqlEditor
-                      value={activeTab.sql}
-                      onChange={(val) => updateSql(activeTab.id, val)}
-                      onExecute={() => {
-                        if (activeConnectionId) {
-                          executeQuery(activeConnectionId, activeTab.id);
-                        }
-                      }}
-                    />
-                  </div>
-                  <div className="flex-1 flex flex-col overflow-hidden border-t border-border">
+                <SplitEditorResults>
+                  <SqlEditor
+                    value={activeTab.sql}
+                    onChange={(val) => updateSql(activeTab.id, val)}
+                    onExecute={() => {
+                      if (activeConnectionId) {
+                        executeQuery(activeConnectionId, activeTab.id);
+                      }
+                    }}
+                  />
+                  <>
                     {(tabResult?.allColumnarResults.length ?? 0) > 1 && (
                       <div className="flex items-center gap-0.5 border-b border-border bg-muted/50 px-2 py-0.5">
                         {tabResult!.allColumnarResults.map((r, i) => (
@@ -263,8 +322,8 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
                     <div className="flex-1 overflow-hidden">
                       {renderResult(activeTab, tabResult, handleServerSort)}
                     </div>
-                  </div>
-                </div>
+                  </>
+                </SplitEditorResults>
               </>
             ) : (
               <>
