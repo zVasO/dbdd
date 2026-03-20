@@ -6,7 +6,7 @@ import {
   Controls,
   BackgroundVariant,
 } from '@xyflow/react';
-import type { Connection } from '@xyflow/react';
+import type { Connection, NodeTypes, EdgeTypes } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -21,13 +21,10 @@ import { SQLPreview } from '@/components/query-builder/SQLPreview';
 import { FilterPanel } from '@/components/query-builder/FilterPanel';
 
 // Register custom node and edge types (must be outside component to avoid re-renders)
-const nodeTypes = {
-  tableBlock: TableBlock,
-} as const;
-
-const edgeTypes = {
-  joinEdge: JoinEdge,
-} as const;
+// Cast required: @xyflow/react was compiled against @types/react without bigint in ReactNode.
+// React 18.3+ added bigint, causing a structural type mismatch on NodeTypes/EdgeTypes.
+const nodeTypes = { tableBlock: TableBlock } as unknown as NodeTypes;
+const edgeTypes = { joinEdge: JoinEdge } as unknown as EdgeTypes;
 
 function QueryBuilderInner() {
   const nodes = useQueryBuilderStore((s) => s.nodes);

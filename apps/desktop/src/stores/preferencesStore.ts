@@ -26,7 +26,7 @@ export interface Preferences {
   editorSplitRatio: number; // percentage of height for editor panel (0-100)
 }
 
-const STORAGE_KEY = 'purrql:preferences';
+const STORAGE_KEY = 'vasodb:preferences';
 
 const DEFAULTS: Preferences = {
   theme: 'dark',

@@ -10,15 +10,15 @@ fn build_menu(app: &tauri::App) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::
 
     let handle = app.handle();
 
-    // PurrQL (App) menu
+    // VasOdb (App) menu
     let app_menu = Submenu::with_items(
         handle,
-        "PurrQL",
+        "VasOdb",
         true,
         &[
             &PredefinedMenuItem::about(
                 handle,
-                Some("About PurrQL"),
+                Some("About VasOdb"),
                 Some(AboutMetadata::default()),
             )?,
             &PredefinedMenuItem::separator(handle)?,
@@ -30,11 +30,11 @@ fn build_menu(app: &tauri::App) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::
                 Some("CmdOrCtrl+,"),
             )?,
             &PredefinedMenuItem::separator(handle)?,
-            &PredefinedMenuItem::hide(handle, Some("Hide PurrQL"))?,
+            &PredefinedMenuItem::hide(handle, Some("Hide VasOdb"))?,
             &PredefinedMenuItem::hide_others(handle, Some("Hide Others"))?,
             &PredefinedMenuItem::show_all(handle, Some("Show All"))?,
             &PredefinedMenuItem::separator(handle)?,
-            &PredefinedMenuItem::quit(handle, Some("Quit PurrQL"))?,
+            &PredefinedMenuItem::quit(handle, Some("Quit VasOdb"))?,
         ],
     )?;
 
@@ -251,7 +251,7 @@ fn build_menu(app: &tauri::App) -> Result<tauri::menu::Menu<tauri::Wry>, tauri::
         &[&MenuItem::with_id(
             handle,
             "help",
-            "PurrQL Help",
+            "VasOdb Help",
             true,
             None::<&str>,
         )?],
@@ -341,6 +341,7 @@ pub fn run() {
             commands::connection::test_connection,
             commands::connection::list_saved_connections,
             commands::connection::delete_saved_connection,
+            commands::connection::update_saved_connection,
             commands::connection::ping_connection,
             commands::query::execute_query,
             commands::query::execute_query_columnar,

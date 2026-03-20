@@ -1,8 +1,8 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-utils/schema.json",
-  "productName": "PurrQL",
+  "productName": "VasOdb",
   "version": "0.1.0",
-  "identifier": "com.purrql.desktop",
+  "identifier": "com.vasodb.desktop",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -23,7 +23,7 @@
   "app": {
     "windows": [
       {
-        "title": "PurrQL",
+        "title": "VasOdb",
         "width": 1280,
         "height": 800,
         "minWidth": 900,

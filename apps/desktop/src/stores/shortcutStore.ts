@@ -62,7 +62,7 @@ const SHORTCUT_MAP = new Map(SHORTCUT_DEFS.map((d) => [d.id, d]));
 
 // === Store ===
 
-const STORAGE_KEY = 'purrql:shortcuts';
+const STORAGE_KEY = 'vasodb:shortcuts';
 
 interface ShortcutState {
   overrides: Record<string, ShortcutBinding>;

@@ -6,7 +6,7 @@ use aes_gcm::{
 };
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use rand::RngCore;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use purrql_core::error::{PurrqlError, Result};
 
@@ -18,10 +18,18 @@ const KEY_FILE: &str = "purrql.key";
 /// Primary: OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service).
 /// Fallback: encrypted file in app data directory with restrictive permissions.
 pub fn load_or_create_key(app_data_dir: &Path) -> Result<[u8; 32]> {
+    let key_path = app_data_dir.join(KEY_FILE);
+
     // Try loading from OS keyring first
     match load_key_from_keyring() {
         Ok(key) => {
             debug!("Encryption key loaded from OS keyring");
+            // Write file backup if it doesn't exist (defense-in-depth for future launches)
+            if !key_path.exists() {
+                if let Err(e) = store_key_to_file(&key_path, &key) {
+                    debug!("Could not write key file backup: {e}");
+                }
+            }
             return Ok(key);
         }
         Err(e) => {
@@ -30,7 +38,6 @@ pub fn load_or_create_key(app_data_dir: &Path) -> Result<[u8; 32]> {
     }
 
     // Fallback: load from file
-    let key_path = app_data_dir.join(KEY_FILE);
     if key_path.exists() {
         let key = load_key_from_file(&key_path)?;
         // Migrate to keyring if possible
@@ -44,15 +51,14 @@ pub fn load_or_create_key(app_data_dir: &Path) -> Result<[u8; 32]> {
     let mut key = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut key);
 
-    // Store in OS keyring (primary)
-    match store_key_in_keyring(&key) {
-        Ok(()) => {
-            debug!("New encryption key stored in OS keyring");
-        }
-        Err(e) => {
-            warn!("OS keyring unavailable: {e}. Falling back to file-based key storage.");
-            store_key_to_file(&key_path, &key)?;
-        }
+    // Always persist to file first (reliable fallback, never lost between launches)
+    store_key_to_file(&key_path, &key)?;
+
+    // Also try to store in OS keyring (preferred for security, but optional)
+    if let Err(e) = store_key_in_keyring(&key) {
+        debug!("OS keyring unavailable: {e}. Using file-based key storage.");
+    } else {
+        debug!("New encryption key stored in OS keyring and file backup");
     }
 
     Ok(key)

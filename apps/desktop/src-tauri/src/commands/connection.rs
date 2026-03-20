@@ -119,6 +119,18 @@ pub async fn delete_saved_connection(
 }
 
 #[tauri::command]
+pub async fn update_saved_connection(
+    state: State<'_, AppState>,
+    config: ConnectionConfig,
+) -> Result<(), IpcError> {
+    state
+        .config_store
+        .save_connection(&config)
+        .await
+        .map_err(IpcError::from)
+}
+
+#[tauri::command]
 pub async fn ping_connection(
     state: State<'_, AppState>,
     connection_id: Uuid,

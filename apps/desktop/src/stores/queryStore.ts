@@ -32,8 +32,8 @@ async function maybeNotifyQueryComplete(
     }
     if (permitted) {
       const title = error
-        ? 'PurrQL: Query failed'
-        : 'PurrQL: Query completed';
+        ? 'VasOdb: Query failed'
+        : 'VasOdb: Query completed';
       const body = error
         ? `Error: ${String(error).substring(0, 100)}`
         : `Completed in ${(executionTimeMs / 1000).toFixed(1)}s — ${rowCount} rows`;

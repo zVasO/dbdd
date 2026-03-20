@@ -85,7 +85,7 @@ export function WelcomeScreen({ onNewConnection, onOpenFile }: WelcomeScreenProp
           <div className="flex justify-center">
             <Database className="w-16 h-16 text-primary" />
           </div>
-          <h1 className="text-2xl font-semibold text-foreground">PurrQL</h1>
+          <h1 className="text-2xl font-semibold text-foreground">VasOdb</h1>
           <p className="text-muted-foreground">Your database, your way</p>
         </div>
 

@@ -27,6 +27,7 @@ interface ConnectionState {
   switchConnection: (connectionId: string) => void;
   testConnection: (config: ConnectionConfig, password?: string) => Promise<string>;
   deleteConnection: (id: string) => Promise<void>;
+  updateSavedConnection: (config: ConnectionConfig) => Promise<void>;
 }
 
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
@@ -119,6 +120,11 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
 
   deleteConnection: async (id) => {
     await ipc.deleteSavedConnection(id);
+    await get().loadSavedConnections();
+  },
+
+  updateSavedConnection: async (config) => {
+    await ipc.updateSavedConnection(config);
     await get().loadSavedConnections();
   },
 }));

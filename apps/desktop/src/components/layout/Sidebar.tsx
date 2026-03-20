@@ -170,8 +170,8 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
       setActiveTab(existing.id);
       const pageSize = usePreferencesStore.getState().defaultPageSize;
       const expectedSql = pageSize > 0
-        ? `SELECT * FROM \`${tableName}\` LIMIT ${pageSize}`
-        : `SELECT * FROM \`${tableName}\``;
+        ? `SELECT * FROM \`${db}\`.\`${tableName}\` LIMIT ${pageSize}`
+        : `SELECT * FROM \`${db}\`.\`${tableName}\``;
       if (existing.sql !== expectedSql) {
         updateSql(existing.id, expectedSql);
         executeQuery(activeConnectionId, existing.id);
@@ -180,8 +180,8 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     }
     const pageSize = usePreferencesStore.getState().defaultPageSize;
     const sql = pageSize > 0
-      ? `SELECT * FROM \`${tableName}\` LIMIT ${pageSize}`
-      : `SELECT * FROM \`${tableName}\``;
+      ? `SELECT * FROM \`${db}\`.\`${tableName}\` LIMIT ${pageSize}`
+      : `SELECT * FROM \`${db}\`.\`${tableName}\``;
     const tabId = createTab(tableName, { editorVisible: false, database: db, table: tableName });
     updateSql(tabId, sql);
     executeQuery(activeConnectionId, tabId);
@@ -199,7 +199,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     if (!activeConnectionId) return;
     if (!window.confirm(`Truncate table "${tableName}"? This will delete all rows.`)) return;
     try {
-      await ipc.executeQuery(activeConnectionId, `TRUNCATE TABLE \`${tableName}\``);
+      await ipc.executeQuery(activeConnectionId, `TRUNCATE TABLE \`${db}\`.\`${tableName}\``);
       loadTables(activeConnectionId, db);
     } catch (err) {
       alert(`Failed to truncate: ${err}`);
@@ -210,7 +210,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     if (!activeConnectionId) return;
     if (!window.confirm(`DROP TABLE "${tableName}"? This action cannot be undone!`)) return;
     try {
-      await ipc.executeQuery(activeConnectionId, `DROP TABLE \`${tableName}\``);
+      await ipc.executeQuery(activeConnectionId, `DROP TABLE \`${db}\`.\`${tableName}\``);
       loadTables(activeConnectionId, db);
     } catch (err) {
       alert(`Failed to drop: ${err}`);
@@ -222,7 +222,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     const newName = window.prompt(`Rename table "${tableName}" to:`, tableName);
     if (!newName || newName === tableName) return;
     try {
-      await ipc.executeQuery(activeConnectionId, `ALTER TABLE \`${tableName}\` RENAME TO \`${newName}\``);
+      await ipc.executeQuery(activeConnectionId, `ALTER TABLE \`${db}\`.\`${tableName}\` RENAME TO \`${db}\`.\`${newName}\``);
       loadTables(activeConnectionId, db);
     } catch (err) {
       alert(`Failed to rename: ${err}`);

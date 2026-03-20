@@ -23,7 +23,7 @@ interface NotesState {
   setEditingNoteId: (id: string | null) => void;
 }
 
-const STORAGE_KEY = 'purrql:notes';
+const STORAGE_KEY = 'vasodb:notes';
 
 function loadNotes(): Note[] {
   try {

@@ -306,7 +306,7 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
               </CommandItem>
               <CommandItem
                 onSelect={() => runAndClose(() => {
-                  document.dispatchEvent(new CustomEvent('purrql:snippet-palette'));
+                  document.dispatchEvent(new CustomEvent('vasodb:snippet-palette'));
                 })}
                 icon={<Code2 className="h-4 w-4" />}
                 shortcut={formatBinding(sc('global.insertSnippet'))}
@@ -368,7 +368,7 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
               </CommandItem>
               <CommandItem
                 onSelect={() => runAndClose(() => {
-                  document.dispatchEvent(new CustomEvent('purrql:share-dialog'));
+                  document.dispatchEvent(new CustomEvent('vasodb:share-dialog'));
                 })}
                 icon={<Share2 className="h-4 w-4" />}
               >

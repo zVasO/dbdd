@@ -50,6 +50,9 @@ export const ipc = {
   deleteSavedConnection: (id: string) =>
     invoke<void>('delete_saved_connection', { id }),
 
+  updateSavedConnection: (config: ConnectionConfig) =>
+    invoke<void>('update_saved_connection', { config }),
+
   executeQuery: (connectionId: string, sql: string) =>
     invoke<QueryResult>('execute_query', { connectionId, sql }),
 

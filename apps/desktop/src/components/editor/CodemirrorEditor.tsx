@@ -219,8 +219,8 @@ export function CodemirrorEditor({ value, onChange, onExecute }: Props) {
   // --- Format event listener (toolbar button) ---
   useEffect(() => {
     const handler = () => { void formatRef.current(); };
-    document.addEventListener('purrql:format', handler);
-    return () => document.removeEventListener('purrql:format', handler);
+    document.addEventListener('vasodb:format', handler);
+    return () => document.removeEventListener('vasodb:format', handler);
   }, []);
 
   return <div ref={containerRef} className="h-full" />;

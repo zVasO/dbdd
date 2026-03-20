@@ -8,7 +8,7 @@ import {
   useReactFlow,
   BackgroundVariant,
 } from '@xyflow/react';
-import type { ReactFlowInstance, NodeChange, EdgeChange } from '@xyflow/react';
+import type { ReactFlowInstance, NodeChange, EdgeChange, NodeTypes, EdgeTypes } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import dagre from 'dagre';
 
@@ -30,13 +30,10 @@ import { Database, TableProperties } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // Custom node/edge type registrations
-const nodeTypes = {
-  table: TableNode,
-} as const;
-
-const edgeTypes = {
-  relation: RelationEdge,
-} as const;
+// Cast required: @xyflow/react was compiled against @types/react without bigint in ReactNode.
+// React 18.3+ added bigint, causing a structural type mismatch on NodeTypes/EdgeTypes.
+const nodeTypes = { table: TableNode } as unknown as NodeTypes;
+const edgeTypes = { relation: RelationEdge } as unknown as EdgeTypes;
 
 // === Dagre layout utility ===
 
@@ -94,8 +91,10 @@ function getLayoutedElements(
 
 function ERDiagramInner() {
   const [rfInstance, setRfInstance] = useState<ReactFlowInstance<ERNode, EREdge> | null>(null);
-  const hasInitialized = useRef(false);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
+  // Track which database we last applied a dagre layout for, to avoid re-layouting on
+  // incremental structure batch updates (which would reset user-dragged positions).
+  const lastLayoutDbRef = useRef<string | null>(null);
   const { fitView } = useReactFlow();
 
   // Store state
@@ -109,32 +108,33 @@ function ERDiagramInner() {
   const updateNodePosition = useERDiagramStore((s) => s.updateNodePosition);
 
   const databases = useSchemaStore((s) => s.databases);
+  const structures = useSchemaStore((s) => s.structures);
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const loadTables = useSchemaStore((s) => s.loadTables);
 
-  // Auto-generate diagram for first database on mount
+  // Auto-select first database when databases load (and no DB is selected yet)
   useEffect(() => {
-    if (hasInitialized.current) return;
-    if (databases.length > 0 && !selectedDatabase) {
-      const firstDb = databases[0].name;
-      hasInitialized.current = true;
-
-      // Ensure tables/structures are loaded, then generate
-      if (activeConnectionId) {
-        loadTables(activeConnectionId, firstDb).then(() => {
-          // Small delay to let structures load in background
-          setTimeout(() => {
-            generateDiagram(firstDb);
-          }, 500);
-        });
-      }
+    if (databases.length > 0 && !selectedDatabase && activeConnectionId) {
+      loadTables(activeConnectionId, databases[0].name);
     }
-  }, [databases, selectedDatabase, activeConnectionId, loadTables, generateDiagram]);
+  }, [databases, selectedDatabase, activeConnectionId, loadTables]);
 
-  // Re-layout when direction changes
+  // Reactively regenerate diagram whenever structures change for the selected database.
+  // This fixes the race with schemaStore._loadGeneration: even if the ER diagram's
+  // loadTables() call exits early, the diagram rebuilds once structures actually arrive.
   useEffect(() => {
-    if (nodes.length === 0) return;
+    if (!selectedDatabase) return;
+    generateDiagram(selectedDatabase);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structures]);
 
+  // Apply dagre layout when the database changes (not on every structure batch update,
+  // since generateDiagram now preserves existing node positions).
+  useEffect(() => {
+    if (nodes.length === 0 || !selectedDatabase) return;
+    if (lastLayoutDbRef.current === selectedDatabase) return;
+
+    lastLayoutDbRef.current = selectedDatabase;
     const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
       nodes,
       edges,
@@ -142,12 +142,21 @@ function ERDiagramInner() {
     );
     setNodes(layoutedNodes);
     setEdges(layoutedEdges);
+    requestAnimationFrame(() => fitView({ padding: 0.15, duration: 300 }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDatabase, nodes.length]);
 
-    // Fit view after layout
-    requestAnimationFrame(() => {
-      fitView({ padding: 0.15, duration: 300 });
-    });
-    // We only want to re-layout when layoutDirection changes, not on every nodes/edges change
+  // Re-layout when direction changes
+  useEffect(() => {
+    if (nodes.length === 0) return;
+    const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+      nodes,
+      edges,
+      layoutDirection
+    );
+    setNodes(layoutedNodes);
+    setEdges(layoutedEdges);
+    requestAnimationFrame(() => fitView({ padding: 0.15, duration: 300 }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutDirection]);
 
@@ -155,47 +164,15 @@ function ERDiagramInner() {
   const handleDatabaseChange = useCallback(
     (database: string) => {
       if (!activeConnectionId) return;
-
-      // Load tables first, then generate diagram
-      loadTables(activeConnectionId, database).then(() => {
-        setTimeout(() => {
-          generateDiagram(database);
-
-          // After generating, apply layout
-          const currentNodes = useERDiagramStore.getState().nodes;
-          const currentEdges = useERDiagramStore.getState().edges;
-          const { nodes: layoutedNodes, edges: layoutedEdges } =
-            getLayoutedElements(currentNodes, currentEdges, layoutDirection);
-          setNodes(layoutedNodes);
-          setEdges(layoutedEdges);
-
-          requestAnimationFrame(() => {
-            fitView({ padding: 0.15, duration: 300 });
-          });
-        }, 500);
-      });
+      // Reset layout tracker so dagre re-runs for the new database
+      lastLayoutDbRef.current = null;
+      // Start loading tables/structures; the [structures] effect will trigger generateDiagram
+      loadTables(activeConnectionId, database);
+      // Also generate immediately with whatever is cached (empty columns if not yet loaded)
+      generateDiagram(database);
     },
-    [activeConnectionId, layoutDirection, loadTables, generateDiagram, setNodes, setEdges, fitView]
+    [activeConnectionId, loadTables, generateDiagram]
   );
-
-  // Apply layout after initial diagram generation
-  useEffect(() => {
-    if (nodes.length > 0 && hasInitialized.current) {
-      const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
-        nodes,
-        edges,
-        layoutDirection
-      );
-      setNodes(layoutedNodes);
-      setEdges(layoutedEdges);
-
-      requestAnimationFrame(() => {
-        fitView({ padding: 0.15, duration: 300 });
-      });
-    }
-    // Only run when selectedDatabase changes (i.e., when generateDiagram completes)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedDatabase]);
 
   // Handle node position changes (drag)
   const onNodesChange = useCallback(

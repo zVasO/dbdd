@@ -1,5 +1,5 @@
-const STORAGE_KEY = 'purrql:session:v2';
-const LEGACY_KEY = 'purrql:session';
+const STORAGE_KEY = 'vasodb:session:v2';
+const LEGACY_KEY = 'vasodb:session';
 
 interface SavedTab {
   id: string;

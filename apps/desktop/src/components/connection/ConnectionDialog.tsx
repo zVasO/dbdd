@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useUIStore } from '@/stores/uiStore';
 import { useConnectionStore } from '@/stores/connectionStore';
+import type { SavedConnection } from '@/lib/types';
 import { ConnectionForm } from './ConnectionForm';
 import { ConnectionCard } from './ConnectionCard';
 import {
@@ -34,6 +35,7 @@ export function ConnectionDialog({ open, onOpenChange }: Props) {
   }, [open, pushModal, popModal]);
 
   const [showNewForm, setShowNewForm] = useState(false);
+  const [editingConnection, setEditingConnection] = useState<SavedConnection | null>(null);
   const loadSavedConnections = useConnectionStore((s) => s.loadSavedConnections);
   const savedConnections = useConnectionStore((s) => s.savedConnections);
   const activeConnections = useConnectionStore((s) => s.activeConnections);
@@ -45,6 +47,7 @@ export function ConnectionDialog({ open, onOpenChange }: Props) {
     if (open) {
       loadSavedConnections();
       setShowNewForm(false);
+      setEditingConnection(null);
     }
   }, [open, loadSavedConnections]);
 
@@ -75,6 +78,11 @@ export function ConnectionDialog({ open, onOpenChange }: Props) {
 
         {showNewForm ? (
           <ConnectionForm onCancel={() => setShowNewForm(false)} />
+        ) : editingConnection ? (
+          <ConnectionForm
+            initialConfig={editingConnection.config}
+            onCancel={() => setEditingConnection(null)}
+          />
         ) : (
           <div className="space-y-4">
             {/* Active connections */}
@@ -170,7 +178,11 @@ export function ConnectionDialog({ open, onOpenChange }: Props) {
                 </div>
                 <div className="space-y-1.5">
                   {inactiveSaved.map((conn) => (
-                    <ConnectionCard key={conn.config.id} connection={conn} />
+                    <ConnectionCard
+                      key={conn.config.id}
+                      connection={conn}
+                      onEdit={(c) => setEditingConnection(c)}
+                    />
                   ))}
                 </div>
               </div>

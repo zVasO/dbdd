@@ -4,7 +4,7 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 
 /**
- * Compartment for hot-swapping the PurrQL theme
+ * Compartment for hot-swapping the VasOdb theme
  * without recreating the entire editor instance.
  */
 export const themeCompartment = new Compartment();
@@ -48,7 +48,7 @@ function cssVarToHex(varName: string, fallback: string): string {
 }
 
 /**
- * Build the full PurrQL theme extension for CodeMirror 6.
+ * Build the full VasOdb theme extension for CodeMirror 6.
  *
  * Reads CSS custom properties from :root at call time so the
  * theme stays in sync with the app's light/dark palette.

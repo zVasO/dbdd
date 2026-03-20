@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { extractErrorMessage } from '@/lib/ipc';
 import type { ConnectionConfig, DatabaseType, SslMode, SshTunnelConfig, SshAuthMethod } from '@/lib/types';
 import { parseConnectionUrl } from '@/lib/connectionUrl';
 import { Input } from '@/components/ui/input';
@@ -42,35 +43,42 @@ const ENVIRONMENTS = [
 
 interface Props {
   onCancel: () => void;
+  initialConfig?: ConnectionConfig;
+  initialPassword?: string;
 }
 
-export function ConnectionForm({ onCancel }: Props) {
-  const { connect, testConnection, connecting, error } = useConnectionStore();
+export function ConnectionForm({ onCancel, initialConfig, initialPassword }: Props) {
+  const isEditMode = !!initialConfig;
+  const { connect, testConnection, updateSavedConnection, connecting, error } = useConnectionStore();
   const [testResult, setTestResult] = useState<string | null>(null);
-  const [color, setColor] = useState<string | null>(null);
-  const [environment, setEnvironment] = useState<ConnectionConfig['environment']>(null);
+  const [color, setColor] = useState<string | null>(initialConfig?.color ?? null);
+  const [environment, setEnvironment] = useState<ConnectionConfig['environment']>(
+    initialConfig?.environment ?? null
+  );
 
   const [urlInput, setUrlInput] = useState('');
-  const [sslMode, setSslMode] = useState<SslMode>('disable');
-  const [sshEnabled, setSshEnabled] = useState(false);
+  const [sslMode, setSslMode] = useState<SslMode>(initialConfig?.ssl_mode ?? 'disable');
+  const [sshEnabled, setSshEnabled] = useState(!!initialConfig?.ssh_tunnel);
+
+  const initialSshAuth = initialConfig?.ssh_tunnel?.auth_method;
   const [sshForm, setSshForm] = useState({
-    host: '',
-    port: 22,
-    username: '',
-    authMethod: 'Password' as 'Password' | 'PrivateKey' | 'Agent',
-    keyPath: '',
+    host: initialConfig?.ssh_tunnel?.host ?? '',
+    port: initialConfig?.ssh_tunnel?.port ?? 22,
+    username: initialConfig?.ssh_tunnel?.username ?? '',
+    authMethod: (initialSshAuth?.type ?? 'Password') as 'Password' | 'PrivateKey' | 'Agent',
+    keyPath: initialSshAuth?.type === 'PrivateKey' ? (initialSshAuth as { type: 'PrivateKey'; key_path: string }).key_path : '',
     sshPassword: '',
   });
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const [form, setForm] = useState({
-    name: '',
-    db_type: 'mysql' as DatabaseType,
-    host: 'localhost',
-    port: 3306,
-    username: 'root',
-    password: '',
-    database: '',
+    name: initialConfig?.name ?? '',
+    db_type: (initialConfig?.db_type ?? 'mysql') as DatabaseType,
+    host: initialConfig?.host ?? 'localhost',
+    port: initialConfig?.port ?? 3306,
+    username: initialConfig?.username ?? 'root',
+    password: initialPassword ?? '',
+    database: initialConfig?.database ?? '',
   });
 
   const handleChange = (field: string, value: string | number) => {
@@ -129,7 +137,8 @@ export function ConnectionForm({ onCancel }: Props) {
   };
 
   const buildConfig = (): ConnectionConfig => ({
-    id: crypto.randomUUID(),
+    // Preserve existing UUID in edit mode so INSERT OR REPLACE updates the same row
+    id: initialConfig?.id ?? crypto.randomUUID(),
     name: form.name,
     db_type: form.db_type,
     host: form.host,
@@ -150,7 +159,7 @@ export function ConnectionForm({ onCancel }: Props) {
       const version = await testConnection(buildConfig(), form.password || undefined);
       setTestResult(`Connected! Server: ${version}`);
     } catch (e) {
-      setTestResult(`Failed: ${e}`);
+      setTestResult(`Failed: ${extractErrorMessage(e)}`);
     }
   };
 
@@ -158,7 +167,16 @@ export function ConnectionForm({ onCancel }: Props) {
     e.preventDefault();
     try {
       await connect(buildConfig(), form.password || undefined);
-      onCancel(); // Close form after successful connection
+      onCancel();
+    } catch {
+      // error handled by store
+    }
+  };
+
+  const handleSaveOnly = async () => {
+    try {
+      await updateSavedConnection(buildConfig());
+      onCancel();
     } catch {
       // error handled by store
     }
@@ -166,6 +184,12 @@ export function ConnectionForm({ onCancel }: Props) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      {isEditMode && (
+        <p className="text-xs text-muted-foreground">
+          Editing <span className="font-medium text-foreground">{initialConfig.name || initialConfig.host}</span>.
+          Click <span className="font-medium">Save Only</span> to update metadata, or <span className="font-medium">Connect</span> to reconnect with new credentials.
+        </p>
+      )}
       <div className="space-y-1.5">
         <Label>Import from URL</Label>
         <div className="flex gap-2">
@@ -294,6 +318,7 @@ export function ConnectionForm({ onCancel }: Props) {
             type="password"
             value={form.password}
             onChange={(e) => handleChange('password', e.target.value)}
+            placeholder={isEditMode ? 'Leave blank to keep saved password' : ''}
           />
         </div>
         <div className="col-span-2 space-y-1.5">
@@ -436,6 +461,11 @@ export function ConnectionForm({ onCancel }: Props) {
         <Button type="submit" disabled={connecting}>
           {connecting ? 'Connecting...' : 'Connect'}
         </Button>
+        {isEditMode && (
+          <Button type="button" variant="secondary" onClick={handleSaveOnly} disabled={connecting}>
+            Save Only
+          </Button>
+        )}
         <Button type="button" variant="outline" onClick={handleTest}>
           Test Connection
         </Button>

@@ -8,9 +8,10 @@ import { Input } from '@/components/ui/input';
 
 interface Props {
   connection: SavedConnection;
+  onEdit?: (connection: SavedConnection) => void;
 }
 
-export function ConnectionCard({ connection }: Props) {
+export function ConnectionCard({ connection, onEdit }: Props) {
   const { connect, deleteConnection } = useConnectionStore();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,8 +26,14 @@ export function ConnectionCard({ connection }: Props) {
     } catch (e) {
       const msg = String(e);
       setError(msg);
-      // Show password prompt on auth-related errors
-      if (msg.includes('denied') || msg.includes('password') || msg.includes('auth')) {
+      // Show password prompt on auth-related errors or decryption failures
+      if (
+        msg.includes('denied') ||
+        msg.includes('password') ||
+        msg.includes('auth') ||
+        msg.toLowerCase().includes('decryption') ||
+        msg.toLowerCase().includes('configuration error')
+      ) {
         setShowPassword(true);
       }
     } finally {
@@ -77,6 +84,15 @@ export function ConnectionCard({ connection }: Props) {
             >
               {loading ? 'Connecting...' : 'Connect'}
             </Button>
+            {onEdit && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={(e) => { e.stopPropagation(); onEdit(connection); }}
+              >
+                Edit
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="sm"

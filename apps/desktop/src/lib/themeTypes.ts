@@ -358,7 +358,7 @@ export function parseCSSVariablesDual(css: string): CSSParseDualResult {
 
 export function generateCSSTemplate(theme: Theme): string {
   const lines = [
-    '/* PurrQL Theme Template',
+    '/* VasOdb Theme Template',
     ' * Paste CSS from tweakcn, shadcn/ui, or edit this template.',
     ' * Supports oklch(), hsl(), rgb(), and hex colors.',
     ' */',

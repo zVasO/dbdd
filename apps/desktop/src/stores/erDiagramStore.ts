@@ -65,6 +65,10 @@ export const useERDiagramStore = create<ERDiagramState>((set, get) => ({
       return;
     }
 
+    // Preserve existing node positions and collapsed state when refreshing structures
+    const existingNodes = get().nodes;
+    const existingNodeMap = new Map(existingNodes.map((n) => [n.id, n]));
+
     // Collect all FK column names per table for isFK tagging
     const fkColumnsByTable = new Map<string, Set<string>>();
     for (const tableInfo of dbTables) {
@@ -87,6 +91,7 @@ export const useERDiagramStore = create<ERDiagramState>((set, get) => ({
         const key = `${database}.${tableInfo.name}`;
         const structure = structures[key];
         const fkCols = fkColumnsByTable.get(tableInfo.name) ?? new Set<string>();
+        const existing = existingNodeMap.get(tableInfo.name);
 
         const columns: ERColumnInfo[] = (structure?.columns ?? []).map((col) => ({
           name: col.name,
@@ -99,12 +104,13 @@ export const useERDiagramStore = create<ERDiagramState>((set, get) => ({
         return {
           id: tableInfo.name,
           type: 'table' as const,
-          position: { x: (index % 4) * 300, y: Math.floor(index / 4) * 400 },
+          // Preserve position if node already exists (e.g., on structure batch update)
+          position: existing?.position ?? { x: (index % 4) * 300, y: Math.floor(index / 4) * 400 },
           data: {
             tableName: tableInfo.name,
             database,
             columns,
-            collapsed: false,
+            collapsed: existing?.data.collapsed ?? false,
           },
         };
       });

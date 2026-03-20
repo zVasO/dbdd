@@ -1,7 +1,12 @@
 import { useConnectionStore } from '@/stores/connectionStore';
+import type { SavedConnection } from '@/lib/types';
 import { ConnectionCard } from './ConnectionCard';
 
-export function ConnectionList() {
+interface Props {
+  onEdit?: (connection: SavedConnection) => void;
+}
+
+export function ConnectionList({ onEdit }: Props) {
   const savedConnections = useConnectionStore((s) => s.savedConnections);
 
   if (savedConnections.length === 0) {
@@ -15,7 +20,7 @@ export function ConnectionList() {
   return (
     <div className="space-y-2">
       {savedConnections.map((conn) => (
-        <ConnectionCard key={conn.config.id} connection={conn} />
+        <ConnectionCard key={conn.config.id} connection={conn} onEdit={onEdit} />
       ))}
     </div>
   );

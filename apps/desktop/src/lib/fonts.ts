@@ -1,6 +1,6 @@
 // === FONT MANAGEMENT ===
 
-const FONTS_STORAGE_KEY = 'purrql:imported-fonts';
+const FONTS_STORAGE_KEY = 'vasodb:imported-fonts';
 
 export interface FontEntry {
   name: string;

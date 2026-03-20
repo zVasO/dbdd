@@ -115,8 +115,8 @@ export function AppLayout() {
   }, [activeConnectionId, loadDatabases, activeConfig?.database]);
 
   const sc = useShortcutStore((s) => s.getBinding);
-
   const isModalOpen = useUIStore((s) => s.isModalOpen);
+  const chatOpen = useAIStore((s) => s.chatOpen);
 
   useKeyboardShortcuts([
     { ...sc('global.newTab'), handler: () => createTab(), when: () => !isModalOpen() },
@@ -134,7 +134,7 @@ export function AppLayout() {
     {
       ...sc('global.save'),
       handler: () => {
-        document.dispatchEvent(new CustomEvent('purrql:commit'));
+        document.dispatchEvent(new CustomEvent('vasodb:commit'));
       },
       when: () => !isModalOpen(),
     },
@@ -264,7 +264,7 @@ export function AppLayout() {
             </Panel>
           </PanelGroup>
         )}
-        {useAIStore((s) => s.chatOpen) && (
+        {chatOpen && (
           <Suspense fallback={null}>
             <AiChatPanel />
           </Suspense>

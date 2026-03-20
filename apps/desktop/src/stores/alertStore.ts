@@ -48,8 +48,8 @@ interface AlertState {
   getUnreadCount: () => number;
 }
 
-const QUERIES_STORAGE_KEY = 'purrql:scheduled-queries';
-const ALERTS_STORAGE_KEY = 'purrql:alerts';
+const QUERIES_STORAGE_KEY = 'vasodb:scheduled-queries';
+const ALERTS_STORAGE_KEY = 'vasodb:alerts';
 
 // Module-level timers map (not in state since timers are not serializable)
 const timers = new Map<string, ReturnType<typeof setInterval>>();
@@ -182,7 +182,7 @@ async function executeAndCheck(query: ScheduledQuery): Promise<void> {
 
       state.updateScheduledQuery(query.id, { lastAlertAt: Date.now() });
 
-      sendNotification(`PurrQL Alert: ${query.name}`, message);
+      sendNotification(`VasOdb Alert: ${query.name}`, message);
     }
   } catch (e) {
     // Update last run time even on error
