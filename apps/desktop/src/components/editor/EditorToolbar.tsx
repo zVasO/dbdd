@@ -12,7 +12,8 @@ import {
   TooltipProvider,
 } from '@/components/ui/tooltip';
 import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2, Wand2, FolderOpen, Download, Sparkles, Brain, Zap, GitBranch, Check, X, StopCircle } from 'lucide-react';
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
+import { showSuccessToast, showErrorToast } from '@/stores/toastStore';
 import { useAIStore } from '@/stores/aiStore';
 import { AiResultDialog } from '@/components/ai/AiResultDialog';
 import { cn } from '@/lib/utils';
@@ -46,12 +47,14 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
       const statements = generateSql();
       await ipc.executeBatch(activeConnectionId, statements);
       useChangeStore.getState().discard();
+      showSuccessToast(`${pendingCount} change${pendingCount > 1 ? 's' : ''} saved`);
       // Re-execute the active query to refresh the grid
       const { activeTabId, executeQuery } = useQueryStore.getState();
       if (activeTabId) {
         executeQuery(activeConnectionId, activeTabId);
       }
     } catch (err) {
+      showErrorToast(`Commit failed: ${String(err)}`);
       console.error('Commit failed:', err);
     } finally {
       setIsCommitting(false);
@@ -90,13 +93,6 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
       console.warn('Cancel failed:', e);
     }
   }, [activeConnectionId, activeTab?.activeQueryId]);
-
-  // Listen for Ctrl+S commit event from AppLayout
-  useEffect(() => {
-    const handler = () => { handleCommit(); };
-    document.addEventListener('vasodb:commit', handler);
-    return () => document.removeEventListener('vasodb:commit', handler);
-  }, [handleCommit]);
 
   return (
     <TooltipProvider delayDuration={300}>

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -294,7 +294,7 @@ interface ColumnRowProps {
   nullable: boolean;
   providerId: string;
   onProviderChange: (pid: string) => void;
-  getPreviewValues: (pid: string, count?: number) => (string | number | boolean)[];
+  getPreviewValues: (pid: string, count?: number) => Promise<(string | number | boolean)[]>;
   previewKey: number;
 }
 
@@ -308,9 +308,9 @@ function ColumnRow({
   getPreviewValues,
   previewKey,
 }: ColumnRowProps) {
-  const previews = useMemo(() => {
-    return getPreviewValues(providerId, 5);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  const [previews, setPreviews] = useState<(string | number | boolean)[]>([]);
+  useEffect(() => {
+    getPreviewValues(providerId, 5).then(setPreviews);
   }, [providerId, previewKey, getPreviewValues]);
 
   return (

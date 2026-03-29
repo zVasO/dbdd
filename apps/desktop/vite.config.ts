@@ -31,12 +31,20 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor': ['react', 'react-dom'],
-          'tanstack': ['@tanstack/react-table', '@tanstack/react-virtual'],
-          'xlsx': ['xlsx'],
-          'charts': ['recharts'],
-          'flow': ['@xyflow/react'],
+        manualChunks(id: string) {
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('@codemirror/') || id.includes('/codemirror/') || id.includes('@lezer/')) return 'codemirror';
+          if (id.includes('/react-dom/')) return 'vendor';
+          if (id.includes('node_modules/react/')) return 'vendor';
+          if (id.includes('@tanstack/')) return 'tanstack';
+          if (id.includes('/xlsx/')) return 'xlsx';
+          if (id.includes('/recharts/') || id.includes('/victory-vendor/')) return 'charts';
+          if (id.includes('@xyflow/') || id.includes('/dagre/')) return 'flow';
+          if (id.includes('@faker-js/')) return 'faker';
+          if (id.includes('/sql-formatter/')) return 'sql-formatter';
+          if (id.includes('/lucide-react/')) return 'icons';
+          if (id.includes('/papaparse/')) return 'papaparse';
+          return undefined;
         },
       },
     },

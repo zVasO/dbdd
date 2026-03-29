@@ -44,6 +44,7 @@ export const SHORTCUT_DEFS: ShortcutDef[] = [
   { id: 'global.fullscreen', label: 'Toggle Full Screen', category: 'global', default: { key: 'f', modifiers: ['ctrl', 'meta'] } },
   { id: 'global.themeSwitcher', label: 'Theme Switcher', category: 'global', default: { key: 'y', modifiers: ['ctrl', 'shift'] } },
   { id: 'global.splitView', label: 'Split View', category: 'global', default: { key: '\\', modifiers: ['ctrl'] } },
+  { id: 'global.refresh', label: 'Refresh Query', category: 'global', default: { key: 'r', modifiers: ['ctrl'] } },
 
   // Editor
   { id: 'editor.execute', label: 'Execute Query', category: 'editor', default: { key: 'Enter', modifiers: ['ctrl'] } },

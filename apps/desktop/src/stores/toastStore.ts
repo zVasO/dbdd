@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-export type ToastVariant = 'default' | 'destructive';
+export type ToastVariant = 'default' | 'destructive' | 'success';
 
 export interface ToastItem {
   id: string;
@@ -49,4 +49,8 @@ export const useToastStore = create<ToastState>((set, get) => ({
  */
 export function showErrorToast(message: string): void {
   useToastStore.getState().addToast(message, 'destructive');
+}
+
+export function showSuccessToast(message: string): void {
+  useToastStore.getState().addToast(message, 'success', 3000);
 }

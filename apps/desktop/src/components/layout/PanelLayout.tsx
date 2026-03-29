@@ -218,8 +218,8 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
     const expectedSql = `SELECT * FROM ${qt}${expectedLimit}`;
     if (activeTab.sql === expectedSql) return;
     // Only auto-update simple SELECT * queries (don't overwrite custom WHERE/ORDER BY)
-    // Match both backtick-quoted and double-quote-quoted identifiers
-    const isSimpleSelect = /^SELECT \* FROM [`"][^`"]+[`"](\s+LIMIT \d+)?$/i.test(activeTab.sql);
+    // Match only single-identifier table references (no dots — those indicate schema.table and must not be blindly overwritten)
+    const isSimpleSelect = /^SELECT \* FROM [`"][^`".]+[`"](\s+LIMIT \d+)?$/i.test(activeTab.sql);
     if (!isSimpleSelect) return;
     const tabId = activeTab.id;
     const connId = activeConnectionId;

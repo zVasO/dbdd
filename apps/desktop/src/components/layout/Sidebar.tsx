@@ -24,6 +24,7 @@ import {
   X,
 } from 'lucide-react';
 import { ipc } from '@/lib/ipc';
+import { quoteIdentifier } from '@/lib/sql-utils';
 import { cn } from '@/lib/utils';
 import { getFuzzySearchBridge, type ScoredItem } from '@/lib/fuzzy-search-bridge';
 import { useFavoritesStore } from '@/stores/favoritesStore';
@@ -50,6 +51,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   const { loadTables, loadTableStructure, setActiveDatabase } = useSchemaStore.getState();
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const activeConfig = useConnectionStore((s) => s.activeConfig);
+  const dbType = activeConfig?.db_type ?? 'mysql';
   const { createTab, updateSql, executeQuery, setActiveTab } = useQueryStore.getState();
 
   const favoritesMap = useFavoritesStore((s) => s.favorites);
@@ -169,9 +171,14 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     if (existing) {
       setActiveTab(existing.id);
       const pageSize = usePreferencesStore.getState().defaultPageSize;
+      // MySQL supports cross-database `db`.`table` syntax; PostgreSQL/SQLite use just the table name
+      // (tables are resolved via search_path / the public schema of the connected database)
+      const tableRef = dbType === 'mysql'
+        ? `${quoteIdentifier(db, dbType)}.${quoteIdentifier(tableName, dbType)}`
+        : quoteIdentifier(tableName, dbType);
       const expectedSql = pageSize > 0
-        ? `SELECT * FROM \`${db}\`.\`${tableName}\` LIMIT ${pageSize}`
-        : `SELECT * FROM \`${db}\`.\`${tableName}\``;
+        ? `SELECT * FROM ${tableRef} LIMIT ${pageSize}`
+        : `SELECT * FROM ${tableRef}`;
       if (existing.sql !== expectedSql) {
         updateSql(existing.id, expectedSql);
         executeQuery(activeConnectionId, existing.id);
@@ -179,9 +186,12 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
       return;
     }
     const pageSize = usePreferencesStore.getState().defaultPageSize;
+    const tableRef = dbType === 'mysql'
+      ? `${quoteIdentifier(db, dbType)}.${quoteIdentifier(tableName, dbType)}`
+      : quoteIdentifier(tableName, dbType);
     const sql = pageSize > 0
-      ? `SELECT * FROM \`${db}\`.\`${tableName}\` LIMIT ${pageSize}`
-      : `SELECT * FROM \`${db}\`.\`${tableName}\``;
+      ? `SELECT * FROM ${tableRef} LIMIT ${pageSize}`
+      : `SELECT * FROM ${tableRef}`;
     const tabId = createTab(tableName, { editorVisible: false, database: db, table: tableName });
     updateSql(tabId, sql);
     executeQuery(activeConnectionId, tabId);
@@ -199,7 +209,10 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     if (!activeConnectionId) return;
     if (!window.confirm(`Truncate table "${tableName}"? This will delete all rows.`)) return;
     try {
-      await ipc.executeQuery(activeConnectionId, `TRUNCATE TABLE \`${db}\`.\`${tableName}\``);
+      const tbl = dbType === 'mysql'
+        ? `${quoteIdentifier(db, dbType)}.${quoteIdentifier(tableName, dbType)}`
+        : quoteIdentifier(tableName, dbType);
+      await ipc.executeQuery(activeConnectionId, `TRUNCATE TABLE ${tbl}`);
       loadTables(activeConnectionId, db);
     } catch (err) {
       alert(`Failed to truncate: ${err}`);
@@ -210,7 +223,10 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     if (!activeConnectionId) return;
     if (!window.confirm(`DROP TABLE "${tableName}"? This action cannot be undone!`)) return;
     try {
-      await ipc.executeQuery(activeConnectionId, `DROP TABLE \`${db}\`.\`${tableName}\``);
+      const tbl = dbType === 'mysql'
+        ? `${quoteIdentifier(db, dbType)}.${quoteIdentifier(tableName, dbType)}`
+        : quoteIdentifier(tableName, dbType);
+      await ipc.executeQuery(activeConnectionId, `DROP TABLE ${tbl}`);
       loadTables(activeConnectionId, db);
     } catch (err) {
       alert(`Failed to drop: ${err}`);
@@ -222,7 +238,13 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     const newName = window.prompt(`Rename table "${tableName}" to:`, tableName);
     if (!newName || newName === tableName) return;
     try {
-      await ipc.executeQuery(activeConnectionId, `ALTER TABLE \`${db}\`.\`${tableName}\` RENAME TO \`${db}\`.\`${newName}\``);
+      const oldTbl = dbType === 'mysql'
+        ? `${quoteIdentifier(db, dbType)}.${quoteIdentifier(tableName, dbType)}`
+        : quoteIdentifier(tableName, dbType);
+      const newTbl = dbType === 'mysql'
+        ? `${quoteIdentifier(db, dbType)}.${quoteIdentifier(newName, dbType)}`
+        : quoteIdentifier(newName, dbType);
+      await ipc.executeQuery(activeConnectionId, `ALTER TABLE ${oldTbl} RENAME TO ${newTbl}`);
       loadTables(activeConnectionId, db);
     } catch (err) {
       alert(`Failed to rename: ${err}`);
@@ -240,11 +262,11 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
         style={{ width: 'var(--sidebar-width)' }}
       >
         {/* Database selector — pl-[78px] reserves space for macOS traffic lights */}
-        <div className="relative border-b border-sidebar-border" ref={dbSelectorRef}>
-          <div className="flex items-center pl-[78px]">
+        <div className="relative border-b border-sidebar-border h-9" ref={dbSelectorRef}>
+          <div className="flex h-full items-center pl-[78px]">
           <button
             onClick={() => setDbSelectorOpen(!dbSelectorOpen)}
-            className="flex flex-1 min-w-0 items-center gap-2 px-3 py-2 text-left hover:bg-sidebar-accent/50 transition-colors"
+            className="flex flex-1 min-w-0 h-full items-center gap-2 px-3 text-left hover:bg-sidebar-accent/50 transition-colors"
           >
             <Database className="h-3.5 w-3.5 shrink-0 text-primary" />
             <div className="min-w-0 flex-1">

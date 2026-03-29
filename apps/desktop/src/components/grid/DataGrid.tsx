@@ -43,6 +43,8 @@ interface EditingCell {
   colIndex: number;
   value: string;
   isNull?: boolean;
+  /** When true, cursor goes to end instead of selecting all (triggered by typing a char) */
+  cursorAtEnd?: boolean;
 }
 
 interface SortColumn {
@@ -249,6 +251,17 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
   // Preferences
   const alternatingRowColors = usePreferencesStore((s) => s.alternatingRowColors);
   const defaultCopyFormat = usePreferencesStore((s) => s.defaultCopyFormat);
+
+  // Primary key columns from schema store — query results always have is_primary_key: false
+  // so we cross-reference the schema structure which is populated separately.
+  const schemaPrimaryKeys = useSchemaStore(
+    useShallow((s) => {
+      if (!database || !table) return null;
+      const structure = s.structures[`${database}.${table}`];
+      if (!structure) return null;
+      return new Set(structure.columns.filter((c) => c.is_primary_key).map((c) => c.name));
+    }),
+  );
 
   // Change tracking — subscribe only to changes for this specific table
   const addChange = useChangeStore((s) => s.addChange);
@@ -519,13 +532,20 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     }
   }, [focusedCell?.row, rowVirtualizer]);
 
-  // Focus input on edit
+  // Focus input on edit — deps scoped to cell identity only, not value,
+  // to avoid re-selecting text on every keystroke.
   useEffect(() => {
     if (editingCell && editInputRef.current) {
       editInputRef.current.focus();
-      editInputRef.current.select();
+      if (editingCell.cursorAtEnd) {
+        const len = editInputRef.current.value.length;
+        editInputRef.current.setSelectionRange(len, len);
+      } else {
+        editInputRef.current.select();
+      }
     }
-  }, [editingCell]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingCell?.rowIndex, editingCell?.colIndex, editingCell?.cursorAtEnd]);
 
   // Keep resize snapshot ref current for the [] effect closure
   resizeSnapshotRef.current = { visibleColumns, visibleColIndexMap, columnWidths };
@@ -716,12 +736,43 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     [dragStartRow],
   );
 
+  // Start editing a cell — shared by click, double-click, and keyboard triggers
+  const startEditingCell = useCallback(
+    (rowIndex: number, colIndex: number, initialValue?: string) => {
+      const actualRowIndex = paginatedIndexMap[rowIndex];
+      const cell = columnarCellValue(columnarData, colIndex, actualRowIndex);
+      const isNull = cell.type === 'Null';
+      const value = initialValue ?? (isNull ? '' : formatCell(cell));
+      setEditingCell({
+        rowIndex,
+        colIndex,
+        value,
+        isNull: isNull && initialValue == null,
+        cursorAtEnd: initialValue != null,
+      });
+    },
+    [paginatedIndexMap, columnarData],
+  );
+
   // Cell click → cell selection + start drag (left click only)
   const handleCellMouseDown = useCallback(
     (e: React.MouseEvent, rowIndex: number, colIndex: number) => {
       if (editingCell) return;
       if (e.button === 2) return; // right-click handled by onContextMenu
       e.stopPropagation();
+      // Single click on already-focused cell → start editing (spreadsheet UX)
+      if (
+        focusedCell?.row === rowIndex &&
+        focusedCell?.col === colIndex &&
+        !e.shiftKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        database &&
+        table
+      ) {
+        startEditingCell(rowIndex, colIndex);
+        return;
+      }
       setSelectedRows(new Set());
       if (e.shiftKey && lastSelectedCellKey) {
         // Range select from last cell to this cell
@@ -754,7 +805,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       setFocusedColIndex(colIndex);
       setFocusedCell({ row: rowIndex, col: colIndex });
     },
-    [editingCell, lastSelectedCellKey],
+    [editingCell, lastSelectedCellKey, focusedCell, database, table, startEditingCell],
   );
 
   // Cell drag → rectangular selection
@@ -779,12 +830,9 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
 
   const handleCellDoubleClick = useCallback(
     (rowIndex: number, colIndex: number) => {
-      const actualRowIndex = paginatedIndexMap[rowIndex];
-      const cell = columnarCellValue(columnarData, colIndex, actualRowIndex);
-      const isNull = cell.type === 'Null';
-      setEditingCell({ rowIndex, colIndex, value: isNull ? '' : formatCell(cell), isNull });
+      startEditingCell(rowIndex, colIndex);
     },
-    [paginatedIndexMap, columnarData],
+    [startEditingCell],
   );
 
   const commitEdit = useCallback(() => {
@@ -805,7 +853,8 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     if (database && table) {
       const primaryKeys: Record<string, string | number | boolean | null> = {};
       result.columns.forEach((col, i) => {
-        if (col.is_primary_key) primaryKeys[col.name] = formatColumnarCell(columnarData, i, actualRowIndex);
+        const isPk = schemaPrimaryKeys ? schemaPrimaryKeys.has(col.name) : col.is_primary_key;
+        if (isPk) primaryKeys[col.name] = formatColumnarCell(columnarData, i, actualRowIndex);
       });
       if (Object.keys(primaryKeys).length > 0) {
         addChange({
@@ -815,7 +864,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       }
     }
     setEditingCell(null);
-  }, [editingCell, result.columns, columnarData, database, table, addChange, paginatedIndexMap]);
+  }, [editingCell, result.columns, columnarData, database, table, addChange, paginatedIndexMap, schemaPrimaryKeys]);
 
   const cancelEdit = useCallback(() => setEditingCell(null), []);
 
@@ -832,7 +881,8 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     if (oldValue !== newValue && database && table) {
       const primaryKeys: Record<string, string | number | boolean | null> = {};
       result.columns.forEach((col, i) => {
-        if (col.is_primary_key) primaryKeys[col.name] = formatColumnarCell(columnarData, i, actualRowIndex);
+        const isPk = schemaPrimaryKeys ? schemaPrimaryKeys.has(col.name) : col.is_primary_key;
+        if (isPk) primaryKeys[col.name] = formatColumnarCell(columnarData, i, actualRowIndex);
       });
       if (Object.keys(primaryKeys).length > 0) {
         addChange({ type: 'edit', table, database, rowIndex: actualRowIndex, primaryKeys, column: column.name, oldValue, newValue });
@@ -863,7 +913,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     } else {
       setEditingCell(null);
     }
-  }, [editingCell, paginatedIndexMap, columnarData, result.columns, database, table, addChange, visibleColumns, visibleColIndexMap]);
+  }, [editingCell, paginatedIndexMap, columnarData, result.columns, database, table, addChange, visibleColumns, visibleColIndexMap, schemaPrimaryKeys]);
 
   const handleDeleteRow = useCallback((paginatedIdx: number) => {
     if (!database || !table) return;
@@ -872,13 +922,14 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     const originalRow: Record<string, string | number | boolean | null> = {};
     result.columns.forEach((col, i) => {
       const formatted = formatColumnarCell(columnarData, i, actualRowIndex);
-      if (col.is_primary_key) primaryKeys[col.name] = formatted;
+      const isPk = schemaPrimaryKeys ? schemaPrimaryKeys.has(col.name) : col.is_primary_key;
+      if (isPk) primaryKeys[col.name] = formatted;
       originalRow[col.name] = formatted;
     });
     if (Object.keys(primaryKeys).length === 0) return;
     addChange({ type: 'delete', table, database, rowIndex: actualRowIndex, primaryKeys, originalRow });
     setContextMenu(null);
-  }, [database, table, result.columns, columnarData, addChange, paginatedIndexMap]);
+  }, [database, table, result.columns, columnarData, addChange, paginatedIndexMap, schemaPrimaryKeys]);
 
   const formatRowsForCopy = useCallback((columns: typeof result.columns, rows: { cells: CellValue[] }[]) => {
     switch (defaultCopyFormat) {
@@ -1017,6 +1068,17 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
         setSelectedCells(new Set());
         setLastSelectedCellKey(null);
         return true;
+      case 'F2':
+        e.preventDefault();
+        if (database && table) startEditingCell(row, col);
+        return true;
+      case 'Enter':
+        if (!e.shiftKey && !e.ctrlKey && !e.metaKey && database && table) {
+          e.preventDefault();
+          startEditingCell(row, col);
+          return true;
+        }
+        return false;
       default:
         return false;
     }
@@ -1036,7 +1098,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     setFocusedColIndex(col);
     setSelectedRows(new Set());
     return true;
-  }, [focusedCell, editingCell, paginatedIndexMap.length, visibleColIndexMap]);
+  }, [focusedCell, editingCell, paginatedIndexMap.length, visibleColIndexMap, startEditingCell, database, table]);
 
   // ─── Keyboard ──────────────────────────────────────────────────────────────
 
@@ -1142,7 +1204,22 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       setLastSelectedRow(next);
       return;
     }
-  }, [copySelection, paginatedIndexMap, columnarData, editingCell, cancelEdit, lastSelectedRow, contextMenu, focusedColIndex, result.columns, selectedRows, selectedCells, lastSelectedCellKey, database, table, handleDuplicateRow, handlePasteRows, focusedCell, handleGridKeyDown]);
+    // Typing a printable character on a focused cell → start editing with that char
+    if (
+      focusedCell &&
+      !editingCell &&
+      database &&
+      table &&
+      e.key.length === 1 &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey
+    ) {
+      e.preventDefault();
+      startEditingCell(focusedCell.row, focusedCell.col, e.key);
+      return;
+    }
+  }, [copySelection, paginatedIndexMap, columnarData, editingCell, cancelEdit, lastSelectedRow, contextMenu, focusedColIndex, result.columns, selectedRows, selectedCells, lastSelectedCellKey, database, table, handleDuplicateRow, handlePasteRows, focusedCell, handleGridKeyDown, startEditingCell]);
 
   // ─── Export ────────────────────────────────────────────────────────────────
 
@@ -1443,6 +1520,12 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
                             if (e.key === 'Tab') { e.preventDefault(); commitAndMove(e.shiftKey ? 'left' : 'right'); return; }
                             if (e.key === 'Enter') { commitAndMove('down'); return; }
                             if (e.key === 'Escape') cancelEdit();
+                            if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+                              e.preventDefault();
+                              commitEdit();
+                              window.dispatchEvent(new CustomEvent('vasodb:commit'));
+                              return;
+                            }
                             e.stopPropagation();
                           }}
                           onBlur={commitEdit}

@@ -31,6 +31,8 @@ const NotesPanel = lazy(() => import('@/components/notes/NotesPanel').then(m => 
 import { useImportExportStore } from '@/stores/importExportStore';
 import { useDataGenStore } from '@/stores/dataGenStore';
 import { useNotesStore } from '@/stores/notesStore';
+import { ipc } from '@/lib/ipc';
+import { showSuccessToast, showErrorToast } from '@/stores/toastStore';
 
 export function AppLayout() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
@@ -118,6 +120,30 @@ export function AppLayout() {
   const isModalOpen = useUIStore((s) => s.isModalOpen);
   const chatOpen = useAIStore((s) => s.chatOpen);
 
+  // Global commit handler — always mounted, handles vasodb:commit from any source
+  // (DataGrid Ctrl+S while editing, native menu Save, keyboard shortcut)
+  const handleGlobalCommit = useCallback(async () => {
+    const changeStore = useChangeStore.getState();
+    const connId = useConnectionStore.getState().activeConnectionId;
+    if (!connId || !changeStore.hasPendingChanges()) return;
+    const count = changeStore.pendingForActiveConnection().length;
+    const statements = changeStore.generateSql();
+    try {
+      await ipc.executeBatch(connId, statements);
+      changeStore.discard();
+      showSuccessToast(`${count} change${count > 1 ? 's' : ''} saved`);
+      const { activeTabId, executeQuery } = useQueryStore.getState();
+      if (activeTabId) executeQuery(connId, activeTabId);
+    } catch (err) {
+      showErrorToast(`Commit failed: ${String(err)}`);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('vasodb:commit', handleGlobalCommit);
+    return () => window.removeEventListener('vasodb:commit', handleGlobalCommit);
+  }, [handleGlobalCommit]);
+
   useKeyboardShortcuts([
     { ...sc('global.newTab'), handler: () => createTab(), when: () => !isModalOpen() },
     { ...sc('global.openAnything'), handler: () => useUIStore.getState().setOpenAnythingOpen(true), when: () => !isModalOpen() },
@@ -133,9 +159,7 @@ export function AppLayout() {
     },
     {
       ...sc('global.save'),
-      handler: () => {
-        document.dispatchEvent(new CustomEvent('vasodb:commit'));
-      },
+      handler: () => handleGlobalCommit(),
       when: () => !isModalOpen(),
     },
     { ...sc('global.redo'), handler: () => useChangeStore.getState().redo(), when: () => !isModalOpen() },
@@ -211,6 +235,15 @@ export function AppLayout() {
     { ...sc('global.insertSnippet'), handler: () => setSnippetPaletteOpen(true), when: () => !isModalOpen() },
     { ...sc('global.export'), handler: () => useImportExportStore.getState().setExportDialogOpen(true), when: () => !isModalOpen() },
     { ...sc('global.dataGenerator'), handler: () => useDataGenStore.getState().setDialogOpen(true), when: () => !isModalOpen() },
+    {
+      ...sc('global.refresh'),
+      handler: () => {
+        const connId = useConnectionStore.getState().activeConnectionId;
+        const { activeTabId, executeQuery } = useQueryStore.getState();
+        if (connId && activeTabId) executeQuery(connId, activeTabId);
+      },
+      when: () => !isModalOpen(),
+    },
   ]);
 
   if (settingsOpen) {

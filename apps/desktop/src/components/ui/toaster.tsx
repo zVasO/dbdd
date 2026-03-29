@@ -27,6 +27,8 @@ export function Toaster() {
             'data-[swipe=end]:animate-out data-[swipe=end]:slide-out-to-right-full',
             toast.variant === 'destructive'
               ? 'border-destructive bg-destructive text-white'
+              : toast.variant === 'success'
+              ? 'border-green-600 bg-green-600 text-white'
               : 'border-border bg-background text-foreground',
           )}
         >
@@ -36,7 +38,7 @@ export function Toaster() {
           <ToastPrimitive.Close
             className={cn(
               'shrink-0 rounded-md p-1 opacity-70 transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-offset-2',
-              toast.variant === 'destructive'
+              toast.variant === 'destructive' || toast.variant === 'success'
                 ? 'text-white focus:ring-white/50'
                 : 'text-foreground focus:ring-ring',
             )}

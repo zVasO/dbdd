@@ -1,10 +1,15 @@
 import { create } from 'zustand';
 import { ipc, extractErrorMessage } from '@/lib/ipc';
 import { useSchemaStore } from '@/stores/schemaStore';
-import { getProvider, autoDetectProvider } from '@/lib/dataGenProviders';
 import { cellValueToJS } from '@/lib/exportFormats';
-import Papa from 'papaparse';
 import type { QueryResult } from '@/lib/types';
+
+// Lazy-load heavy modules only when data generation is actually triggered
+let _providers: typeof import('@/lib/dataGenProviders') | null = null;
+async function loadProviders() {
+  if (!_providers) _providers = await import('@/lib/dataGenProviders');
+  return _providers;
+}
 
 interface DataGenState {
   dialogOpen: boolean;
@@ -16,12 +21,12 @@ interface DataGenState {
   error: string | null;
 
   setDialogOpen: (open: boolean) => void;
-  selectTable: (database: string, table: string) => void;
+  selectTable: (database: string, table: string) => Promise<void>;
   setProvider: (column: string, providerId: string) => void;
   setRowCount: (count: number) => void;
   generateAndInsert: (connectionId: string) => Promise<void>;
-  generateAndExportCSV: () => void;
-  getPreviewValues: (providerId: string, count?: number) => (string | number | boolean)[];
+  generateAndExportCSV: () => Promise<void>;
+  getPreviewValues: (providerId: string, count?: number) => Promise<(string | number | boolean)[]>;
 }
 
 function escapeGenSQL(val: string | number | boolean | null): string {
@@ -54,13 +59,14 @@ export const useDataGenStore = create<DataGenState>((set, get) => ({
     }
   },
 
-  selectTable: (database: string, table: string) => {
+  selectTable: async (database: string, table: string) => {
     const schemaState = useSchemaStore.getState();
     const structureKey = `${database}.${table}`;
     const structure = schemaState.structures[structureKey];
 
     const columnProviders: Record<string, string> = {};
     if (structure) {
+      const { autoDetectProvider } = await loadProviders();
       for (const col of structure.columns) {
         columnProviders[col.name] = autoDetectProvider(col.name, col.data_type);
       }
@@ -109,7 +115,8 @@ export const useDataGenStore = create<DataGenState>((set, get) => ({
         const batchEnd = Math.min(i + BATCH_SIZE, rowCount);
         const valuesList: string[] = [];
 
-        for (let j = i; j < batchEnd; j++) {
+        const { getProvider } = await loadProviders();
+      for (let j = i; j < batchEnd; j++) {
           const vals = columns.map((col) => {
             const providerId = columnProviders[col];
             const provider = getProvider(providerId);
@@ -138,10 +145,15 @@ export const useDataGenStore = create<DataGenState>((set, get) => ({
     }
   },
 
-  generateAndExportCSV: () => {
+  generateAndExportCSV: async () => {
     const { selectedTable, columnProviders, rowCount } = get();
     const columns = Object.keys(columnProviders);
     if (columns.length === 0) return;
+
+    const [{ getProvider }, { default: Papa }] = await Promise.all([
+      loadProviders(),
+      import('papaparse'),
+    ]);
 
     const data: Record<string, string | number | boolean>[] = [];
 
@@ -171,7 +183,8 @@ export const useDataGenStore = create<DataGenState>((set, get) => ({
     URL.revokeObjectURL(url);
   },
 
-  getPreviewValues: (providerId: string, count = 5) => {
+  getPreviewValues: async (providerId: string, count = 5) => {
+    const { getProvider } = await loadProviders();
     const provider = getProvider(providerId);
     if (!provider) return [];
     const values: (string | number | boolean)[] = [];

@@ -1,9 +1,92 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { cn } from '@/lib/utils';
-import { Key, Hash, Link2, ShieldCheck, Loader2 } from 'lucide-react';
+import { Hash, Link2, ShieldCheck, Loader2, Key } from 'lucide-react';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
-import type { TableStructure, ColumnInfo, IndexInfo, ForeignKeyInfo, ConstraintInfo } from '@/lib/types';
+import type { ColumnInfo, IndexInfo, ForeignKeyInfo, ConstraintInfo, QueryResult, ColumnMeta, Row, CellValue } from '@/lib/types';
+import { DataGrid } from '@/components/grid/DataGrid';
+
+// Helper — builds a QueryResult from column names and raw cell values
+function makeResult(columnNames: string[], rows: (string | number | boolean | null)[][]): QueryResult {
+  const columns: ColumnMeta[] = columnNames.map(name => ({
+    name,
+    data_type: 'Text',
+    native_type: 'text',
+    nullable: true,
+    is_primary_key: false,
+    max_length: null,
+  }));
+  const resultRows: Row[] = rows.map(cells => ({
+    cells: cells.map((cell): CellValue => {
+      if (cell === null || cell === undefined || cell === '') return { type: 'Null' };
+      if (typeof cell === 'boolean') return { type: 'Boolean', value: cell };
+      if (typeof cell === 'number') return { type: 'Integer', value: cell };
+      return { type: 'Text', value: cell };
+    }),
+  }));
+  return {
+    query_id: '',
+    columns,
+    rows: resultRows,
+    total_rows: resultRows.length,
+    affected_rows: null,
+    execution_time_ms: 0,
+    warnings: [],
+    result_type: 'Select',
+  };
+}
+
+function columnsResult(columns: ColumnInfo[]): QueryResult {
+  return makeResult(
+    ['#', 'Name', 'Type', 'Nullable', 'Default', 'Comment'],
+    columns.map(col => [
+      col.ordinal_position,
+      col.name,
+      String(col.data_type),
+      col.nullable,
+      col.default_value,
+      col.comment,
+    ]),
+  );
+}
+
+function indexesResult(indexes: IndexInfo[]): QueryResult {
+  return makeResult(
+    ['Name', 'Columns', 'Type', 'Unique', 'Primary'],
+    indexes.map(idx => [
+      idx.name,
+      idx.columns.join(', '),
+      idx.index_type,
+      idx.is_unique,
+      idx.is_primary,
+    ]),
+  );
+}
+
+function foreignKeysResult(foreignKeys: ForeignKeyInfo[]): QueryResult {
+  return makeResult(
+    ['Name', 'Columns', 'References', 'On Update', 'On Delete'],
+    foreignKeys.map(fk => [
+      fk.name,
+      fk.columns.join(', '),
+      `${fk.referenced_table.table}(${fk.referenced_columns.join(', ')})`,
+      fk.on_update,
+      fk.on_delete,
+    ]),
+  );
+}
+
+function constraintsResult(constraints: ConstraintInfo[]): QueryResult {
+  return makeResult(
+    ['Name', 'Type', 'Columns', 'Definition'],
+    constraints.map(c => [
+      c.name,
+      c.constraint_type,
+      c.columns.join(', '),
+      c.definition,
+    ]),
+  );
+}
 
 type StructureTab = 'columns' | 'indexes' | 'foreign_keys' | 'constraints';
 
@@ -89,11 +172,11 @@ export function TableStructureView({ database, table }: Props) {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-auto">
-        {activeTab === 'columns' && <ColumnsTable columns={structure.columns} />}
-        {activeTab === 'indexes' && <IndexesTable indexes={structure.indexes} />}
-        {activeTab === 'foreign_keys' && <ForeignKeysTable foreignKeys={structure.foreign_keys} />}
-        {activeTab === 'constraints' && <ConstraintsTable constraints={structure.constraints} />}
+      <div className="flex-1 overflow-hidden">
+        {activeTab === 'columns' && <DataGrid result={columnsResult(structure.columns)} />}
+        {activeTab === 'indexes' && <DataGrid result={indexesResult(structure.indexes)} />}
+        {activeTab === 'foreign_keys' && <DataGrid result={foreignKeysResult(structure.foreign_keys)} />}
+        {activeTab === 'constraints' && <DataGrid result={constraintsResult(structure.constraints)} />}
       </div>
 
       {/* Footer */}
@@ -106,190 +189,3 @@ export function TableStructureView({ database, table }: Props) {
   );
 }
 
-function ColumnsTable({ columns }: { columns: ColumnInfo[] }) {
-  return (
-    <table className="w-full text-xs">
-      <thead>
-        <tr className="sticky top-0 bg-muted text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-          <th className="px-3 py-2 font-semibold">#</th>
-          <th className="px-3 py-2 font-semibold">Name</th>
-          <th className="px-3 py-2 font-semibold">Type</th>
-          <th className="px-3 py-2 font-semibold">Nullable</th>
-          <th className="px-3 py-2 font-semibold">Default</th>
-          <th className="px-3 py-2 font-semibold">Comment</th>
-        </tr>
-      </thead>
-      <tbody>
-        {columns.map((col, i) => (
-          <tr
-            key={col.name}
-            className={cn(
-              'border-b border-border/30',
-              i % 2 === 1 && 'bg-muted/30',
-            )}
-          >
-            <td className="px-3 py-1.5 text-muted-foreground">{col.ordinal_position}</td>
-            <td className="px-3 py-1.5 font-medium">
-              <span className="flex items-center gap-1.5">
-                {col.is_primary_key && <Key className="h-3 w-3 text-primary" />}
-                {col.name}
-              </span>
-            </td>
-            <td className="px-3 py-1.5">
-              <span className="rounded bg-accent/50 px-1.5 py-0.5 text-[11px]">{col.data_type}</span>
-            </td>
-            <td className="px-3 py-1.5">
-              {col.nullable ? (
-                <span className="text-muted-foreground">YES</span>
-              ) : (
-                <span className="font-medium text-foreground">NO</span>
-              )}
-            </td>
-            <td className="px-3 py-1.5 text-muted-foreground">
-              {col.default_value ?? <span className="italic text-muted-foreground/50">none</span>}
-            </td>
-            <td className="max-w-[200px] truncate px-3 py-1.5 text-muted-foreground">
-              {col.comment ?? ''}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function IndexesTable({ indexes }: { indexes: IndexInfo[] }) {
-  if (indexes.length === 0) {
-    return <EmptyState text="No indexes" />;
-  }
-
-  return (
-    <table className="w-full text-xs">
-      <thead>
-        <tr className="sticky top-0 bg-muted text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-          <th className="px-3 py-2 font-semibold">Name</th>
-          <th className="px-3 py-2 font-semibold">Columns</th>
-          <th className="px-3 py-2 font-semibold">Type</th>
-          <th className="px-3 py-2 font-semibold">Unique</th>
-          <th className="px-3 py-2 font-semibold">Primary</th>
-        </tr>
-      </thead>
-      <tbody>
-        {indexes.map((idx, i) => (
-          <tr
-            key={idx.name}
-            className={cn(
-              'border-b border-border/30',
-              i % 2 === 1 && 'bg-muted/30',
-            )}
-          >
-            <td className="px-3 py-1.5 font-medium">{idx.name}</td>
-            <td className="px-3 py-1.5">
-              <span className="text-muted-foreground">{idx.columns.join(', ')}</span>
-            </td>
-            <td className="px-3 py-1.5">
-              <span className="rounded bg-accent/50 px-1.5 py-0.5 text-[11px]">{idx.index_type}</span>
-            </td>
-            <td className="px-3 py-1.5">
-              {idx.is_unique && <span className="text-primary">YES</span>}
-            </td>
-            <td className="px-3 py-1.5">
-              {idx.is_primary && <Key className="h-3 w-3 text-primary" />}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function ForeignKeysTable({ foreignKeys }: { foreignKeys: ForeignKeyInfo[] }) {
-  if (foreignKeys.length === 0) {
-    return <EmptyState text="No foreign keys" />;
-  }
-
-  return (
-    <table className="w-full text-xs">
-      <thead>
-        <tr className="sticky top-0 bg-muted text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-          <th className="px-3 py-2 font-semibold">Name</th>
-          <th className="px-3 py-2 font-semibold">Columns</th>
-          <th className="px-3 py-2 font-semibold">References</th>
-          <th className="px-3 py-2 font-semibold">On Update</th>
-          <th className="px-3 py-2 font-semibold">On Delete</th>
-        </tr>
-      </thead>
-      <tbody>
-        {foreignKeys.map((fk, i) => (
-          <tr
-            key={fk.name}
-            className={cn(
-              'border-b border-border/30',
-              i % 2 === 1 && 'bg-muted/30',
-            )}
-          >
-            <td className="px-3 py-1.5 font-medium">{fk.name}</td>
-            <td className="px-3 py-1.5 text-muted-foreground">{fk.columns.join(', ')}</td>
-            <td className="px-3 py-1.5">
-              <span className="text-primary">{fk.referenced_table.table}</span>
-              <span className="text-muted-foreground">({fk.referenced_columns.join(', ')})</span>
-            </td>
-            <td className="px-3 py-1.5">
-              <span className="rounded bg-accent/50 px-1.5 py-0.5 text-[11px]">{fk.on_update}</span>
-            </td>
-            <td className="px-3 py-1.5">
-              <span className="rounded bg-accent/50 px-1.5 py-0.5 text-[11px]">{fk.on_delete}</span>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function ConstraintsTable({ constraints }: { constraints: ConstraintInfo[] }) {
-  if (constraints.length === 0) {
-    return <EmptyState text="No constraints" />;
-  }
-
-  return (
-    <table className="w-full text-xs">
-      <thead>
-        <tr className="sticky top-0 bg-muted text-left text-[10px] uppercase tracking-wider text-muted-foreground">
-          <th className="px-3 py-2 font-semibold">Name</th>
-          <th className="px-3 py-2 font-semibold">Type</th>
-          <th className="px-3 py-2 font-semibold">Columns</th>
-          <th className="px-3 py-2 font-semibold">Definition</th>
-        </tr>
-      </thead>
-      <tbody>
-        {constraints.map((c, i) => (
-          <tr
-            key={c.name}
-            className={cn(
-              'border-b border-border/30',
-              i % 2 === 1 && 'bg-muted/30',
-            )}
-          >
-            <td className="px-3 py-1.5 font-medium">{c.name}</td>
-            <td className="px-3 py-1.5">
-              <span className="rounded bg-accent/50 px-1.5 py-0.5 text-[11px]">{c.constraint_type}</span>
-            </td>
-            <td className="px-3 py-1.5 text-muted-foreground">{c.columns.join(', ')}</td>
-            <td className="max-w-[300px] truncate px-3 py-1.5 text-muted-foreground">
-              {c.definition ?? ''}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-function EmptyState({ text }: { text: string }) {
-  return (
-    <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
-      {text}
-    </div>
-  );
-}
