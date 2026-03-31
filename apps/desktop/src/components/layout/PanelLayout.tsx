@@ -489,6 +489,8 @@ function renderResult(
             onServerPageChange={tab.table ? onServerPageChange : undefined}
             serverTotalRows={tab.table ? serverTotalRows : undefined}
             serverPage={tab.table ? serverPage : undefined}
+            highlightedColumnName={tab.highlightedColumn}
+            onHighlightDone={() => useQueryStore.getState().setHighlightedColumn(tab.id, null)}
           />
           {isReloading && (
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/40">

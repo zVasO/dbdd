@@ -72,15 +72,17 @@ export interface ColumnNodeProps {
   column: ColumnInfo;
   selected: boolean;
   onClick: () => void;
+  onDoubleClick?: () => void;
   searchQuery?: string;
 }
 
-export function ColumnNode({ column, selected, onClick, searchQuery = '' }: ColumnNodeProps) {
+export function ColumnNode({ column, selected, onClick, onDoubleClick, searchQuery = '' }: ColumnNodeProps) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
         <button
           onClick={onClick}
+          onDoubleClick={onDoubleClick}
           className={cn(
             'flex w-full items-center gap-1.5 px-2 py-0.5 text-left text-[11px] hover:bg-sidebar-accent',
             selected && 'bg-sidebar-accent',
@@ -120,6 +122,7 @@ export function ColumnNode({ column, selected, onClick, searchQuery = '' }: Colu
           {column.default_value != null && ` \u00b7 Default: ${column.default_value}`}
         </p>
         {column.comment && <p className="mt-1 text-muted-foreground">{column.comment}</p>}
+        {onDoubleClick && <p className="mt-1 text-muted-foreground/60 text-[10px]">Double-click to open table</p>}
       </TooltipContent>
     </Tooltip>
   );

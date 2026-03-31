@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Columns3, Table2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ScoredItem } from '@/lib/fuzzy-search-bridge';
@@ -10,18 +10,33 @@ export interface FuzzySearchResultsProps {
   searchQuery: string;
   onTableClick: (db: string, table: string) => void;
   onColumnClick: (column: ColumnInfo) => void;
+  onColumnDoubleClick?: (db: string, tableName: string, colName: string) => void;
   selectedColumn: ColumnInfo | null;
 }
 
-export function FuzzySearchResults({
+function handleColumnDoubleClick(
+  item: ScoredItem,
+  onTableClick: (db: string, table: string) => void,
+  onColumnDoubleClick?: (db: string, tableName: string, colName: string) => void,
+): void {
+  if (!item.table || !item.database) return;
+  if (onColumnDoubleClick) {
+    onColumnDoubleClick(item.database, item.table, item.name);
+  } else {
+    onTableClick(item.database, item.table);
+  }
+}
+
+export const FuzzySearchResults = React.memo(function FuzzySearchResults({
   results,
   searchQuery,
   onTableClick,
   onColumnClick,
+  onColumnDoubleClick,
   selectedColumn,
 }: FuzzySearchResultsProps) {
-  const tableResults = results.filter((item) => item.type === 'table');
-  const columnResults = results.filter((item) => item.type === 'column');
+  const tableResults = useMemo(() => results.filter((item) => item.type === 'table'), [results]);
+  const columnResults = useMemo(() => results.filter((item) => item.type === 'column'), [results]);
 
   if (tableResults.length === 0 && columnResults.length === 0) {
     return (
@@ -88,6 +103,7 @@ export function FuzzySearchResults({
                     comment: null,
                   })
                 }
+                onDoubleClick={() => handleColumnDoubleClick(item, onTableClick, onColumnDoubleClick)}
                 className={cn(
                   'flex w-full items-center gap-1.5 rounded-sm px-3 py-0.5 text-left text-[11px] hover:bg-sidebar-accent',
                   isSelected && 'bg-sidebar-accent',
@@ -108,4 +124,4 @@ export function FuzzySearchResults({
       )}
     </div>
   );
-}
+});

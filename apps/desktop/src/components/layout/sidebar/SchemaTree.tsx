@@ -23,6 +23,7 @@ export interface SearchableTreeProps {
   onRenameTable: (db: string, table: string) => void;
   isFavorite?: (table: string) => boolean;
   onToggleFavorite?: (table: string) => void;
+  onColumnDoubleClick?: (db: string, tableName: string, colName: string) => void;
 }
 
 export function SearchableTree({
@@ -30,7 +31,7 @@ export function SearchableTree({
   searchQuery, expandedDbs, expandedTables, selectedColumn,
   onToggleDb, onToggleTable, onTableClick, onColumnClick,
   onTruncateTable, onDropTable, onRenameTable,
-  isFavorite, onToggleFavorite,
+  isFavorite, onToggleFavorite, onColumnDoubleClick,
 }: SearchableTreeProps) {
   const q = searchQuery.toLowerCase().trim();
 
@@ -136,6 +137,7 @@ export function SearchableTree({
               <button
                 key={`${db}.${tableName}.${column.name}`}
                 onClick={() => onColumnClick(column)}
+                onDoubleClick={() => onColumnDoubleClick ? onColumnDoubleClick(db, tableName, column.name) : onTableClick(db, tableName)}
                 className={cn(
                   'flex w-full items-center gap-1.5 rounded-sm px-3 py-0.5 text-left text-[11px] hover:bg-sidebar-accent',
                   selectedColumn?.name === column.name &&
@@ -189,6 +191,7 @@ export function SearchableTree({
           onRenameTable={onRenameTable}
           isFavorite={isFavorite}
           onToggleFavorite={onToggleFavorite}
+          onColumnDoubleClick={onColumnDoubleClick ? (tableName, colName) => onColumnDoubleClick(db.name, tableName, colName) : undefined}
         />
       ))}
     </>

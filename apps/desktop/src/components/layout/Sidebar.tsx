@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useQueryStore } from '@/stores/queryStore';
@@ -52,7 +52,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const activeConfig = useConnectionStore((s) => s.activeConfig);
   const dbType = activeConfig?.db_type ?? 'mysql';
-  const { createTab, updateSql, executeQuery, setActiveTab } = useQueryStore.getState();
+  const { createTab, updateSql, executeQuery, setActiveTab, setHighlightedColumn } = useQueryStore.getState();
 
   const favoritesMap = useFavoritesStore((s) => s.favorites);
   const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
@@ -163,7 +163,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     });
   };
 
-  const handleTableClick = (db: string, tableName: string) => {
+  const handleTableClick = useCallback((db: string, tableName: string) => {
     if (!activeConnectionId) return;
     trackTableOpen(activeConnectionId, tableName);
     // Reuse existing tab for same table + database, re-query if limit changed
@@ -195,15 +195,22 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     const tabId = createTab(tableName, { editorVisible: false, database: db, table: tableName });
     updateSql(tabId, sql);
     executeQuery(activeConnectionId, tabId);
-  };
+  }, [activeConnectionId, dbType, trackTableOpen, setActiveTab, updateSql, executeQuery, createTab]);
 
-  const handleColumnClick = (column: ColumnInfo) => {
+  const handleColumnClick = useCallback((column: ColumnInfo) => {
     setSelectedColumn((prev) =>
       prev?.name === column.name && prev?.ordinal_position === column.ordinal_position
         ? null
         : column,
     );
-  };
+  }, []);
+
+  // Double-click on a column: open its parent table and highlight that column in the grid
+  const handleColumnDoubleClick = useCallback((db: string, tableName: string, colName: string) => {
+    handleTableClick(db, tableName);
+    const tabId = useQueryStore.getState().activeTabId;
+    if (tabId) setHighlightedColumn(tabId, colName);
+  }, [handleTableClick, setHighlightedColumn]);
 
   const handleTruncateTable = async (db: string, tableName: string) => {
     if (!activeConnectionId) return;
@@ -424,6 +431,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
                 searchQuery={searchQuery}
                 onTableClick={handleTableClick}
                 onColumnClick={handleColumnClick}
+                onColumnDoubleClick={handleColumnDoubleClick}
                 selectedColumn={selectedColumn}
               />
             ) : searchQuery ? (
@@ -441,6 +449,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
                 onToggleTable={toggleTable}
                 onTableClick={handleTableClick}
                 onColumnClick={handleColumnClick}
+                onColumnDoubleClick={handleColumnDoubleClick}
                 onTruncateTable={handleTruncateTable}
                 onDropTable={handleDropTable}
                 onRenameTable={handleRenameTable}
@@ -464,6 +473,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
                       onToggle={() => toggleTable(activeDatabase, table.name)}
                       onClick={() => handleTableClick(activeDatabase, table.name)}
                       onColumnClick={handleColumnClick}
+                      onColumnDoubleClick={(colName) => handleColumnDoubleClick(activeDatabase, table.name, colName)}
                       selectedColumn={selectedColumn}
                       searchQuery=""
                       onTruncate={() => handleTruncateTable(activeDatabase, table.name)}
@@ -494,6 +504,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
                 onToggleTable={toggleTable}
                 onTableClick={handleTableClick}
                 onColumnClick={handleColumnClick}
+                onColumnDoubleClick={handleColumnDoubleClick}
                 onTruncateTable={handleTruncateTable}
                 onDropTable={handleDropTable}
                 onRenameTable={handleRenameTable}

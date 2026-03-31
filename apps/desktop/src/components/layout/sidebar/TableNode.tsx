@@ -50,6 +50,8 @@ export interface TableNodeProps {
   onTruncate: () => void;
   onDrop: () => void;
   onRename: () => void;
+  /** Called when a column is double-clicked — opens the parent table and highlights the column */
+  onColumnDoubleClick?: (colName: string) => void;
   /** Render without database-level indentation (flat mode) */
   flat?: boolean;
   isFavorited?: boolean;
@@ -64,6 +66,7 @@ export function TableNode({
   onToggle,
   onClick,
   onColumnClick,
+  onColumnDoubleClick,
   selectedColumn,
   onTruncate,
   onDrop,
@@ -212,6 +215,7 @@ export function TableNode({
                     selectedColumn?.ordinal_position === col.ordinal_position
                   }
                   onClick={() => onColumnClick(col)}
+                  onDoubleClick={onColumnDoubleClick ? () => onColumnDoubleClick(col.name) : undefined}
                   searchQuery={searchQuery}
                 />
               );

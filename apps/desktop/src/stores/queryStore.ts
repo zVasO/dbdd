@@ -58,6 +58,8 @@ export interface QueryTab {
   activeQueryId: string | null;
   database?: string;
   table?: string;
+  /** Column name to highlight in the grid after a sidebar double-click — cleared after display */
+  highlightedColumn?: string;
 }
 
 interface QueryState {
@@ -80,6 +82,7 @@ interface QueryState {
   setActiveTab: (id: string) => void;
   updateSql: (tabId: string, sql: string) => void;
   setEditorVisible: (tabId: string, visible: boolean) => void;
+  setHighlightedColumn: (tabId: string, columnName: string | null) => void;
   setViewMode: (tabId: string, mode: TabViewMode) => void;
   setActiveResult: (tabId: string, index: number) => void;
   executeQuery: (connectionId: string, tabId: string) => Promise<void>;
@@ -209,6 +212,13 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       const validActive = tabs.find((t) => t.id === activeTabId) ? activeTabId : (tabs.length > 0 ? tabs[tabs.length - 1].id : null);
       return { allTabs, tabs, activeTabId: validActive };
     });
+  },
+
+  setHighlightedColumn: (tabId, columnName) => {
+    set((s) => updateTab(s, tabId, (t) => ({
+      ...t,
+      highlightedColumn: columnName ?? undefined,
+    })));
   },
 
   setViewMode: (tabId, mode) => {

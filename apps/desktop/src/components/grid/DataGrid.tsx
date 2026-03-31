@@ -36,6 +36,10 @@ interface Props {
   serverTotalRows?: number;
   /** Server-side pagination: current server page (0-based) */
   serverPage?: number;
+  /** Column name to scroll to and briefly highlight (from sidebar double-click) */
+  highlightedColumnName?: string;
+  /** Called after the highlight animation completes so the parent can clear the value */
+  onHighlightDone?: () => void;
 }
 
 interface EditingCell {
@@ -192,7 +196,7 @@ function buildRowsOnDemand(
   }));
 }
 
-export const DataGrid = memo(function DataGrid({ result, database, table, onServerSort, onServerPageChange, serverTotalRows, serverPage }: Props) {
+export const DataGrid = memo(function DataGrid({ result, database, table, onServerSort, onServerPageChange, serverTotalRows, serverPage, highlightedColumnName, onHighlightDone }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [lastSelectedRow, setLastSelectedRow] = useState<number | null>(null);
@@ -209,6 +213,10 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
 
   // Keyboard focus cell (for grid keyboard navigation)
   const [focusedCell, setFocusedCell] = useState<{ row: number; col: number } | null>(null);
+
+  // Column highlight state — driven by highlightedColumnName prop (from sidebar double-click)
+  const [highlightedColIndex, setHighlightedColIndex] = useState<number | null>(null);
+  const processedHighlightRef = useRef<string | null>(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
   // Cell selection state (multi-cell: "rowIndex:colIndex" keys)
@@ -283,6 +291,34 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     () => visibleColumns.map((col) => result.columns.indexOf(col)),
     [visibleColumns, result.columns],
   );
+
+  // Scroll to and highlight a column when highlightedColumnName changes (sidebar double-click)
+  useEffect(() => {
+    if (!highlightedColumnName) return;
+    if (highlightedColumnName === processedHighlightRef.current) return;
+    processedHighlightRef.current = highlightedColumnName;
+
+    const visIdx = visibleColumns.findIndex((col) => col.name === highlightedColumnName);
+    if (visIdx < 0) return;
+
+    const colIdx = visibleColIndexMap[visIdx];
+    setHighlightedColIndex(colIdx);
+
+    // Scroll the grid horizontally so the column is visible
+    const rowNumWidth = 50;
+    let offsetX = rowNumWidth;
+    for (let i = 0; i < visIdx; i++) {
+      offsetX += columnWidths[visibleColIndexMap[i]] ?? DEFAULT_COL_WIDTH;
+    }
+    parentRef.current?.scrollTo({ left: Math.max(0, offsetX - 80), behavior: 'smooth' });
+
+    // Clear highlight after 2.5s and notify parent
+    const timer = setTimeout(() => {
+      setHighlightedColIndex(null);
+      onHighlightDone?.();
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [highlightedColumnName, visibleColumns, visibleColIndexMap, columnWidths, onHighlightDone]);
 
   // Worker-based filter/sort for large datasets
   const activeTabId = useQueryStore((s) => s.activeTabId);
@@ -1332,7 +1368,10 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
               key={col.name}
               role="columnheader"
               aria-sort={getSortDirection(colIdx) === 'asc' ? 'ascending' : getSortDirection(colIdx) === 'desc' ? 'descending' : 'none'}
-              className="relative flex shrink-0 items-center gap-1 border-r border-border px-2 py-1.5 cursor-pointer hover:bg-accent/30"
+              className={cn(
+                'relative flex shrink-0 items-center gap-1 border-r border-border px-2 py-1.5 cursor-pointer hover:bg-accent/30 transition-colors duration-300',
+                highlightedColIndex === colIdx && 'bg-primary/20 ring-1 ring-inset ring-primary/40',
+              )}
               style={{ width: getColWidthStyle(colIdx) }}
               onClick={(e) => handleHeaderClick(colIdx, e.shiftKey)}
             >
@@ -1465,11 +1504,12 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
                     role="gridcell"
                     aria-colindex={visIdx + 1}
                     className={cn(
-                      'flex shrink-0 items-center border-r border-border/30',
+                      'flex shrink-0 items-center border-r border-border/30 transition-colors duration-300',
                       isEditing && 'ring-2 ring-inset ring-primary',
                       !isEditing && isFocused && 'ring-2 ring-primary ring-inset',
                       !isEditing && !isFocused && isCellSelected && 'ring-2 ring-inset ring-primary/60 bg-primary/10',
                       pendingEdit && !isEditing && 'bg-yellow-500/15',
+                      !isEditing && !isFocused && !isCellSelected && !pendingEdit && highlightedColIndex === colIdx && 'bg-primary/8',
                     )}
                     style={{ width: getColWidthStyle(colIdx) }}
                     onMouseDown={(e) => handleCellMouseDown(e, virtualRow.index, colIdx)}

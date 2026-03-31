@@ -31,6 +31,7 @@ export interface DatabaseNodeProps {
   onRenameTable: (db: string, table: string) => void;
   isFavorite?: (table: string) => boolean;
   onToggleFavorite?: (table: string) => void;
+  onColumnDoubleClick?: (tableName: string, colName: string) => void;
 }
 
 export function DatabaseNode({
@@ -54,6 +55,7 @@ export function DatabaseNode({
   onRenameTable,
   isFavorite,
   onToggleFavorite,
+  onColumnDoubleClick,
 }: DatabaseNodeProps) {
   return (
     <Collapsible open={expanded} onOpenChange={onToggle}>
@@ -102,6 +104,7 @@ export function DatabaseNode({
                 onRename={() => onRenameTable(dbName, table.name)}
                 isFavorited={isFavorite?.(table.name)}
                 onToggleFavorite={onToggleFavorite ? () => onToggleFavorite(table.name) : undefined}
+                onColumnDoubleClick={onColumnDoubleClick ? (colName) => onColumnDoubleClick(table.name, colName) : undefined}
               />
             );
           })
