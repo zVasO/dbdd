@@ -313,7 +313,7 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
       const results = await ipc.executeBatch(connectionId, statements);
       const errors = results
         .filter((r) => r.Err)
-        .map((r) => r.Err!);
+        .map((r) => r.Err!.message ?? String(r.Err!));
 
       if (errors.length > 0) {
         showErrorToast(errors[0]);

@@ -42,7 +42,6 @@ pub enum DatabaseType {
     Mysql,
     Sqlite,
     Postgres,
-    Mongodb,
 }
 
 impl DatabaseType {
@@ -51,7 +50,6 @@ impl DatabaseType {
             Self::Mysql => 3306,
             Self::Sqlite => 0,
             Self::Postgres => 5432,
-            Self::Mongodb => 27017,
         }
     }
 
@@ -60,7 +58,6 @@ impl DatabaseType {
             Self::Mysql => "MySQL",
             Self::Sqlite => "SQLite",
             Self::Postgres => "PostgreSQL",
-            Self::Mongodb => "MongoDB",
         }
     }
 }

@@ -46,6 +46,9 @@ impl DriverRegistry {
         #[cfg(feature = "postgres")]
         factories.insert(DatabaseType::Postgres, Arc::new(PostgresDriverFactoryAdapter));
 
+        #[cfg(feature = "sqlite")]
+        factories.insert(DatabaseType::Sqlite, Arc::new(SqliteDriverFactoryAdapter));
+
         Self { factories }
     }
 
@@ -107,5 +110,33 @@ impl DatabaseDriverFactory for PostgresDriverFactoryAdapter {
 
     fn dialect(&self) -> Arc<dyn QueryDialect> {
         purrql_postgres::PostgresDriverFactory.dialect()
+    }
+}
+
+#[cfg(feature = "sqlite")]
+struct SqliteDriverFactoryAdapter;
+
+#[cfg(feature = "sqlite")]
+#[async_trait]
+impl DatabaseDriverFactory for SqliteDriverFactoryAdapter {
+    async fn create_connection(
+        &self,
+        config: &ConnectionConfig,
+        password: Option<&str>,
+    ) -> Result<Arc<dyn DatabaseConnection>> {
+        purrql_sqlite::SqliteDriverFactory
+            .create_connection(config, password)
+            .await
+    }
+
+    fn create_schema_inspector(
+        &self,
+        conn: Arc<dyn DatabaseConnection>,
+    ) -> Arc<dyn SchemaInspector> {
+        purrql_sqlite::SqliteDriverFactory.create_schema_inspector(conn)
+    }
+
+    fn dialect(&self) -> Arc<dyn QueryDialect> {
+        purrql_sqlite::SqliteDriverFactory.dialect()
     }
 }

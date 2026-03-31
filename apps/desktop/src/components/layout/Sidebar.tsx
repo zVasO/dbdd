@@ -23,7 +23,8 @@ import {
   Star,
   X,
 } from 'lucide-react';
-import { ipc } from '@/lib/ipc';
+import { ipc, extractErrorMessage } from '@/lib/ipc';
+import { showErrorToast } from '@/stores/toastStore';
 import { quoteIdentifier } from '@/lib/sql-utils';
 import { cn } from '@/lib/utils';
 import { getFuzzySearchBridge, type ScoredItem } from '@/lib/fuzzy-search-bridge';
@@ -36,6 +37,7 @@ import { ColumnProperties } from './sidebar/ColumnNode';
 import { FuzzySearchResults } from './sidebar/FuzzySearchResults';
 import { SearchableTree } from './sidebar/SchemaTree';
 import { TableNode } from './sidebar/TableNode';
+import { ConfirmDestructiveDialog } from './sidebar/ConfirmDestructiveDialog';
 
 interface SidebarProps {
   onOpenConnectionDialog?: () => void;
@@ -77,6 +79,12 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   const [selectedColumn, setSelectedColumn] = useState<ColumnInfo | null>(null);
   const [dbSelectorOpen, setDbSelectorOpen] = useState(false);
   const [fuzzyResults, setFuzzyResults] = useState<ScoredItem[] | null>(null);
+  const [destructiveDialog, setDestructiveDialog] = useState<{
+    open: boolean;
+    operation: 'drop' | 'truncate' | 'rename';
+    db: string;
+    tableName: string;
+  } | null>(null);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dbSelectorRef = useRef<HTMLDivElement>(null);
 
@@ -212,49 +220,38 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     if (tabId) setHighlightedColumn(tabId, colName);
   }, [handleTableClick, setHighlightedColumn]);
 
-  const handleTruncateTable = async (db: string, tableName: string) => {
-    if (!activeConnectionId) return;
-    if (!window.confirm(`Truncate table "${tableName}"? This will delete all rows.`)) return;
-    try {
-      const tbl = dbType === 'mysql'
-        ? `${quoteIdentifier(db, dbType)}.${quoteIdentifier(tableName, dbType)}`
-        : quoteIdentifier(tableName, dbType);
-      await ipc.executeQuery(activeConnectionId, `TRUNCATE TABLE ${tbl}`);
-      loadTables(activeConnectionId, db);
-    } catch (err) {
-      alert(`Failed to truncate: ${err}`);
-    }
+  const handleTruncateTable = (db: string, tableName: string) => {
+    setDestructiveDialog({ open: true, operation: 'truncate', db, tableName });
   };
 
-  const handleDropTable = async (db: string, tableName: string) => {
-    if (!activeConnectionId) return;
-    if (!window.confirm(`DROP TABLE "${tableName}"? This action cannot be undone!`)) return;
-    try {
-      const tbl = dbType === 'mysql'
-        ? `${quoteIdentifier(db, dbType)}.${quoteIdentifier(tableName, dbType)}`
-        : quoteIdentifier(tableName, dbType);
-      await ipc.executeQuery(activeConnectionId, `DROP TABLE ${tbl}`);
-      loadTables(activeConnectionId, db);
-    } catch (err) {
-      alert(`Failed to drop: ${err}`);
-    }
+  const handleDropTable = (db: string, tableName: string) => {
+    setDestructiveDialog({ open: true, operation: 'drop', db, tableName });
   };
 
-  const handleRenameTable = async (db: string, tableName: string) => {
-    if (!activeConnectionId) return;
-    const newName = window.prompt(`Rename table "${tableName}" to:`, tableName);
-    if (!newName || newName === tableName) return;
+  const handleRenameTable = (db: string, tableName: string) => {
+    setDestructiveDialog({ open: true, operation: 'rename', db, tableName });
+  };
+
+  const handleDestructiveConfirm = async (newName?: string) => {
+    if (!destructiveDialog || !activeConnectionId) return;
+    const { operation, db, tableName } = destructiveDialog;
+    const tbl = dbType === 'mysql'
+      ? `${quoteIdentifier(db, dbType)}.${quoteIdentifier(tableName, dbType)}`
+      : quoteIdentifier(tableName, dbType);
     try {
-      const oldTbl = dbType === 'mysql'
-        ? `${quoteIdentifier(db, dbType)}.${quoteIdentifier(tableName, dbType)}`
-        : quoteIdentifier(tableName, dbType);
-      const newTbl = dbType === 'mysql'
-        ? `${quoteIdentifier(db, dbType)}.${quoteIdentifier(newName, dbType)}`
-        : quoteIdentifier(newName, dbType);
-      await ipc.executeQuery(activeConnectionId, `ALTER TABLE ${oldTbl} RENAME TO ${newTbl}`);
+      if (operation === 'truncate') {
+        await ipc.executeQuery(activeConnectionId, `TRUNCATE TABLE ${tbl}`);
+      } else if (operation === 'drop') {
+        await ipc.executeQuery(activeConnectionId, `DROP TABLE ${tbl}`);
+      } else if (operation === 'rename' && newName) {
+        const newTbl = dbType === 'mysql'
+          ? `${quoteIdentifier(db, dbType)}.${quoteIdentifier(newName, dbType)}`
+          : quoteIdentifier(newName, dbType);
+        await ipc.executeQuery(activeConnectionId, `ALTER TABLE ${tbl} RENAME TO ${newTbl}`);
+      }
       loadTables(activeConnectionId, db);
     } catch (err) {
-      alert(`Failed to rename: ${err}`);
+      showErrorToast(`${operation} failed: ${extractErrorMessage(err)}`);
     }
   };
 
@@ -520,6 +517,17 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
           <ColumnProperties column={selectedColumn} onClose={() => setSelectedColumn(null)} />
         )}
       </div>
+
+      {destructiveDialog && (
+        <ConfirmDestructiveDialog
+          key={`${destructiveDialog.tableName}-${destructiveDialog.operation}`}
+          open={destructiveDialog.open}
+          onOpenChange={(open) => setDestructiveDialog((prev) => prev ? { ...prev, open } : null)}
+          operation={destructiveDialog.operation}
+          tableName={destructiveDialog.tableName}
+          onConfirm={handleDestructiveConfirm}
+        />
+      )}
     </TooltipProvider>
   );
 });

@@ -262,7 +262,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         const errors: string[] = [];
         for (const r of batchResults) {
           if (r.Ok) results.push(r.Ok);
-          if (r.Err) errors.push(r.Err);
+          if (r.Err) errors.push(r.Err.message ?? String(r.Err));
         }
         const totalRows = results.reduce((sum, r) => sum + r.rows.length, 0);
         if (errors.length > 0) {

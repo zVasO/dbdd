@@ -7,7 +7,7 @@ export interface IpcError {
 
 // === CONNECTION ===
 
-export type DatabaseType = 'mysql' | 'sqlite' | 'postgres' | 'mongodb';
+export type DatabaseType = 'mysql' | 'sqlite' | 'postgres';
 
 export type SslMode = 'disable' | 'prefer' | 'require' | 'verify_ca' | 'verify_full';
 

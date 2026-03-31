@@ -84,7 +84,7 @@ export function ConnectionForm({ onCancel, initialConfig, initialPassword }: Pro
   const handleChange = (field: string, value: string | number) => {
     setForm((prev) => ({ ...prev, [field]: value }));
     if (field === 'db_type') {
-      const ports: Record<string, number> = { mysql: 3306, postgres: 5432, sqlite: 0, mongodb: 27017 };
+      const ports: Record<string, number> = { mysql: 3306, postgres: 5432, sqlite: 0 };
       setForm((prev) => ({ ...prev, port: ports[value as string] || 3306 }));
     }
   };

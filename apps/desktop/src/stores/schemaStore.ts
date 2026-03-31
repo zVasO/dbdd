@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { ipc } from '../lib/ipc';
+import { ipc, extractErrorMessage } from '../lib/ipc';
+import { showErrorToast } from './toastStore';
 import { getFuzzySearchBridge } from '../lib/fuzzy-search-bridge';
 import type { DatabaseInfo, TableInfo, TableStructure, TableRef } from '../lib/types';
 
@@ -10,6 +11,8 @@ interface SchemaState {
   selectedTable: TableStructure | null;
   loading: boolean;
   structureLoading: Record<string, boolean>;
+  /** Last schema load error, if any */
+  error: string | null;
   /** The currently focused database within the active connection */
   activeDatabase: string | null;
 
@@ -35,16 +38,19 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
   selectedTable: null,
   loading: false,
   structureLoading: {},
+  error: null,
   activeDatabase: null,
 
   loadDatabases: async (connectionId) => {
-    set({ loading: true });
+    set({ loading: true, error: null });
     try {
       const databases = await ipc.listDatabases(connectionId);
       set({ databases, loading: false });
     } catch (e) {
+      const msg = extractErrorMessage(e);
       console.warn('[schemaStore] loadDatabases failed', e);
-      set({ loading: false });
+      set({ loading: false, error: msg });
+      showErrorToast(msg);
     }
   },
 
@@ -87,9 +93,11 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
         }
       }
     } catch (e) {
+      const msg = extractErrorMessage(e);
       console.warn('[schemaStore] loadTables failed', e);
       if (generation === _loadGeneration) {
-        set({ loading: false });
+        set({ loading: false, error: msg });
+        showErrorToast(msg);
       }
     }
   },
@@ -112,8 +120,10 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
         structureLoading: { ...s.structureLoading, [key]: false },
       }));
     } catch (e) {
+      const msg = extractErrorMessage(e);
       console.warn('[schemaStore] loadTableStructure failed', e);
-      set((s) => ({ structureLoading: { ...s.structureLoading, [key]: false } }));
+      set((s) => ({ structureLoading: { ...s.structureLoading, [key]: false }, error: msg }));
+      showErrorToast(msg);
     }
   },
 
@@ -130,6 +140,7 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
       selectedTable: null,
       loading: false,
       structureLoading: {},
+      error: null,
       activeDatabase: null,
     });
   },

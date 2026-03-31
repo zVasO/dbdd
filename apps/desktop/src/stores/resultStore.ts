@@ -632,8 +632,11 @@ export const useResultStore = create<ResultState>((set, get) => ({
     // Build from columnar data
     if (current.data.length > 0 && current.rowCount > 0) {
       const rows = columnarToRows(current.columns, current.data, current.rowCount);
-      // Cache the result (mutating is OK — doesn't affect React rendering)
-      current._rowsCache = rows;
+      set((s) => {
+        const existing = s.results[tabId];
+        if (!existing) return s;
+        return { results: { ...s.results, [tabId]: { ...existing, _rowsCache: rows } } };
+      });
       return rows;
     }
 
@@ -649,7 +652,11 @@ export const useResultStore = create<ResultState>((set, get) => ({
 
     if (current.allColumnarResults.length > 0) {
       const allResults = current.allColumnarResults.map(buildQueryResult);
-      current._allResultsCache = allResults;
+      set((s) => {
+        const existing = s.results[tabId];
+        if (!existing) return s;
+        return { results: { ...s.results, [tabId]: { ...existing, _allResultsCache: allResults } } };
+      });
       return allResults;
     }
 

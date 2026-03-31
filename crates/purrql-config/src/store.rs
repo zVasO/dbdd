@@ -53,7 +53,11 @@ impl ConfigStore {
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().map_err(|e| PurrqlError::Internal(e.to_string()))?;
             conn.execute(
-                "INSERT OR REPLACE INTO connections (id, config_json, created_at, sort_order) VALUES (?1, ?2, ?3, 0)",
+                "INSERT INTO connections (id, config_json, created_at, sort_order) \
+                 VALUES (?1, ?2, ?3, 0) \
+                 ON CONFLICT(id) DO UPDATE SET \
+                   config_json = excluded.config_json, \
+                   sort_order = connections.sort_order",
                 rusqlite::params![id, config_json, now],
             )
             .map_err(|e| PurrqlError::Config(e.to_string()))?;

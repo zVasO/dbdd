@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useUIStore } from '@/stores/uiStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import type { SavedConnection } from '@/lib/types';
@@ -52,13 +52,13 @@ export function ConnectionDialog({ open, onOpenChange }: Props) {
   }, [open, loadSavedConnections]);
 
   // Close dialog after a new connection succeeds
-  const prevCount = activeConnections.length;
+  const prevCountRef = useRef(activeConnections.length);
   useEffect(() => {
-    if (activeConnections.length > prevCount && open) {
+    if (activeConnections.length > prevCountRef.current && open) {
       onOpenChange(false);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeConnections.length]);
+    prevCountRef.current = activeConnections.length;
+  }, [activeConnections.length, open, onOpenChange]);
 
   const activeIds = new Set(activeConnections.map((c) => c.connectionId));
   // Saved connections that are NOT currently active

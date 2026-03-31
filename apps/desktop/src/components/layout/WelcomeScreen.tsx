@@ -13,7 +13,6 @@ const DB_TYPE_COLORS: Record<string, string> = {
   mysql: 'bg-blue-500',
   postgres: 'bg-indigo-500',
   sqlite: 'bg-emerald-500',
-  mongodb: 'bg-green-600',
 };
 
 function ConnectionItem({

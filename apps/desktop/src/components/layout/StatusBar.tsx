@@ -174,7 +174,7 @@ export function StatusBar({ connected, dbType, onDisconnect, onOpenConnectionDia
       <div className="flex items-center gap-4">
         {tabResult && tabResult.rowCount > 0 && (
           <>
-            <span>{tabResult.totalRows} rows</span>
+            <span>{tabResult.rowCount.toLocaleString()} rows{tabResult.isStreaming ? '\u2026' : ''}</span>
             <span>{tabResult.executionTimeMs ?? 0}ms</span>
           </>
         )}

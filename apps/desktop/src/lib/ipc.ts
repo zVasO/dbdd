@@ -71,7 +71,7 @@ export const ipc = {
     invoke<string>('execute_query_stream', { connectionId, sql, chunkSize, queryId }),
 
   executeBatch: (connectionId: string, statements: string[]) =>
-    invoke<Array<{ Ok?: QueryResult; Err?: string }>>('execute_batch', {
+    invoke<Array<{ Ok?: QueryResult; Err?: IpcError }>>('execute_batch', {
       connectionId,
       statements,
     }),

@@ -84,8 +84,13 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   disconnectById: async (connectionId) => {
     try {
       await ipc.disconnect(connectionId);
-    } catch {
-      // Ignore disconnect errors
+    } catch (e) {
+      // A CONNECTION_FAILED code means the connection was already gone — safe to ignore.
+      // Any other IPC error is unexpected and should be surfaced.
+      const code = (e && typeof e === 'object' && 'code' in e) ? String((e as { code: unknown }).code) : '';
+      if (code !== 'CONNECTION_FAILED') {
+        showErrorToast('Disconnect failed: ' + extractErrorMessage(e));
+      }
     }
     set((s) => {
       const remaining = s.activeConnections.filter((c) => c.connectionId !== connectionId);
