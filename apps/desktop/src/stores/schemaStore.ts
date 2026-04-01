@@ -28,7 +28,6 @@ function structureKey(db: string, table: string): string {
   return `${db}.${table}`;
 }
 
-const BATCH_SIZE = 20;
 let _loadGeneration = 0;
 
 export const useSchemaStore = create<SchemaState>((set, get) => ({
@@ -64,34 +63,6 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
         tables: { ...s.tables, [database]: tables },
         loading: false,
       }));
-
-      // Preload table structures in batches for autocomplete
-      const toLoad = tables.filter((t) => !get().structures[structureKey(database, t.name)]);
-      for (let i = 0; i < toLoad.length; i += BATCH_SIZE) {
-        if (generation !== _loadGeneration) return;
-        const batch = toLoad.slice(i, i + BATCH_SIZE);
-        const results = await Promise.allSettled(
-          batch.map((t) =>
-            ipc.getTableStructure(connectionId, {
-              database,
-              schema: schema ?? null,
-              table: t.name,
-            }).then((structure) => ({ key: structureKey(database, t.name), structure })),
-          ),
-        );
-        if (generation !== _loadGeneration) return;
-        const newStructures: Record<string, TableStructure> = {};
-        for (const result of results) {
-          if (result.status === 'fulfilled') {
-            newStructures[result.value.key] = result.value.structure;
-          }
-        }
-        if (Object.keys(newStructures).length > 0) {
-          set((s) => ({
-            structures: { ...s.structures, ...newStructures },
-          }));
-        }
-      }
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.warn('[schemaStore] loadTables failed', e);

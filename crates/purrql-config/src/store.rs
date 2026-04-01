@@ -14,7 +14,8 @@ use purrql_core::models::query::{QueryHistoryEntry, QueryStatus};
 use crate::crypto;
 
 pub struct ConfigStore {
-    conn: Arc<Mutex<Connection>>,
+    read_conn: Arc<Mutex<Connection>>,
+    write_conn: Arc<Mutex<Connection>>,
     cipher: Aes256Gcm,
     #[allow(dead_code)]
     app_data_dir: PathBuf,
@@ -26,10 +27,20 @@ impl ConfigStore {
             .map_err(|e| PurrqlError::Config(e.to_string()))?;
 
         let db_path = app_data_dir.join("purrql.db");
-        let conn =
-            Connection::open(db_path).map_err(|e| PurrqlError::Config(e.to_string()))?;
 
-        crate::migrations::run_migrations(&conn)
+        let write_conn =
+            Connection::open(&db_path).map_err(|e| PurrqlError::Config(e.to_string()))?;
+        write_conn
+            .execute_batch("PRAGMA journal_mode=WAL;")
+            .map_err(|e| PurrqlError::Config(e.to_string()))?;
+
+        crate::migrations::run_migrations(&write_conn)
+            .map_err(|e| PurrqlError::Config(e.to_string()))?;
+
+        let read_conn =
+            Connection::open(&db_path).map_err(|e| PurrqlError::Config(e.to_string()))?;
+        read_conn
+            .execute_batch("PRAGMA journal_mode=WAL;")
             .map_err(|e| PurrqlError::Config(e.to_string()))?;
 
         let encryption_key = crypto::load_or_create_key(app_data_dir)?;
@@ -37,7 +48,8 @@ impl ConfigStore {
             .map_err(|e| PurrqlError::Config(format!("Cipher init error: {e}")))?;
 
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            read_conn: Arc::new(Mutex::new(read_conn)),
+            write_conn: Arc::new(Mutex::new(write_conn)),
             cipher,
             app_data_dir: app_data_dir.to_path_buf(),
         })
@@ -48,7 +60,7 @@ impl ConfigStore {
             serde_json::to_string(config).map_err(|e| PurrqlError::Serialization(e.to_string()))?;
         let now = chrono::Utc::now().to_rfc3339();
         let id = config.id.to_string();
-        let conn = Arc::clone(&self.conn);
+        let conn = Arc::clone(&self.write_conn);
 
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().map_err(|e| PurrqlError::Internal(e.to_string()))?;
@@ -68,7 +80,7 @@ impl ConfigStore {
     }
 
     pub async fn list_connections(&self) -> Result<Vec<SavedConnection>> {
-        let conn = Arc::clone(&self.conn);
+        let conn = Arc::clone(&self.read_conn);
 
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().map_err(|e| PurrqlError::Internal(e.to_string()))?;
@@ -114,7 +126,7 @@ impl ConfigStore {
     }
 
     pub async fn delete_connection(&self, id: &Uuid) -> Result<()> {
-        let conn = Arc::clone(&self.conn);
+        let conn = Arc::clone(&self.write_conn);
         let id = id.to_string();
 
         tokio::task::spawn_blocking(move || {
@@ -190,7 +202,7 @@ impl ConfigStore {
 
     async fn store_password_encrypted(&self, config_id: &Uuid, password: &str) -> Result<()> {
         let (ciphertext, nonce) = crypto::encrypt(&self.cipher, password)?;
-        let conn = Arc::clone(&self.conn);
+        let conn = Arc::clone(&self.write_conn);
         let config_id = config_id.to_string();
 
         tokio::task::spawn_blocking(move || {
@@ -206,7 +218,7 @@ impl ConfigStore {
     }
 
     async fn get_password_encrypted(&self, config_id: &Uuid) -> Result<Option<String>> {
-        let conn = Arc::clone(&self.conn);
+        let conn = Arc::clone(&self.read_conn);
         let config_id_str = config_id.to_string();
 
         // Fetch ciphertext/nonce on blocking thread, decrypt on async side
@@ -245,7 +257,7 @@ impl ConfigStore {
     }
 
     pub async fn add_to_history(&self, entry: &QueryHistoryEntry) -> Result<()> {
-        let conn = Arc::clone(&self.conn);
+        let conn = Arc::clone(&self.write_conn);
         let id = entry.id.to_string();
         let connection_id = entry.connection_id.to_string();
         let sql = entry.sql.clone();
@@ -288,7 +300,7 @@ impl ConfigStore {
         connection_id: &Uuid,
         limit: u32,
     ) -> Result<Vec<QueryHistoryEntry>> {
-        let conn = Arc::clone(&self.conn);
+        let conn = Arc::clone(&self.read_conn);
         let connection_id = connection_id.to_string();
 
         tokio::task::spawn_blocking(move || {
