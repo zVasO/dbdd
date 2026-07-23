@@ -279,15 +279,18 @@ impl SchemaInspector for PostgresSchemaInspector {
                 ],
             )
             .await
-            .unwrap_or_else(|_| QueryResult {
-                query_id: uuid::Uuid::new_v4(),
-                columns: vec![],
-                rows: vec![],
-                total_rows: Some(0),
-                affected_rows: None,
-                execution_time_ms: 0,
-                warnings: vec![],
-                result_type: ResultType::Select,
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "schema catalog query failed; table structure may be incomplete");
+                QueryResult {
+                    query_id: uuid::Uuid::new_v4(),
+                    columns: vec![],
+                    rows: vec![],
+                    total_rows: Some(0),
+                    affected_rows: None,
+                    execution_time_ms: 0,
+                    warnings: vec![],
+                    result_type: ResultType::Select,
+                }
             });
 
         let mut idx_map: BTreeMap<String, (Vec<String>, bool, bool, String)> = BTreeMap::new();
@@ -360,15 +363,18 @@ impl SchemaInspector for PostgresSchemaInspector {
                 ],
             )
             .await
-            .unwrap_or_else(|_| QueryResult {
-                query_id: uuid::Uuid::new_v4(),
-                columns: vec![],
-                rows: vec![],
-                total_rows: Some(0),
-                affected_rows: None,
-                execution_time_ms: 0,
-                warnings: vec![],
-                result_type: ResultType::Select,
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "schema catalog query failed; table structure may be incomplete");
+                QueryResult {
+                    query_id: uuid::Uuid::new_v4(),
+                    columns: vec![],
+                    rows: vec![],
+                    total_rows: Some(0),
+                    affected_rows: None,
+                    execution_time_ms: 0,
+                    warnings: vec![],
+                    result_type: ResultType::Select,
+                }
             });
 
         let mut fk_map: BTreeMap<
@@ -454,15 +460,18 @@ impl SchemaInspector for PostgresSchemaInspector {
                 ],
             )
             .await
-            .unwrap_or_else(|_| QueryResult {
-                query_id: uuid::Uuid::new_v4(),
-                columns: vec![],
-                rows: vec![],
-                total_rows: Some(0),
-                affected_rows: None,
-                execution_time_ms: 0,
-                warnings: vec![],
-                result_type: ResultType::Select,
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "schema catalog query failed; table structure may be incomplete");
+                QueryResult {
+                    query_id: uuid::Uuid::new_v4(),
+                    columns: vec![],
+                    rows: vec![],
+                    total_rows: Some(0),
+                    affected_rows: None,
+                    execution_time_ms: 0,
+                    warnings: vec![],
+                    result_type: ResultType::Select,
+                }
             });
 
         let constraints: Vec<ConstraintInfo> = cst_result

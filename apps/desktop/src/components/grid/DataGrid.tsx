@@ -19,6 +19,7 @@ import { QuickLook } from './QuickLook';
 import { usePreferencesStore } from '@/stores/preferencesStore';
 import { useShortcutStore, matchesBinding } from '@/stores/shortcutStore';
 import { quoteIdentifier, escapeStringLiteral } from '@/lib/sql-utils';
+import type { SortColumn, GridWorkerResponse } from '@/workers/gridWorker.protocol';
 
 interface SortRequest {
   column: string;
@@ -49,11 +50,6 @@ interface EditingCell {
   isNull?: boolean;
   /** When true, cursor goes to end instead of selecting all (triggered by typing a char) */
   cursorAtEnd?: boolean;
-}
-
-interface SortColumn {
-  colIndex: number;
-  direction: 'asc' | 'desc';
 }
 
 const PAGE_SIZES = [50, 100, 300, 500, 1000] as const;
@@ -106,16 +102,22 @@ interface WorkerState {
 }
 
 function useGridWorker(
-  data: import('@/lib/types').ColumnData[] | undefined,
+  data: ColumnData[] | undefined,
   filterText: string,
   sortColumns: SortColumn[],
   rowCount: number,
+  resultKey: string,
 ): WorkerState & { useWorker: boolean } {
   const workerRef = useRef<Worker | null>(null);
   const [state, setState] = useState<WorkerState>({ filteredIndices: null, sortedIndices: null });
   const useWorker = rowCount > 1000 && !!data && data.length > 0;
 
-  // Create worker once on mount, terminate on unmount
+  // Tracks what the worker already holds, so we send a full dataset only on a
+  // new result and just the appended rows as it streams in.
+  const sentKeyRef = useRef<string | null>(null);
+  const sentRowCountRef = useRef(0);
+  const [syncVersion, setSyncVersion] = useState(0);
+
   useEffect(() => {
     const worker = new Worker(
       new URL('../../workers/grid.worker.ts', import.meta.url),
@@ -123,7 +125,7 @@ function useGridWorker(
     );
     workerRef.current = worker;
 
-    worker.onmessage = (e: MessageEvent) => {
+    worker.onmessage = (e: MessageEvent<GridWorkerResponse>) => {
       if (e.data.type === 'filter-result') {
         setState((prev) => ({ ...prev, filteredIndices: e.data.indices }));
       }
@@ -135,35 +137,57 @@ function useGridWorker(
     return () => {
       worker.terminate();
       workerRef.current = null;
+      sentKeyRef.current = null;
+      sentRowCountRef.current = 0;
     };
   }, []);
 
-  // Clear worker state when worker is not active
   useEffect(() => {
     if (!useWorker) {
       setState({ filteredIndices: null, sortedIndices: null });
     }
   }, [useWorker]);
 
-  // Post filter — only when worker is active
+  // Sync data to the worker: full on a new result, delta as rows stream in.
+  // Defined before the filter/sort effects so its messages are enqueued first.
   useEffect(() => {
-    if (!useWorker || !data || !workerRef.current) return;
-    workerRef.current.postMessage({ type: 'filter', data, filterText });
-  }, [useWorker, data, filterText]);
+    const worker = workerRef.current;
+    if (!useWorker || !data || !worker) return;
 
-  // Post sort — only when worker is active
+    if (sentKeyRef.current !== resultKey) {
+      worker.postMessage({ type: 'setData', columns: data });
+      sentKeyRef.current = resultKey;
+      sentRowCountRef.current = rowCount;
+      setSyncVersion((v) => v + 1);
+    } else if (rowCount > sentRowCountRef.current) {
+      const from = sentRowCountRef.current;
+      const delta = data.map((col) => ({
+        kind: col.kind,
+        values: (col.values as unknown[]).slice(from),
+      }) as ColumnData);
+      worker.postMessage({ type: 'appendData', columns: delta });
+      sentRowCountRef.current = rowCount;
+      setSyncVersion((v) => v + 1);
+    }
+  }, [useWorker, data, rowCount, resultKey]);
+
+  // Filter/sort carry only parameters; they recompute when data resyncs.
   useEffect(() => {
-    if (!useWorker || !data || !workerRef.current || sortColumns.length === 0) {
+    if (!useWorker || !workerRef.current) return;
+    workerRef.current.postMessage({ type: 'filter', filterText });
+  }, [useWorker, filterText, syncVersion]);
+
+  useEffect(() => {
+    if (!useWorker || !workerRef.current || sortColumns.length === 0) {
       setState((prev) => ({ ...prev, sortedIndices: null }));
       return;
     }
     workerRef.current.postMessage({
       type: 'sort',
-      data,
       sortColumns,
-      inputIndices: state.filteredIndices,
+      useFilteredInput: state.filteredIndices !== null,
     });
-  }, [useWorker, data, sortColumns, state.filteredIndices]);
+  }, [useWorker, sortColumns, state.filteredIndices, syncVersion]);
 
   return { ...state, useWorker };
 }
@@ -331,6 +355,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
     filterText,
     sortColumns,
     columnarRowCount,
+    result.query_id,
   );
 
   // FK navigation: detect FK columns and allow click-to-navigate
@@ -405,12 +430,19 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
 
   // ─── Data pipeline: filter → sort → paginate ──────────────────────────────
 
+  // Identity index map — reallocated only when the row count changes, so the
+  // worker/no-filter path below doesn't rebuild a full array on every keystroke.
+  const identityIndexMap = useMemo(
+    () => Array.from({ length: columnarRowCount }, (_, i) => i),
+    [columnarRowCount],
+  );
+
   // Filter pipeline — works directly on columnar data (no row conversion)
   // When worker is active, return cheap identity array; worker computes real filter
   const filteredIndexMap = useMemo(() => {
     const rowCount = columnarRowCount;
     if (useWorker || !filterText) {
-      return Array.from({ length: rowCount }, (_, i) => i);
+      return identityIndexMap;
     }
     const lowerFilter = filterText.toLowerCase();
     const indices: number[] = [];
@@ -426,7 +458,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
       if (match) indices.push(r);
     }
     return indices;
-  }, [filterText, columnarData, columnarRowCount, useWorker]);
+  }, [filterText, columnarData, columnarRowCount, useWorker, identityIndexMap]);
 
   // Sort pipeline — works directly on columnar data (no row conversion)
   // When worker is active, skip sorting; worker handles it

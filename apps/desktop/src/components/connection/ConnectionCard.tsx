@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useConnectionStore } from '@/stores/connectionStore';
+import { extractErrorMessage } from '@/lib/ipc';
 import type { SavedConnection } from '@/lib/types';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -17,6 +18,7 @@ export function ConnectionCard({ connection, onEdit }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [password, setPassword] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const handleConnect = async (pw?: string) => {
     setLoading(true);
@@ -24,7 +26,7 @@ export function ConnectionCard({ connection, onEdit }: Props) {
     try {
       await connect(connection.config, pw || undefined);
     } catch (e) {
-      const msg = String(e);
+      const msg = extractErrorMessage(e);
       setError(msg);
       // Show password prompt on auth-related errors or decryption failures
       if (
@@ -97,7 +99,7 @@ export function ConnectionCard({ connection, onEdit }: Props) {
               variant="ghost"
               size="sm"
               className="text-destructive hover:text-destructive-foreground hover:bg-destructive"
-              onClick={(e) => { e.stopPropagation(); deleteConnection(connection.config.id); }}
+              onClick={(e) => { e.stopPropagation(); setConfirmDelete(true); }}
             >
               Delete
             </Button>
@@ -105,6 +107,29 @@ export function ConnectionCard({ connection, onEdit }: Props) {
         </div>
         {error && (
           <div className="mt-2 text-xs text-destructive">{error}</div>
+        )}
+        {confirmDelete && (
+          <div className="mt-2 flex items-center justify-between gap-2 text-xs">
+            <span className="text-muted-foreground">Delete this connection?</span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs"
+                onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                className="h-7 text-xs"
+                onClick={(e) => { e.stopPropagation(); deleteConnection(connection.config.id); }}
+              >
+                Delete
+              </Button>
+            </div>
+          </div>
         )}
         {showPassword && (
           <form onSubmit={handlePasswordSubmit} className="mt-2 flex gap-2">

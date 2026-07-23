@@ -30,6 +30,7 @@
     "cmdk": "^1.0.0",
     "codemirror": "^6.0.2",
     "dagre": "^0.8.5",
+    "dbgate-query-splitter": "^4.12.0",
     "lucide-react": "^0.460.0",
     "papaparse": "^5.5.3",
     "radix-ui": "^1.4.3",

@@ -1,6 +1,6 @@
 import { useChangeStore } from '@/stores/changeStore';
 import { useConnectionStore } from '@/stores/connectionStore';
-import { ipc } from '@/lib/ipc';
+import { ipc, extractErrorMessage } from '@/lib/ipc';
 import { useQueryStore } from '@/stores/queryStore';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 import { Button } from '@/components/ui/button';
@@ -54,7 +54,7 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
         executeQuery(activeConnectionId, activeTabId);
       }
     } catch (err) {
-      showErrorToast(`Commit failed: ${String(err)}`);
+      showErrorToast(`Commit failed: ${extractErrorMessage(err)}`);
       console.error('Commit failed:', err);
     } finally {
       setIsCommitting(false);

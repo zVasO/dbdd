@@ -141,6 +141,12 @@ pub fn decrypt(cipher: &Aes256Gcm, ciphertext_b64: &str, nonce_b64: &str) -> Res
     let nonce_bytes = B64
         .decode(nonce_b64)
         .map_err(|e| PurrqlError::Config(format!("Invalid nonce: {e}")))?;
+    if nonce_bytes.len() != 12 {
+        return Err(PurrqlError::Config(format!(
+            "Invalid nonce length: expected 12 bytes, got {}",
+            nonce_bytes.len()
+        )));
+    }
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let plaintext = cipher

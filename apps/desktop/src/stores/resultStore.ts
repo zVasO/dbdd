@@ -190,8 +190,11 @@ interface StreamBuffer {
 const streamBuffers = new Map<string, StreamBuffer>();
 
 /**
- * Efficiently merge multiple column-data chunks into a base array.
- * Pre-allocates the final array size to avoid O(n^2) spreading.
+ * Append column-data chunks onto the accumulated base.
+ * Values are pushed into the existing per-column arrays in place: reallocating
+ * a full array each flush would copy all prior rows again, making the whole
+ * stream O(n^2). New column/array wrappers are returned so store selectors
+ * still see a changed reference.
  */
 function mergeColumnArrays(
   base: ColumnData[],
@@ -205,17 +208,12 @@ function mergeColumnArrays(
   );
 
   const merged = base.map((col, colIdx) => {
-    const chunkLengths = chunks.map(
-      (c) => c[colIdx]?.values?.length ?? 0,
-    );
-    const totalLen = col.values.length + chunkLengths.reduce((a, b) => a + b, 0);
-    const values = new Array(totalLen) as unknown[];
-    let offset = 0;
-    for (let i = 0; i < col.values.length; i++) values[offset++] = col.values[i];
+    const values = col.values as unknown[];
     for (let ci = 0; ci < chunks.length; ci++) {
       const chunkCol = chunks[ci][colIdx];
       if (chunkCol) {
-        for (let i = 0; i < chunkCol.values.length; i++) values[offset++] = chunkCol.values[i];
+        const chunkValues = chunkCol.values as unknown[];
+        for (let i = 0; i < chunkValues.length; i++) values.push(chunkValues[i]);
       }
     }
     return { ...col, values } as ColumnData;
@@ -292,6 +290,10 @@ interface ResultState {
   /** Lazy row accessor — builds rows on first access, caches for subsequent reads */
   getRows: (tabId: string) => QueryResult['rows'];
   getAllResults: (tabId: string) => QueryResult[];
+  /** Active result WITHOUT materialized rows — for the grid, which reads columnar data directly */
+  getActiveResult: (tabId: string) => QueryResult | null;
+  /** First `limit` rows of the active result — for previews, without materializing everything */
+  getRowsPreview: (tabId: string, limit: number) => QueryResult['rows'];
 }
 
 export const useResultStore = create<ResultState>((set, get) => ({
@@ -661,6 +663,29 @@ export const useResultStore = create<ResultState>((set, get) => ({
     }
 
     return [];
+  },
+
+  getActiveResult: (tabId) => {
+    const current = get().results[tabId];
+    if (!current) return null;
+    const columnar = current.allColumnarResults[current.activeResultIndex];
+    if (!columnar) return null;
+    return {
+      query_id: columnar.query_id,
+      columns: columnar.columns,
+      rows: [],
+      total_rows: columnar.row_count,
+      affected_rows: columnar.affected_rows,
+      execution_time_ms: columnar.execution_time_ms,
+      warnings: columnar.warnings,
+      result_type: columnar.result_type,
+    };
+  },
+
+  getRowsPreview: (tabId, limit) => {
+    const current = get().results[tabId];
+    if (!current || current.data.length === 0) return [];
+    return columnarToRows(current.columns, current.data, Math.min(limit, current.rowCount));
   },
 
   updateLastAccessed: (tabId) => {

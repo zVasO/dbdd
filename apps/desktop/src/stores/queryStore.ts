@@ -6,6 +6,7 @@ import { useConnectionStore } from './connectionStore';
 import { usePreferencesStore } from './preferencesStore';
 import { useResultStore, registerAdjacentTabResolver } from './resultStore';
 import { saveSession } from '../lib/sessionRecovery';
+import { splitStatements } from '../lib/sql-utils';
 import type { QueryResult, QueryHistoryEntry, ColumnarResult } from '../lib/types';
 
 async function maybeNotifyQueryComplete(
@@ -251,7 +252,10 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: true, error: null, activeQueryId: null })));
 
     // Split into multiple statements for batch execution
-    const statements = tab.sql.split(/;\s*/).map((s) => s.trim()).filter(Boolean);
+    const dbType = useConnectionStore
+      .getState()
+      .activeConnections.find((c) => c.connectionId === connectionId)?.config.db_type;
+    const statements = splitStatements(tab.sql, dbType ?? '');
     const isMulti = statements.length > 1;
 
     try {

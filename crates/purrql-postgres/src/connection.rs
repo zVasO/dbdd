@@ -95,18 +95,13 @@ fn pg_typed_cell(row: &PgRow, index: usize, pg_type: &str) -> CellValue {
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        "NUMERIC" => match row.try_get::<Option<String>, _>(index) {
-            Ok(Some(s)) => {
-                if let Ok(n) = s.parse::<i64>() {
-                    CellValue::Integer(n)
-                } else if let Ok(n) = s.parse::<f64>() {
-                    CellValue::Float(n)
-                } else {
-                    CellValue::Text(s)
-                }
-            }
+        "NUMERIC" => match row.try_get::<Option<sqlx::types::BigDecimal>, _>(index) {
+            Ok(Some(n)) => CellValue::Text(n.to_string()),
             Ok(None) => CellValue::Null,
-            Err(_) => CellValue::Null,
+            Err(e) => {
+                tracing::warn!(column = index, error = %e, "failed to decode NUMERIC column");
+                CellValue::Null
+            }
         },
         "TEXT" | "VARCHAR" | "CHAR" | "BPCHAR" | "NAME" => {
             match row.try_get::<Option<String>, _>(index) {
@@ -158,7 +153,10 @@ fn pg_typed_cell(row: &PgRow, index: usize, pg_type: &str) -> CellValue {
         _ => match row.try_get::<Option<String>, _>(index) {
             Ok(Some(s)) => CellValue::Text(s),
             Ok(None) => CellValue::Null,
-            Err(_) => CellValue::Null,
+            Err(e) => {
+                tracing::warn!(pg_type, error = %e, "unhandled Postgres type, value dropped");
+                CellValue::Null
+            }
         },
     }
 }

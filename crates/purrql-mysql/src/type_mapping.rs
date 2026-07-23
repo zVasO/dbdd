@@ -135,22 +135,67 @@ pub fn map_mysql_type(native_type: &str) -> DataType {
     DataType::Unknown(native_type.to_string())
 }
 
+fn uint_cell(n: u64) -> CellValue {
+    if n <= i64::MAX as u64 {
+        CellValue::Integer(n as i64)
+    } else {
+        CellValue::Text(n.to_string())
+    }
+}
+
+fn text_or_bytes(b: &[u8]) -> CellValue {
+    match std::str::from_utf8(b) {
+        Ok(s) => CellValue::Text(s.to_string()),
+        Err(_) => CellValue::Bytes {
+            size: b.len() as u64,
+            preview: format!("0x{}", hex_preview(b, 32)),
+        },
+    }
+}
+
+/// The MySQL text protocol delivers every value as `Bytes` (ASCII), so a raw
+/// SELECT loses typing. Recover it from the column type, letting `str::parse`
+/// do the conversion — decimals stay textual to preserve exact precision.
+fn bytes_cell_by_type(row: &mysql_async::Row, index: usize, b: &[u8]) -> CellValue {
+    use ColumnType::*;
+
+    let Some(ct) = row.columns_ref().get(index).map(|c| c.column_type()) else {
+        return text_or_bytes(b);
+    };
+    let Ok(s) = std::str::from_utf8(b) else {
+        return text_or_bytes(b);
+    };
+    let trimmed = s.trim();
+
+    match ct {
+        MYSQL_TYPE_TINY | MYSQL_TYPE_SHORT | MYSQL_TYPE_INT24 | MYSQL_TYPE_LONG
+        | MYSQL_TYPE_LONGLONG | MYSQL_TYPE_YEAR => trimmed
+            .parse::<i64>()
+            .map(CellValue::Integer)
+            .or_else(|_| trimmed.parse::<u64>().map(uint_cell))
+            .unwrap_or_else(|_| text_or_bytes(b)),
+        MYSQL_TYPE_FLOAT | MYSQL_TYPE_DOUBLE => trimmed
+            .parse::<f64>()
+            .map(CellValue::Float)
+            .unwrap_or_else(|_| text_or_bytes(b)),
+        MYSQL_TYPE_DATE | MYSQL_TYPE_DATETIME | MYSQL_TYPE_TIMESTAMP | MYSQL_TYPE_NEWDATE => {
+            CellValue::DateTime(s.to_string())
+        }
+        MYSQL_TYPE_TIME => CellValue::Time(s.to_string()),
+        _ => text_or_bytes(b),
+    }
+}
+
 pub fn mysql_value_to_cell(row: &mysql_async::Row, index: usize) -> CellValue {
     use mysql_async::Value;
 
     match row.as_ref(index) {
         Some(Value::NULL) | None => CellValue::Null,
         Some(Value::Int(n)) => CellValue::Integer(*n),
-        Some(Value::UInt(n)) => CellValue::Integer(*n as i64),
+        Some(Value::UInt(n)) => uint_cell(*n),
         Some(Value::Float(n)) => CellValue::Float(*n as f64),
         Some(Value::Double(n)) => CellValue::Float(*n),
-        Some(Value::Bytes(b)) => match String::from_utf8(b.clone()) {
-            Ok(s) => CellValue::Text(s),
-            Err(_) => CellValue::Bytes {
-                size: b.len() as u64,
-                preview: format!("0x{}", hex_preview(b, 32)),
-            },
-        },
+        Some(Value::Bytes(b)) => bytes_cell_by_type(row, index, b),
         Some(Value::Date(y, m, d, h, min, s, _us)) => CellValue::DateTime(format!(
             "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
             y, m, d, h, min, s

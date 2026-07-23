@@ -15,6 +15,7 @@ import { AreaChartWidget } from './charts/AreaChartWidget';
 import { ScatterWidget } from './charts/ScatterWidget';
 import { KPICard } from './charts/KPICard';
 import { DataTableWidget } from './charts/DataTableWidget';
+import { capRows, MAX_WIDGET_ROWS } from './charts/chartData';
 
 interface WidgetCardProps {
   widget: DashboardWidget;
@@ -62,35 +63,54 @@ export function WidgetCard({ widget, onRefresh, onEdit, onDelete }: WidgetCardPr
 
     const { xColumn, yColumn, kpiFormat, kpiCompareColumn } = widget.config;
 
-    switch (widget.type) {
-      case 'bar':
-        return <BarChartWidget result={widget.result} xColumn={xColumn} yColumn={yColumn} />;
-      case 'line':
-        return <LineChartWidget result={widget.result} xColumn={xColumn} yColumn={yColumn} />;
-      case 'pie':
-        return <PieChartWidget result={widget.result} xColumn={xColumn} yColumn={yColumn} />;
-      case 'area':
-        return <AreaChartWidget result={widget.result} xColumn={xColumn} yColumn={yColumn} />;
-      case 'scatter':
-        return <ScatterWidget result={widget.result} xColumn={xColumn} yColumn={yColumn} />;
-      case 'kpi':
-        return (
-          <KPICard
-            result={widget.result}
-            title={widget.title}
-            kpiFormat={kpiFormat}
-            kpiCompareColumn={kpiCompareColumn}
-          />
-        );
-      case 'table':
-        return <DataTableWidget result={widget.result} />;
-      default:
-        return (
-          <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
-            Unknown chart type
-          </div>
-        );
+    // KPI aggregates over every row, so it must see the full result; plotted
+    // charts and the table are capped to stay responsive on large results.
+    if (widget.type === 'kpi') {
+      return (
+        <KPICard
+          result={widget.result}
+          title={widget.title}
+          kpiFormat={kpiFormat}
+          kpiCompareColumn={kpiCompareColumn}
+        />
+      );
     }
+
+    const { result, capped, total } = capRows(widget.result, MAX_WIDGET_ROWS);
+
+    const chart = (() => {
+      switch (widget.type) {
+        case 'bar':
+          return <BarChartWidget result={result} xColumn={xColumn} yColumn={yColumn} />;
+        case 'line':
+          return <LineChartWidget result={result} xColumn={xColumn} yColumn={yColumn} />;
+        case 'pie':
+          return <PieChartWidget result={result} xColumn={xColumn} yColumn={yColumn} />;
+        case 'area':
+          return <AreaChartWidget result={result} xColumn={xColumn} yColumn={yColumn} />;
+        case 'scatter':
+          return <ScatterWidget result={result} xColumn={xColumn} yColumn={yColumn} />;
+        case 'table':
+          return <DataTableWidget result={result} />;
+        default:
+          return (
+            <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
+              Unknown chart type
+            </div>
+          );
+      }
+    })();
+
+    if (!capped) return chart;
+
+    return (
+      <div className="relative h-full">
+        {chart}
+        <div className="absolute right-1 top-1 rounded bg-muted/80 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          First {MAX_WIDGET_ROWS.toLocaleString()} of {total.toLocaleString()} rows
+        </div>
+      </div>
+    );
   }
 
   function handleDeleteClick() {

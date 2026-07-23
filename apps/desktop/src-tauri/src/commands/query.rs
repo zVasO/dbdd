@@ -54,10 +54,11 @@ fn needs_safety_limit(sql: &str) -> bool {
         return false;
     }
 
-    // Case-insensitive search for LIMIT in the tail without allocating
+    // Case-insensitive search for LIMIT in the tail without allocating.
+    // `start` may land mid-UTF-8-char, so slice safely instead of indexing.
     let len = trimmed.len();
     let start = len.saturating_sub(200);
-    let tail = &trimmed[start..];
+    let tail = trimmed.get(start..).unwrap_or(trimmed);
     let tail_bytes = tail.as_bytes();
     let limit_bytes = b"LIMIT";
     let has_limit = tail_bytes.windows(limit_bytes.len()).any(|window| {
@@ -523,4 +524,32 @@ pub async fn execute_query_stream(
     });
 
     Ok(query_id.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::needs_safety_limit;
+
+    #[test]
+    fn does_not_panic_on_utf8_boundary_in_tail() {
+        // A >200-byte SELECT whose byte at len-200 falls mid-multibyte-char.
+        let sql = format!("SELECT '{}'", "é".repeat(300));
+        assert!(needs_safety_limit(&sql));
+    }
+
+    #[test]
+    fn detects_missing_limit() {
+        assert!(needs_safety_limit("SELECT * FROM users"));
+        assert!(needs_safety_limit("WITH x AS (SELECT 1) SELECT * FROM x"));
+    }
+
+    #[test]
+    fn respects_existing_limit() {
+        assert!(!needs_safety_limit("SELECT * FROM users LIMIT 10"));
+    }
+
+    #[test]
+    fn ignores_non_select() {
+        assert!(!needs_safety_limit("UPDATE users SET x = 1"));
+    }
 }

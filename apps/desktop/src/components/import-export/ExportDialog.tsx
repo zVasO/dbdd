@@ -98,8 +98,7 @@ export function ExportDialog() {
   const tabResult = useResultStore((s) => activeTab ? s.results[activeTab.id] : undefined);
   const result: QueryResult | null = useMemo(() => {
     if (!tabResult || !activeTab) return null;
-    const allResults = useResultStore.getState().getAllResults(activeTab.id);
-    return allResults[tabResult.activeResultIndex] ?? null;
+    return useResultStore.getState().getActiveResult(activeTab.id);
   }, [tabResult, activeTab]);
   const tableName = activeTab?.table ?? activeTab?.title ?? 'export';
   const {
@@ -111,14 +110,17 @@ export function ExportDialog() {
     exportResult,
   } = useImportExportStore();
 
-  const preview = useMemo(() => {
-    if (!result || result.rows.length === 0) return '';
+  const rowCount = tabResult?.rowCount ?? 0;
+  const colCount = result?.columns.length ?? 0;
 
-    // Create a small result for preview (first 5 rows)
+  const preview = useMemo(() => {
+    if (!result || !activeTab || rowCount === 0) return '';
+
+    const previewRows = useResultStore.getState().getRowsPreview(activeTab.id, 5);
     const previewResult: QueryResult = {
       ...result,
-      rows: result.rows.slice(0, 5),
-      total_rows: Math.min(5, result.rows.length),
+      rows: previewRows,
+      total_rows: previewRows.length,
     };
 
     try {
@@ -141,15 +143,14 @@ export function ExportDialog() {
     } catch {
       return 'Preview not available';
     }
-  }, [result, exportFormat, tableName]);
+  }, [result, activeTab, rowCount, exportFormat, tableName]);
 
   const handleExport = useCallback(() => {
-    if (!result) return;
-    exportResult(result, tableName);
-  }, [result, tableName, exportResult]);
-
-  const rowCount = result?.rows.length ?? 0;
-  const colCount = result?.columns.length ?? 0;
+    if (!activeTab || !tabResult) return;
+    const full = useResultStore.getState().getAllResults(activeTab.id)[tabResult.activeResultIndex];
+    if (!full) return;
+    exportResult(full, tableName);
+  }, [activeTab, tabResult, tableName, exportResult]);
 
   return (
     <Dialog open={exportDialogOpen} onOpenChange={setExportDialogOpen}>

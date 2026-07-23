@@ -474,8 +474,7 @@ function renderResult(
       </div>
     );
   }
-  const allResults = tabResult ? useResultStore.getState().getAllResults(tab.id) : [];
-  const activeQueryResult = allResults[tabResult?.activeResultIndex ?? 0] ?? null;
+  const activeQueryResult = tabResult ? useResultStore.getState().getActiveResult(tab.id) : null;
   if (activeQueryResult) {
     const isReloading = tabResult?.isExecuting ?? tab.isExecuting;
     return (

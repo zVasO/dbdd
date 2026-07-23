@@ -210,15 +210,18 @@ impl SchemaInspector for MySqlSchemaInspector {
         let idx_result = self.conn.execute_with_params(
             idx_sql,
             &[CellValue::Text(db.to_string()), CellValue::Text(table.table.clone())],
-        ).await.unwrap_or_else(|_| QueryResult {
-            query_id: uuid::Uuid::new_v4(),
-            columns: vec![],
-            rows: vec![],
-            total_rows: Some(0),
-            affected_rows: None,
-            execution_time_ms: 0,
-            warnings: vec![],
-            result_type: ResultType::Select,
+        ).await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "schema catalog query failed; table structure may be incomplete");
+            QueryResult {
+                query_id: uuid::Uuid::new_v4(),
+                columns: vec![],
+                rows: vec![],
+                total_rows: Some(0),
+                affected_rows: None,
+                execution_time_ms: 0,
+                warnings: vec![],
+                result_type: ResultType::Select,
+            }
         });
 
         let mut idx_map: BTreeMap<String, (Vec<String>, bool, bool, String)> = BTreeMap::new();
@@ -253,15 +256,18 @@ impl SchemaInspector for MySqlSchemaInspector {
         let fk_result = self.conn.execute_with_params(
             fk_sql,
             &[CellValue::Text(db.to_string()), CellValue::Text(table.table.clone())],
-        ).await.unwrap_or_else(|_| QueryResult {
-            query_id: uuid::Uuid::new_v4(),
-            columns: vec![],
-            rows: vec![],
-            total_rows: Some(0),
-            affected_rows: None,
-            execution_time_ms: 0,
-            warnings: vec![],
-            result_type: ResultType::Select,
+        ).await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "schema catalog query failed; table structure may be incomplete");
+            QueryResult {
+                query_id: uuid::Uuid::new_v4(),
+                columns: vec![],
+                rows: vec![],
+                total_rows: Some(0),
+                affected_rows: None,
+                execution_time_ms: 0,
+                warnings: vec![],
+                result_type: ResultType::Select,
+            }
         });
 
         let mut fk_map: BTreeMap<String, (Vec<String>, String, String, Vec<String>, String, String)> = BTreeMap::new();
@@ -306,15 +312,18 @@ impl SchemaInspector for MySqlSchemaInspector {
         let cst_result = self.conn.execute_with_params(
             cst_sql,
             &[CellValue::Text(db.to_string()), CellValue::Text(table.table.clone())],
-        ).await.unwrap_or_else(|_| QueryResult {
-            query_id: uuid::Uuid::new_v4(),
-            columns: vec![],
-            rows: vec![],
-            total_rows: Some(0),
-            affected_rows: None,
-            execution_time_ms: 0,
-            warnings: vec![],
-            result_type: ResultType::Select,
+        ).await.unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "schema catalog query failed; table structure may be incomplete");
+            QueryResult {
+                query_id: uuid::Uuid::new_v4(),
+                columns: vec![],
+                rows: vec![],
+                total_rows: Some(0),
+                affected_rows: None,
+                execution_time_ms: 0,
+                warnings: vec![],
+                result_type: ResultType::Select,
+            }
         });
 
         let mut cst_map: BTreeMap<String, (ConstraintType, Vec<String>)> = BTreeMap::new();

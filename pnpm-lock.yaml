@@ -70,6 +70,9 @@ importers:
       dagre:
         specifier: ^0.8.5
         version: 0.8.5
+      dbgate-query-splitter:
+        specifier: ^4.12.0
+        version: 4.12.0
       lucide-react:
         specifier: ^0.460.0
         version: 0.460.0(react@19.2.4)
@@ -2429,6 +2432,9 @@ packages:
   data-uri-to-buffer@4.0.1:
     resolution: {integrity: sha512-0R9ikRb668HB7QDxT1vkpuUBtqc53YyAwMwGeUFKRojY/NWKvdZ+9UYtRfGmhqNbRkTSVpMbmyhXipFFv2cb/A==}
     engines: {node: '>= 12'}
+
+  dbgate-query-splitter@4.12.0:
+    resolution: {integrity: sha512-gHxH+QdFg488X8XXDHsWM0k1LwA+K5xcgp0YaA9wWye8A/zMCqaSDc4U6PMUu4LbKNchkIoTvFD4DJNXSsYVcw==}
 
   debug@4.4.3:
     resolution: {integrity: sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==}
@@ -6336,6 +6342,8 @@ snapshots:
       lodash: 4.17.23
 
   data-uri-to-buffer@4.0.1: {}
+
+  dbgate-query-splitter@4.12.0: {}
 
   debug@4.4.3:
     dependencies:

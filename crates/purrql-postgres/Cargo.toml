@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 purrql-core = { path = "../purrql-core" }
-sqlx = { workspace = true }
+sqlx = { workspace = true, features = ["bigdecimal"] }
 async-trait = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
