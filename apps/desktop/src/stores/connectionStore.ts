@@ -18,6 +18,8 @@ interface ConnectionState {
   activeConfig: ConnectionConfig | null;
   connecting: boolean;
   error: string | null;
+  /** Connections whose last keep-alive ping failed (network/DB lost) */
+  lostConnectionIds: string[];
 
   loadSavedConnections: () => Promise<void>;
   connect: (config: ConnectionConfig, password?: string) => Promise<string>;
@@ -28,6 +30,9 @@ interface ConnectionState {
   testConnection: (config: ConnectionConfig, password?: string) => Promise<string>;
   deleteConnection: (id: string) => Promise<void>;
   updateSavedConnection: (config: ConnectionConfig) => Promise<void>;
+  /** Keep-alive outcome reporting */
+  markConnectionLost: (connectionId: string) => void;
+  markConnectionAlive: (connectionId: string) => void;
 }
 
 export const useConnectionStore = create<ConnectionState>((set, get) => ({
@@ -37,6 +42,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   activeConfig: null,
   connecting: false,
   error: null,
+  lostConnectionIds: [],
 
   loadSavedConnections: async () => {
     const connections = await ipc.listSavedConnections();
@@ -63,6 +69,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         activeConnectionId: connectionId,
         activeConfig: config,
         connecting: false,
+        lostConnectionIds: s.lostConnectionIds.filter((x) => x !== connectionId),
       }));
       await get().loadSavedConnections();
       return connectionId;
@@ -94,6 +101,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     }
     set((s) => {
       const remaining = s.activeConnections.filter((c) => c.connectionId !== connectionId);
+      const lostConnectionIds = s.lostConnectionIds.filter((x) => x !== connectionId);
       const wasActive = s.activeConnectionId === connectionId;
       if (wasActive) {
         // Switch to the most recent remaining connection, or null
@@ -102,9 +110,10 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
           activeConnections: remaining,
           activeConnectionId: next?.connectionId ?? null,
           activeConfig: next?.config ?? null,
+          lostConnectionIds,
         };
       }
-      return { activeConnections: remaining };
+      return { activeConnections: remaining, lostConnectionIds };
     });
   },
 
@@ -131,5 +140,21 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
   updateSavedConnection: async (config) => {
     await ipc.updateSavedConnection(config);
     await get().loadSavedConnections();
+  },
+
+  markConnectionLost: (connectionId) => {
+    set((s) =>
+      s.lostConnectionIds.includes(connectionId)
+        ? s
+        : { lostConnectionIds: [...s.lostConnectionIds, connectionId] },
+    );
+  },
+
+  markConnectionAlive: (connectionId) => {
+    set((s) =>
+      s.lostConnectionIds.includes(connectionId)
+        ? { lostConnectionIds: s.lostConnectionIds.filter((x) => x !== connectionId) }
+        : s,
+    );
   },
 }));

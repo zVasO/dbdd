@@ -242,6 +242,9 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   executeQuery: async (connectionId, tabId) => {
     const tab = get().allTabs.find((t) => t.id === tabId);
     if (!tab || !tab.sql.trim()) return;
+    // Guard re-entrancy (e.g. spamming Cmd+Enter): a second run would register
+    // a second stream on the same tab, interleaving rows. Stop the current one first.
+    if (tab.isExecuting) return;
 
     const activity = useActivityStore.getState();
     const activityId = activity.logStart(tab.sql, connectionId);

@@ -38,6 +38,7 @@ export function AppLayout() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const activeConfig = useConnectionStore((s) => s.activeConfig);
   const disconnect = useConnectionStore((s) => s.disconnect);
+  const lostConnectionIds = useConnectionStore((s) => s.lostConnectionIds);
   const loadDatabases = useSchemaStore((s) => s.loadDatabases);
   const createTab = useQueryStore((s) => s.createTab);
   const sidebarWidth = useUIStore((s) => s.sidebarWidth);
@@ -305,7 +306,7 @@ export function AppLayout() {
       </div>
       <ActivityBar />
       <StatusBar
-        connected={!!activeConnectionId}
+        connected={!!activeConnectionId && !lostConnectionIds.includes(activeConnectionId)}
         dbType={activeConfig?.db_type}
         onDisconnect={disconnect}
         onOpenConnectionDialog={handleOpenConnectionDialog}

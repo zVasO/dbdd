@@ -29,6 +29,7 @@ function structureKey(db: string, table: string): string {
 }
 
 let _loadGeneration = 0;
+let _selectedStructureKey: string | null = null;
 
 export const useSchemaStore = create<SchemaState>((set, get) => ({
   databases: [],
@@ -75,6 +76,7 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
 
   loadTableStructure: async (connectionId, tableRef) => {
     const key = structureKey(tableRef.database ?? '', tableRef.table);
+    _selectedStructureKey = key;
 
     // Return cached if available
     if (get().structures[key]) {
@@ -85,8 +87,10 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
     set((s) => ({ structureLoading: { ...s.structureLoading, [key]: true } }));
     try {
       const structure = await ipc.getTableStructure(connectionId, tableRef);
+      // A later selection may have won the race — always cache, but only show
+      // this structure if it is still the one the user last asked for.
       set((s) => ({
-        selectedTable: structure,
+        ...(key === _selectedStructureKey ? { selectedTable: structure } : {}),
         structures: { ...s.structures, [key]: structure },
         structureLoading: { ...s.structureLoading, [key]: false },
       }));

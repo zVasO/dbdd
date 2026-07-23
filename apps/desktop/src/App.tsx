@@ -1,12 +1,16 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
+import { useChangeStore } from "@/stores/changeStore";
 import { usePreferencesStore } from "@/stores/preferencesStore";
 import { useThemeStore } from "@/stores/themeStore";
 import { WelcomePage } from "@/pages/WelcomePage";
 import { WorkspacePage } from "@/pages/WorkspacePage";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Toaster } from "@/components/ui/toaster";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { loadSession } from "@/lib/sessionRecovery";
 import { ipc } from "@/lib/ipc";
 import { setupMenuBridge, teardownMenuBridge } from "@/lib/menuBridge";
@@ -19,6 +23,25 @@ const PING_INTERVAL_MS = 30_000;
 
 function App() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
+
+  // Warn before closing the app while uncommitted row changes are pending.
+  const [pendingCloseCount, setPendingCloseCount] = useState<number | null>(null);
+  const allowCloseRef = useRef(false);
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onCloseRequested((event) => {
+        if (allowCloseRef.current) return;
+        const count = useChangeStore.getState().pendingCount();
+        if (count > 0) {
+          event.preventDefault();
+          setPendingCloseCount(count);
+        }
+      })
+      .then((fn) => { unlisten = fn; })
+      .catch((err) => console.error('[App] Failed to register close guard:', err));
+    return () => unlisten?.();
+  }, []);
 
   // Bridge native menu events to frontend store actions
   useEffect(() => {
@@ -117,9 +140,10 @@ function App() {
       for (const conn of activeConnections) {
         const lastActive = lastActivityRef.current.get(conn.connectionId) ?? 0;
         if (now - lastActive > IDLE_THRESHOLD_MS) {
-          ipc.pingConnection(conn.connectionId).catch(() => {
-            // Connection lost — silently ignore
-          });
+          const { markConnectionAlive, markConnectionLost } = useConnectionStore.getState();
+          ipc.pingConnection(conn.connectionId)
+            .then(() => markConnectionAlive(conn.connectionId))
+            .catch(() => markConnectionLost(conn.connectionId));
         }
       }
     }, PING_INTERVAL_MS);
@@ -134,6 +158,29 @@ function App() {
         </div>
       </div>
       <Toaster />
+      <Dialog open={pendingCloseCount !== null} onOpenChange={(open) => { if (!open) setPendingCloseCount(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Unsaved changes</DialogTitle>
+            <DialogDescription>
+              You have {pendingCloseCount} uncommitted change{pendingCloseCount === 1 ? '' : 's'} that
+              will be lost if you quit now.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setPendingCloseCount(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                allowCloseRef.current = true;
+                getCurrentWindow().close();
+              }}
+            >
+              Quit anyway
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </ErrorBoundary>
   );
 }

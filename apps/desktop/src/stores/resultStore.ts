@@ -115,9 +115,16 @@ function queryResultToColumnar(result: QueryResult): ColumnarResult {
       if (!cell || cell.type === 'Null') {
         values[r] = null;
       } else if ('value' in cell) {
-        // For non-string types stored as Strings column, convert to string
+        // For non-string types stored as a Strings column, convert to string.
+        // Bytes/Array/Json are objects — String() would yield "[object Object]".
         if (kind === 'Strings' && typeof cell.value !== 'string') {
-          values[r] = cell.type === 'Json' ? JSON.stringify(cell.value) : String(cell.value);
+          if (cell.type === 'Bytes') {
+            values[r] = cell.value.preview;
+          } else if (cell.type === 'Json' || cell.type === 'Array') {
+            values[r] = JSON.stringify(cell.value);
+          } else {
+            values[r] = String(cell.value);
+          }
         } else {
           values[r] = cell.value;
         }

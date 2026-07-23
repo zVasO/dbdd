@@ -54,6 +54,19 @@ const ALERTS_STORAGE_KEY = 'vasodb:alerts';
 // Module-level timers map (not in state since timers are not serializable)
 const timers = new Map<string, ReturnType<typeof setInterval>>();
 
+function stopTimer(id: string): void {
+  const existing = timers.get(id);
+  if (existing) {
+    clearInterval(existing);
+    timers.delete(id);
+  }
+}
+
+function startTimer(id: string, intervalMs: number): void {
+  stopTimer(id);
+  timers.set(id, setInterval(() => executeAndCheck(id), intervalMs));
+}
+
 function loadScheduledQueries(): ScheduledQuery[] {
   try {
     const raw = localStorage.getItem(QUERIES_STORAGE_KEY);
@@ -92,8 +105,10 @@ function hashResult(value: string): string {
   return hash.toString(36);
 }
 
-async function executeAndCheck(query: ScheduledQuery): Promise<void> {
+async function executeAndCheck(id: string): Promise<void> {
   const state = useAlertStore.getState();
+  const query = state.scheduledQueries.find((q) => q.id === id);
+  if (!query) return;
 
   try {
     const result = await ipc.executeQuery(query.connectionId, query.sql);
@@ -206,8 +221,7 @@ export const useAlertStore = create<AlertState>((set, get) => ({
 
     // Start timer if enabled
     if (newQuery.enabled) {
-      const timer = setInterval(() => executeAndCheck(newQuery), newQuery.intervalMs);
-      timers.set(newQuery.id, timer);
+      startTimer(newQuery.id, newQuery.intervalMs);
     }
   },
 
@@ -217,15 +231,18 @@ export const useAlertStore = create<AlertState>((set, get) => ({
     );
     set({ scheduledQueries: updated });
     persistScheduledQueries(updated);
+
+    // Re-arm only when scheduling-relevant fields change — not on the
+    // lastRunAt/lastResult/lastAlertAt bookkeeping writes from executeAndCheck.
+    if ('sql' in updates || 'intervalMs' in updates || 'enabled' in updates) {
+      const q = updated.find((x) => x.id === id);
+      if (q?.enabled) startTimer(id, q.intervalMs);
+      else stopTimer(id);
+    }
   },
 
   removeScheduledQuery: (id) => {
-    // Stop timer
-    const existing = timers.get(id);
-    if (existing) {
-      clearInterval(existing);
-      timers.delete(id);
-    }
+    stopTimer(id);
     const updated = get().scheduledQueries.filter((q) => q.id !== id);
     set({ scheduledQueries: updated });
     persistScheduledQueries(updated);
@@ -234,35 +251,16 @@ export const useAlertStore = create<AlertState>((set, get) => ({
   toggleScheduledQuery: (id) => {
     const query = get().scheduledQueries.find((q) => q.id === id);
     if (!query) return;
-
-    const newEnabled = !query.enabled;
-    get().updateScheduledQuery(id, { enabled: newEnabled });
-
-    if (newEnabled) {
-      const updatedQuery = { ...query, enabled: true };
-      const timer = setInterval(() => executeAndCheck(updatedQuery), updatedQuery.intervalMs);
-      timers.set(id, timer);
-    } else {
-      const existing = timers.get(id);
-      if (existing) {
-        clearInterval(existing);
-        timers.delete(id);
-      }
-    }
+    // updateScheduledQuery re-arms the timer for the new enabled state.
+    get().updateScheduledQuery(id, { enabled: !query.enabled });
   },
 
   startScheduler: () => {
-    // Clear any existing timers first
-    for (const [, timer] of timers) {
-      clearInterval(timer);
-    }
+    for (const timer of timers.values()) clearInterval(timer);
     timers.clear();
 
-    // Start timers for all enabled queries
-    const queries = get().scheduledQueries.filter((q) => q.enabled);
-    for (const query of queries) {
-      const timer = setInterval(() => executeAndCheck(query), query.intervalMs);
-      timers.set(query.id, timer);
+    for (const query of get().scheduledQueries) {
+      if (query.enabled) startTimer(query.id, query.intervalMs);
     }
   },
 
