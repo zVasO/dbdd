@@ -73,7 +73,7 @@ fn apply_safety_limit(sql: &str) -> String {
 }
 
 #[tauri::command]
-#[instrument(skip(state), fields(query_id, row_count))]
+#[instrument(skip(state, connection_id, sql), fields(query_id, row_count))]
 pub async fn execute_query(
     state: State<'_, AppState>,
     connection_id: Uuid,
@@ -168,7 +168,7 @@ pub async fn execute_query(
 /// A native columnar return path in the driver trait would eliminate this
 /// transpose entirely, but that is a larger refactor tracked separately.
 #[tauri::command]
-#[instrument(skip(state), fields(query_id, row_count))]
+#[instrument(skip(state, connection_id, sql), fields(query_id, row_count))]
 pub async fn execute_query_columnar(
     state: State<'_, AppState>,
     connection_id: Uuid,
@@ -343,7 +343,7 @@ pub async fn execute_batch(
 }
 
 #[tauri::command]
-#[instrument(skip(state, app))]
+#[instrument(skip(state, app, connection_id, sql))]
 pub async fn execute_query_stream(
     state: State<'_, AppState>,
     app: tauri::AppHandle,

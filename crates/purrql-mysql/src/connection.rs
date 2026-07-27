@@ -2,8 +2,29 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use purrql_core::error::{PurrqlError, Result};
+use purrql_core::models::connection::SslMode;
 use purrql_core::models::query::{CellValue, ColumnMeta, QueryResult, ResultType, Row};
 use purrql_core::ports::connection::DatabaseConnection;
+
+/// Map our SslMode to mysql_async TLS options.
+/// Note: mysql_async has no opportunistic ("prefer") TLS, so Disable and Prefer
+/// both connect in plaintext (Prefer stays non-fatal against non-TLS servers).
+/// Require/VerifyCa/VerifyFull set SslOpts, which makes the handshake fail —
+/// rather than silently downgrade — when the server has no TLS.
+fn ssl_opts_from(mode: &SslMode) -> Option<mysql_async::SslOpts> {
+    match mode {
+        SslMode::Disable | SslMode::Prefer => None,
+        SslMode::Require => Some(
+            mysql_async::SslOpts::default()
+                .with_danger_accept_invalid_certs(true)
+                .with_danger_skip_domain_validation(true),
+        ),
+        SslMode::VerifyCa => {
+            Some(mysql_async::SslOpts::default().with_danger_skip_domain_validation(true))
+        }
+        SslMode::VerifyFull => Some(mysql_async::SslOpts::default()),
+    }
+}
 
 pub struct MySqlConnection {
     pool: mysql_async::Pool,
@@ -29,6 +50,7 @@ impl MySqlConnection {
             .db_name(config.database.as_deref())
             .conn_ttl(std::time::Duration::from_secs(300))
             .wait_timeout(Some(10))
+            .ssl_opts(ssl_opts_from(&config.ssl_mode))
             .pool_opts(pool_opts);
 
         let pool = mysql_async::Pool::new(opts);

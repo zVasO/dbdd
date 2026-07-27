@@ -49,7 +49,12 @@ export function NoteEditor({
   }, [content, onSave]);
 
   const renderMarkdown = (text: string): string => {
-    let html = text;
+    // Escape HTML first so user content can't inject markup (the regexes below
+    // introduce only the tags we control).
+    let html = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
     // Bold
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     // Italic

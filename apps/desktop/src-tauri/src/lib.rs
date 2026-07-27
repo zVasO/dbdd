@@ -343,6 +343,8 @@ pub fn run() {
             commands::connection::delete_saved_connection,
             commands::connection::update_saved_connection,
             commands::connection::ping_connection,
+            commands::connection::store_ai_key,
+            commands::connection::get_ai_key,
             commands::query::execute_query,
             commands::query::execute_query_columnar,
             commands::query::cancel_query,

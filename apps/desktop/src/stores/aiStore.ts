@@ -1,8 +1,11 @@
 import { create } from 'zustand';
 import { getProvider, DEFAULT_MODELS } from '@/lib/aiProviders';
 import type { AIProviderType, AIMessage } from '@/lib/aiProviders';
+import { ipc } from '@/lib/ipc';
 import { useSchemaStore } from './schemaStore';
 import { useConnectionStore } from './connectionStore';
+
+const AI_PROVIDERS: AIProviderType[] = ['claude', 'openai', 'ollama'];
 
 export interface ChatMessage {
   id: string;
@@ -32,15 +35,20 @@ const DEFAULT_CONFIG: AIConfig = {
   temperature: 0.3,
 };
 
+/** Config persisted to localStorage — never the API keys (those live in the OS keyring). */
+type PersistedConfig = Omit<AIConfig, 'apiKeys'>;
+
 function loadConfig(): AIConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULT_CONFIG };
     const parsed = JSON.parse(raw);
+    // Keys are loaded from the keyring by migrateAndLoadKeys(); ignore any
+    // apiKeys present in a legacy blob here.
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
-      apiKeys: { ...DEFAULT_CONFIG.apiKeys, ...parsed.apiKeys },
+      apiKeys: { ...DEFAULT_CONFIG.apiKeys },
       model: { ...DEFAULT_CONFIG.model, ...parsed.model },
     };
   } catch {
@@ -49,7 +57,9 @@ function loadConfig(): AIConfig {
 }
 
 function saveConfig(config: AIConfig): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+  const { apiKeys: _drop, ...persisted } = config;
+  void _drop;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted satisfies PersistedConfig));
 }
 
 function getConfigSnapshot(state: AIState): AIConfig {
@@ -61,6 +71,41 @@ function getConfigSnapshot(state: AIState): AIConfig {
     streaming: state.streaming,
     temperature: state.temperature,
   };
+}
+
+/**
+ * Populate API keys from the OS keyring after store creation. Also migrates
+ * keys from a legacy plaintext localStorage blob into the keyring, then strips
+ * them from disk so cleartext keys don't linger.
+ */
+async function migrateAndLoadKeys(): Promise<void> {
+  const apiKeys: Record<AIProviderType, string> = { claude: '', openai: '', ollama: '' };
+
+  let legacy: Partial<Record<AIProviderType, string>> = {};
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) legacy = (JSON.parse(raw).apiKeys ?? {}) as Partial<Record<AIProviderType, string>>;
+  } catch {
+    legacy = {};
+  }
+
+  for (const provider of AI_PROVIDERS) {
+    try {
+      const stored = await ipc.getAiKey(provider);
+      if (stored) {
+        apiKeys[provider] = stored;
+      } else if (legacy[provider]) {
+        apiKeys[provider] = legacy[provider] as string;
+        await ipc.storeAiKey(provider, legacy[provider] as string);
+      }
+    } catch (e) {
+      console.error(`[aiStore] Failed to load AI key for ${provider}:`, e);
+    }
+  }
+
+  useAIStore.setState({ apiKeys });
+  // Rewrite the blob without any plaintext keys.
+  saveConfig(getConfigSnapshot(useAIStore.getState()));
 }
 
 function buildSchemaContext(): string {
@@ -190,7 +235,10 @@ export const useAIStore = create<AIState>((set, get) => {
     setApiKey: (provider, key) => {
       const apiKeys = { ...get().apiKeys, [provider]: key };
       set({ apiKeys });
-      saveConfig(getConfigSnapshot({ ...get(), apiKeys }));
+      // Persisted in the OS keyring, not localStorage (empty key deletes it).
+      ipc.storeAiKey(provider, key).catch((e) =>
+        console.error(`[aiStore] Failed to persist AI key for ${provider}:`, e),
+      );
     },
 
     setOllamaUrl: (url) => {
@@ -411,3 +459,6 @@ export const useAIStore = create<AIState>((set, get) => {
     },
   };
 });
+
+// Load API keys from the OS keyring (and migrate any legacy plaintext keys).
+void migrateAndLoadKeys();

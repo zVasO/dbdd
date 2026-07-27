@@ -16,20 +16,16 @@ const KEY_FILE: &str = "purrql.key";
 
 /// Load or generate a 256-bit encryption key.
 /// Primary: OS keyring (macOS Keychain, Windows Credential Manager, Linux Secret Service).
-/// Fallback: encrypted file in app data directory with restrictive permissions.
+/// Fallback: a base64 file (NOT encrypted) with owner-only permissions, used
+/// only when no OS keyring is available — never alongside a working keyring,
+/// since the key would then sit in plaintext next to the data it protects.
 pub fn load_or_create_key(app_data_dir: &Path) -> Result<[u8; 32]> {
     let key_path = app_data_dir.join(KEY_FILE);
 
-    // Try loading from OS keyring first
+    // Primary: OS keyring. When it works we never touch disk.
     match load_key_from_keyring() {
         Ok(key) => {
             debug!("Encryption key loaded from OS keyring");
-            // Write file backup if it doesn't exist (defense-in-depth for future launches)
-            if !key_path.exists() {
-                if let Err(e) = store_key_to_file(&key_path, &key) {
-                    debug!("Could not write key file backup: {e}");
-                }
-            }
             return Ok(key);
         }
         Err(e) => {
@@ -37,12 +33,13 @@ pub fn load_or_create_key(app_data_dir: &Path) -> Result<[u8; 32]> {
         }
     }
 
-    // Fallback: load from file
+    // Fallback: an existing key file (keyring-less system, or a legacy install).
+    // If we can migrate it into the keyring, delete the plaintext file.
     if key_path.exists() {
         let key = load_key_from_file(&key_path)?;
-        // Migrate to keyring if possible
-        if let Err(e) = store_key_in_keyring(&key) {
-            debug!("Could not migrate key to OS keyring: {e}");
+        if store_key_in_keyring(&key).is_ok() {
+            debug!("Migrated key to OS keyring; removing plaintext file fallback");
+            let _ = std::fs::remove_file(&key_path);
         }
         return Ok(key);
     }
@@ -51,14 +48,14 @@ pub fn load_or_create_key(app_data_dir: &Path) -> Result<[u8; 32]> {
     let mut key = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut key);
 
-    // Always persist to file first (reliable fallback, never lost between launches)
-    store_key_to_file(&key_path, &key)?;
-
-    // Also try to store in OS keyring (preferred for security, but optional)
-    if let Err(e) = store_key_in_keyring(&key) {
-        debug!("OS keyring unavailable: {e}. Using file-based key storage.");
-    } else {
-        debug!("New encryption key stored in OS keyring and file backup");
+    // Prefer the keyring; only write the plaintext fallback file when no OS
+    // keyring is available at all.
+    match store_key_in_keyring(&key) {
+        Ok(()) => debug!("New encryption key stored in OS keyring"),
+        Err(e) => {
+            debug!("OS keyring unavailable: {e}. Falling back to file-based key storage.");
+            store_key_to_file(&key_path, &key)?;
+        }
     }
 
     Ok(key)

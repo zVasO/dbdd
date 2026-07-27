@@ -146,3 +146,35 @@ pub async fn ping_connection(
         .await
         .map_err(IpcError::from)
 }
+
+#[tauri::command]
+pub async fn store_ai_key(
+    state: State<'_, AppState>,
+    provider: String,
+    key: String,
+) -> Result<(), IpcError> {
+    if key.is_empty() {
+        return state
+            .config_store
+            .delete_ai_key(&provider)
+            .await
+            .map_err(IpcError::from);
+    }
+    state
+        .config_store
+        .store_ai_key(&provider, &key)
+        .await
+        .map_err(IpcError::from)
+}
+
+#[tauri::command]
+pub async fn get_ai_key(
+    state: State<'_, AppState>,
+    provider: String,
+) -> Result<Option<String>, IpcError> {
+    state
+        .config_store
+        .get_ai_key(&provider)
+        .await
+        .map_err(IpcError::from)
+}

@@ -126,11 +126,28 @@ impl ConfigStore {
     }
 
     pub async fn delete_connection(&self, id: &Uuid) -> Result<()> {
+        // Best-effort keyring cleanup so the stored password isn't orphaned.
+        let service = format!("purrql-{}", id);
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Ok(entry) = keyring::Entry::new(&service, "password") {
+                match entry.delete_credential() {
+                    Ok(()) | Err(keyring::Error::NoEntry) => {}
+                    Err(e) => warn!("Could not delete keyring password on connection removal: {e}"),
+                }
+            }
+        })
+        .await;
+
         let conn = Arc::clone(&self.write_conn);
         let id = id.to_string();
 
         tokio::task::spawn_blocking(move || {
             let conn = conn.lock().map_err(|e| PurrqlError::Internal(e.to_string()))?;
+            conn.execute(
+                "DELETE FROM encrypted_passwords WHERE connection_id = ?1",
+                rusqlite::params![id],
+            )
+            .map_err(|e| PurrqlError::Config(e.to_string()))?;
             conn.execute(
                 "DELETE FROM connections WHERE id = ?1",
                 rusqlite::params![id],
@@ -198,6 +215,52 @@ impl ConfigStore {
 
         // Fallback to encrypted SQLite
         self.get_password_encrypted(config_id).await
+    }
+
+    /// Store an AI provider API key in the OS keyring (keyring-only — no
+    /// plaintext fallback; a missing keyring simply means the key isn't
+    /// persisted, which still beats storing it in cleartext).
+    pub async fn store_ai_key(&self, provider: &str, key: &str) -> Result<()> {
+        let service = format!("vasodb-ai-{provider}");
+        let key = key.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let entry = keyring::Entry::new(&service, "api-key")
+                .map_err(|e| PurrqlError::Config(format!("Keyring init error: {e}")))?;
+            entry
+                .set_password(&key)
+                .map_err(|e| PurrqlError::Config(format!("Keyring write error: {e}")))
+        })
+        .await
+        .map_err(|e| PurrqlError::Internal(e.to_string()))?
+    }
+
+    pub async fn get_ai_key(&self, provider: &str) -> Result<Option<String>> {
+        let service = format!("vasodb-ai-{provider}");
+        tokio::task::spawn_blocking(move || {
+            let entry = keyring::Entry::new(&service, "api-key")
+                .map_err(|e| PurrqlError::Config(format!("Keyring init error: {e}")))?;
+            match entry.get_password() {
+                Ok(k) => Ok(Some(k)),
+                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(e) => Err(PurrqlError::Config(format!("Keyring read error: {e}"))),
+            }
+        })
+        .await
+        .map_err(|e| PurrqlError::Internal(e.to_string()))?
+    }
+
+    pub async fn delete_ai_key(&self, provider: &str) -> Result<()> {
+        let service = format!("vasodb-ai-{provider}");
+        tokio::task::spawn_blocking(move || {
+            let entry = keyring::Entry::new(&service, "api-key")
+                .map_err(|e| PurrqlError::Config(format!("Keyring init error: {e}")))?;
+            match entry.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+                Err(e) => Err(PurrqlError::Config(format!("Keyring delete error: {e}"))),
+            }
+        })
+        .await
+        .map_err(|e| PurrqlError::Internal(e.to_string()))?
     }
 
     async fn store_password_encrypted(&self, config_id: &Uuid, password: &str) -> Result<()> {

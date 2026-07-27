@@ -65,8 +65,10 @@ impl DatabaseType {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SslMode {
-    #[default]
     Disable,
+    // Secure-by-default: negotiate TLS when the server offers it, without
+    // failing against servers that don't.
+    #[default]
     Prefer,
     Require,
     VerifyCa,

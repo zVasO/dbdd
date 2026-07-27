@@ -120,6 +120,16 @@ const COLOR_VAR_MAP: Record<keyof ThemeColors, string> = {
   chart5: '--chart-5',
 };
 
+/**
+ * Reject color values that could smuggle a CSS payload from an imported theme
+ * (external `url(...)` fetches, property break-out via `;`, tag injection).
+ * The CSP already blocks execution/exfiltration; this is defense in depth.
+ */
+function isSafeCssValue(value: string): boolean {
+  if (typeof value !== 'string' || value.length > 128) return false;
+  return !/[;<>{}]|url\s*\(|expression\s*\(|@import|\/\*/i.test(value);
+}
+
 export function applyThemeToDOM(theme: Theme, animate = true) {
   const root = document.documentElement;
 
@@ -139,7 +149,10 @@ export function applyThemeToDOM(theme: Theme, animate = true) {
 
   // Apply colors
   for (const [key, varName] of Object.entries(COLOR_VAR_MAP)) {
-    root.style.setProperty(varName, colors[key as keyof ThemeColors]);
+    const value = colors[key as keyof ThemeColors];
+    if (isSafeCssValue(value)) {
+      root.style.setProperty(varName, value);
+    }
   }
 
   // Typography

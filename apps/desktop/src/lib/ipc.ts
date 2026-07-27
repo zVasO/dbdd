@@ -53,6 +53,12 @@ export const ipc = {
   updateSavedConnection: (config: ConnectionConfig) =>
     invoke<void>('update_saved_connection', { config }),
 
+  storeAiKey: (provider: string, key: string) =>
+    invoke<void>('store_ai_key', { provider, key }),
+
+  getAiKey: (provider: string) =>
+    invoke<string | null>('get_ai_key', { provider }),
+
   executeQuery: (connectionId: string, sql: string) =>
     invoke<QueryResult>('execute_query', { connectionId, sql }),
 
