@@ -113,7 +113,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
       const bridge = getFuzzySearchBridge();
       const results = await bridge.search(searchQuery, 'sidebar', { limit: 100 });
       setFuzzyResults(results);
-    }, 80);
+    }, 250);
 
     return () => {
       if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);

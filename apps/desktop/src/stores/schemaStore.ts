@@ -33,6 +33,7 @@ function structureKey(db: string, table: string): string {
 
 const PREFETCH_BATCH = 4;
 const PREFETCH_CAP = 500;
+const PREFETCH_FLUSH_SIZE = 40;
 
 let _loadGeneration = 0;
 let _selectedStructureKey: string | null = null;
@@ -118,6 +119,18 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
       .filter((t) => !get().structures[structureKey(database, t.name)])
       .slice(0, PREFETCH_CAP);
 
+    // Accumulate across batches and flush to the store in large chunks: every
+    // `set` re-renders schema subscribers (the sidebar), so writing once per
+    // batch would churn the main thread and make typing feel laggy. Never
+    // touch selectedTable — this must not hijack the user's selection.
+    let acc: Record<string, TableStructure> = {};
+    const flush = () => {
+      if (Object.keys(acc).length === 0) return;
+      const batch = acc;
+      acc = {};
+      set((s) => ({ structures: { ...s.structures, ...batch } }));
+    };
+
     for (let i = 0; i < pending.length; i += PREFETCH_BATCH) {
       if (token !== _prefetchToken) return; // superseded by a newer prefetch
       const batch = pending.slice(i, i + PREFETCH_BATCH);
@@ -130,16 +143,12 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
         ),
       );
       if (token !== _prefetchToken) return;
-      const ok = loaded.filter((r): r is { key: string; structure: TableStructure } => r !== null);
-      if (ok.length === 0) continue;
-      // One set per batch so the fuzzy index re-syncs progressively; never
-      // touch selectedTable — this must not hijack the user's selection.
-      set((s) => {
-        const structures = { ...s.structures };
-        for (const r of ok) structures[r.key] = r.structure;
-        return { structures };
-      });
+      for (const r of loaded) {
+        if (r) acc[r.key] = r.structure;
+      }
+      if (Object.keys(acc).length >= PREFETCH_FLUSH_SIZE) flush();
     }
+    flush();
   },
 
   setActiveDatabase: (database) => {
@@ -162,29 +171,39 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
   },
 }));
 
-// Sync schema data to fuzzy search worker on every change
+// Sync schema data to the fuzzy search worker. Debounced so that rapid schema
+// changes (e.g. background prefetch loading many structures) coalesce into a
+// single index rebuild instead of rebuilding the whole column list on the main
+// thread for every batch.
+let _fuzzySyncTimer: ReturnType<typeof setTimeout> | null = null;
+
 useSchemaStore.subscribe((state, prevState) => {
   if (state.tables === prevState.tables && state.structures === prevState.structures) {
     return;
   }
+  if (_fuzzySyncTimer) clearTimeout(_fuzzySyncTimer);
+  _fuzzySyncTimer = setTimeout(() => {
+    _fuzzySyncTimer = null;
+    const { tables: tablesByDb, structures } = useSchemaStore.getState();
 
-  const tables: { name: string; database: string }[] = [];
-  for (const [db, dbTables] of Object.entries(state.tables)) {
-    for (const t of dbTables) {
-      tables.push({ name: t.name, database: db });
+    const tables: { name: string; database: string }[] = [];
+    for (const [db, dbTables] of Object.entries(tablesByDb)) {
+      for (const t of dbTables) {
+        tables.push({ name: t.name, database: db });
+      }
     }
-  }
 
-  const columns: { name: string; table: string; type: string }[] = [];
-  for (const structure of Object.values(state.structures)) {
-    for (const col of structure.columns) {
-      columns.push({
-        name: col.name,
-        table: structure.table_ref.table,
-        type: typeof col.data_type === 'string' ? col.data_type : JSON.stringify(col.data_type),
-      });
+    const columns: { name: string; table: string; type: string }[] = [];
+    for (const structure of Object.values(structures)) {
+      for (const col of structure.columns) {
+        columns.push({
+          name: col.name,
+          table: structure.table_ref.table,
+          type: typeof col.data_type === 'string' ? col.data_type : JSON.stringify(col.data_type),
+        });
+      }
     }
-  }
 
-  getFuzzySearchBridge().syncSchema(tables, columns);
+    getFuzzySearchBridge().syncSchema(tables, columns);
+  }, 300);
 });
