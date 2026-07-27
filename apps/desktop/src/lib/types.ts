@@ -127,6 +127,13 @@ export interface TableRef {
   table: string;
 }
 
+/** Lightweight column reference for the search index (matches Rust ColumnRef). */
+export interface ColumnRef {
+  table: string;
+  column: string;
+  data_type: string;
+}
+
 export interface DatabaseInfo {
   name: string;
   size_bytes: number | null;

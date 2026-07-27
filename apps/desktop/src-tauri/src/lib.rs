@@ -355,6 +355,7 @@ pub fn run() {
             commands::schema::list_schemas,
             commands::schema::list_tables,
             commands::schema::get_table_structure,
+            commands::schema::list_all_columns,
             commands::files::open_sql_file,
             commands::files::save_sql_file,
             commands::files::import_csv_file,

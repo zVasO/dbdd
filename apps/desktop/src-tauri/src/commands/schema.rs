@@ -118,3 +118,22 @@ pub async fn get_table_structure(
         .await
         .map_err(IpcError::from)
 }
+
+#[tauri::command]
+pub async fn list_all_columns(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    database: String,
+) -> Result<Vec<ColumnRef>, IpcError> {
+    let inspector = {
+        let active = state
+            .connection_manager
+            .get(&connection_id)
+            .ok_or(IpcError::from("Not connected"))?;
+        Arc::clone(&active.schema_inspector)
+    };
+    inspector
+        .list_all_columns(&database)
+        .await
+        .map_err(IpcError::from)
+}

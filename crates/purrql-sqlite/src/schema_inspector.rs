@@ -20,4 +20,7 @@ impl SchemaInspector for SqliteSchemaInspector {
     async fn get_table_structure(&self, _table: &TableRef) -> Result<TableStructure> {
         Err(PurrqlError::NotSupported("SQLite schema inspector not yet implemented".to_string()))
     }
+    async fn list_all_columns(&self, _database: &str) -> Result<Vec<ColumnRef>> {
+        Err(PurrqlError::NotSupported("SQLite schema inspector not yet implemented".to_string()))
+    }
 }

@@ -22,6 +22,15 @@ pub struct SchemaInfo {
     pub owner: Option<String>,
 }
 
+/// Lightweight column reference for the search index — just enough to make
+/// columns searchable without loading full table structures.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnRef {
+    pub table: String,
+    pub column: String,
+    pub data_type: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TableInfo {
     pub name: String,

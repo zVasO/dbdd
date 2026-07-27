@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type {
   ConnectionConfig, SavedConnection, QueryResult, ColumnarResult,
-  DatabaseInfo, SchemaInfo, TableInfo, TableStructure, TableRef,
+  DatabaseInfo, SchemaInfo, TableInfo, TableStructure, TableRef, ColumnRef,
   QueryHistoryEntry, IpcError,
   StreamMeta, StreamChunk, StreamDone, StreamError,
 } from './types';
@@ -101,6 +101,9 @@ export const ipc = {
     dedup(`structure:${connectionId}:${tableRef.database}:${tableRef.schema ?? ''}:${tableRef.table}`, () =>
       invoke<TableStructure>('get_table_structure', { connectionId, tableRef })
     ),
+
+  listAllColumns: (connectionId: string, database: string) =>
+    invoke<ColumnRef[]>('list_all_columns', { connectionId, database }),
 
   pingConnection: (connectionId: string) =>
     invoke<void>('ping_connection', { connectionId }),

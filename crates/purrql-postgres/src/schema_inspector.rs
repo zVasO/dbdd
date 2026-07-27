@@ -511,4 +511,32 @@ impl SchemaInspector for PostgresSchemaInspector {
             comment,
         })
     }
+
+    async fn list_all_columns(&self, _database: &str) -> Result<Vec<ColumnRef>> {
+        // The Postgres connection is already scoped to one database; index all
+        // user-schema columns in a single catalog query.
+        let sql = "SELECT table_name, column_name, data_type \
+             FROM information_schema.columns \
+             WHERE table_schema NOT IN ('pg_catalog', 'information_schema') \
+             ORDER BY table_name, ordinal_position";
+        let result = self.conn.execute(sql).await?;
+
+        let mut columns = Vec::with_capacity(result.rows.len());
+        for row in &result.rows {
+            if row.cells.len() < 3 {
+                continue;
+            }
+            let (CellValue::Text(table), CellValue::Text(column), CellValue::Text(data_type)) =
+                (&row.cells[0], &row.cells[1], &row.cells[2])
+            else {
+                continue;
+            };
+            columns.push(ColumnRef {
+                table: table.clone(),
+                column: column.clone(),
+                data_type: data_type.clone(),
+            });
+        }
+        Ok(columns)
+    }
 }

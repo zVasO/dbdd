@@ -343,6 +343,35 @@ impl SchemaInspector for MySqlSchemaInspector {
             comment,
         })
     }
+
+    async fn list_all_columns(&self, database: &str) -> Result<Vec<ColumnRef>> {
+        let sql = "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE \
+             FROM information_schema.COLUMNS \
+             WHERE TABLE_SCHEMA = ? \
+             ORDER BY TABLE_NAME, ORDINAL_POSITION";
+        let result = self
+            .conn
+            .execute_with_params(sql, &[CellValue::Text(database.to_string())])
+            .await?;
+
+        let mut columns = Vec::with_capacity(result.rows.len());
+        for row in &result.rows {
+            if row.cells.len() < 3 {
+                continue;
+            }
+            let (CellValue::Text(table), CellValue::Text(column), CellValue::Text(data_type)) =
+                (&row.cells[0], &row.cells[1], &row.cells[2])
+            else {
+                continue;
+            };
+            columns.push(ColumnRef {
+                table: table.clone(),
+                column: column.clone(),
+                data_type: data_type.clone(),
+            });
+        }
+        Ok(columns)
+    }
 }
 
 fn parse_fk_action(s: &str) -> FkAction {

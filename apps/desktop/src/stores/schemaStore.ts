@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { ipc, extractErrorMessage } from '../lib/ipc';
 import { showErrorToast } from './toastStore';
 import { getFuzzySearchBridge } from '../lib/fuzzy-search-bridge';
-import type { DatabaseInfo, TableInfo, TableStructure, TableRef } from '../lib/types';
+import type { DatabaseInfo, TableInfo, TableStructure, TableRef, ColumnRef } from '../lib/types';
 
 interface SchemaState {
   databases: DatabaseInfo[];
@@ -19,9 +19,9 @@ interface SchemaState {
   loadDatabases: (connectionId: string) => Promise<void>;
   loadTables: (connectionId: string, database: string, schema?: string) => Promise<void>;
   loadTableStructure: (connectionId: string, tableRef: TableRef) => Promise<void>;
-  /** Background-load column metadata for all tables of a database so columns
-      become searchable in the sidebar without expanding each table first. */
-  prefetchStructures: (connectionId: string, database: string) => Promise<void>;
+  /** Fetch all column metadata of a database in one query and feed the search
+      index — makes columns searchable without loading full table structures. */
+  loadAllColumns: (connectionId: string, database: string) => Promise<void>;
   setActiveDatabase: (database: string | null) => void;
   /** Clear all cached schema data (used on connection switch) */
   reset: () => void;
@@ -31,13 +31,11 @@ function structureKey(db: string, table: string): string {
   return `${db}.${table}`;
 }
 
-const PREFETCH_BATCH = 4;
-const PREFETCH_CAP = 500;
-const PREFETCH_FLUSH_SIZE = 40;
-
 let _loadGeneration = 0;
 let _selectedStructureKey: string | null = null;
-let _prefetchToken = 0;
+/** Bulk column index per database — feeds the fuzzy worker, kept out of the
+    reactive store so it never triggers component re-renders. */
+let _columnsByDb: Record<string, ColumnRef[]> = {};
 
 export const useSchemaStore = create<SchemaState>((set, get) => ({
   databases: [],
@@ -72,8 +70,8 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
         tables: { ...s.tables, [database]: tables },
         loading: false,
       }));
-      // Populate the column index in the background (non-blocking).
-      void get().prefetchStructures(connectionId, database);
+      // Populate the column search index in the background (non-blocking).
+      void get().loadAllColumns(connectionId, database);
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.warn('[schemaStore] loadTables failed', e);
@@ -112,43 +110,16 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
     }
   },
 
-  prefetchStructures: async (connectionId, database) => {
-    const token = ++_prefetchToken;
-    const tables = get().tables[database] ?? [];
-    const pending = tables
-      .filter((t) => !get().structures[structureKey(database, t.name)])
-      .slice(0, PREFETCH_CAP);
-
-    // Accumulate across batches and flush to the store in large chunks: every
-    // `set` re-renders schema subscribers (the sidebar), so writing once per
-    // batch would churn the main thread and make typing feel laggy. Never
-    // touch selectedTable — this must not hijack the user's selection.
-    let acc: Record<string, TableStructure> = {};
-    const flush = () => {
-      if (Object.keys(acc).length === 0) return;
-      const batch = acc;
-      acc = {};
-      set((s) => ({ structures: { ...s.structures, ...batch } }));
-    };
-
-    for (let i = 0; i < pending.length; i += PREFETCH_BATCH) {
-      if (token !== _prefetchToken) return; // superseded by a newer prefetch
-      const batch = pending.slice(i, i + PREFETCH_BATCH);
-      const loaded = await Promise.all(
-        batch.map((t) =>
-          ipc
-            .getTableStructure(connectionId, { database, schema: null, table: t.name })
-            .then((structure) => ({ key: structureKey(database, t.name), structure }))
-            .catch(() => null),
-        ),
-      );
-      if (token !== _prefetchToken) return;
-      for (const r of loaded) {
-        if (r) acc[r.key] = r.structure;
-      }
-      if (Object.keys(acc).length >= PREFETCH_FLUSH_SIZE) flush();
+  loadAllColumns: async (connectionId, database) => {
+    try {
+      const columns = await ipc.listAllColumns(connectionId, database);
+      _columnsByDb[database] = columns;
+      scheduleFuzzySync();
+    } catch (e) {
+      // Non-fatal: columns just won't be searchable (e.g. SQLite inspector
+      // not implemented). Table search still works.
+      console.warn('[schemaStore] loadAllColumns failed', e);
     }
-    flush();
   },
 
   setActiveDatabase: (database) => {
@@ -157,7 +128,7 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
 
   reset: () => {
     _loadGeneration++;
-    _prefetchToken++; // abort any in-flight background prefetch
+    _columnsByDb = {};
     set({
       databases: [],
       tables: {},
@@ -171,20 +142,17 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
   },
 }));
 
-// Sync schema data to the fuzzy search worker. Debounced so that rapid schema
-// changes (e.g. background prefetch loading many structures) coalesce into a
-// single index rebuild instead of rebuilding the whole column list on the main
-// thread for every batch.
+// Feed the fuzzy search worker. Debounced so rapid schema changes coalesce into
+// one index rebuild. Columns come from the bulk column index (_columnsByDb),
+// NOT the reactive structures store, so this neither depends on nor triggers
+// component re-renders — which is what previously made typing lag.
 let _fuzzySyncTimer: ReturnType<typeof setTimeout> | null = null;
 
-useSchemaStore.subscribe((state, prevState) => {
-  if (state.tables === prevState.tables && state.structures === prevState.structures) {
-    return;
-  }
+function scheduleFuzzySync(): void {
   if (_fuzzySyncTimer) clearTimeout(_fuzzySyncTimer);
   _fuzzySyncTimer = setTimeout(() => {
     _fuzzySyncTimer = null;
-    const { tables: tablesByDb, structures } = useSchemaStore.getState();
+    const { tables: tablesByDb } = useSchemaStore.getState();
 
     const tables: { name: string; database: string }[] = [];
     for (const [db, dbTables] of Object.entries(tablesByDb)) {
@@ -194,16 +162,18 @@ useSchemaStore.subscribe((state, prevState) => {
     }
 
     const columns: { name: string; table: string; type: string }[] = [];
-    for (const structure of Object.values(structures)) {
-      for (const col of structure.columns) {
-        columns.push({
-          name: col.name,
-          table: structure.table_ref.table,
-          type: typeof col.data_type === 'string' ? col.data_type : JSON.stringify(col.data_type),
-        });
+    for (const cols of Object.values(_columnsByDb)) {
+      for (const c of cols) {
+        columns.push({ name: c.column, table: c.table, type: c.data_type });
       }
     }
 
     getFuzzySearchBridge().syncSchema(tables, columns);
   }, 300);
+}
+
+// Re-sync when the table list changes so table search works immediately, even
+// before the column index arrives via loadAllColumns().
+useSchemaStore.subscribe((state, prevState) => {
+  if (state.tables !== prevState.tables) scheduleFuzzySync();
 });
