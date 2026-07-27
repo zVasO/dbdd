@@ -166,7 +166,7 @@ function ScheduledQueriesTab({ onAdd, onEdit }: ScheduledQueriesTabProps) {
                     <p className="text-sm font-medium truncate">{query.name}</p>
                     <Badge
                       variant={query.enabled ? 'default' : 'secondary'}
-                      className="text-[9px] h-4 px-1 shrink-0"
+                      className="text-[10px] h-4 px-1 shrink-0"
                     >
                       {query.enabled ? 'Active' : 'Paused'}
                     </Badge>
@@ -177,14 +177,14 @@ function ScheduledQueriesTab({ onAdd, onEdit }: ScheduledQueriesTabProps) {
                   </p>
 
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    <Badge variant="outline" className="text-[9px] h-4 px-1.5">
+                    <Badge variant="outline" className="text-[10px] h-4 px-1.5">
                       <Clock className="mr-0.5 h-2.5 w-2.5" />
                       {formatInterval(query.intervalMs)}
                     </Badge>
-                    <Badge variant="outline" className="text-[9px] h-4 px-1.5">
+                    <Badge variant="outline" className="text-[10px] h-4 px-1.5">
                       {getConditionLabel(query.condition)}
                     </Badge>
-                    <Badge variant="secondary" className="text-[9px] h-4 px-1.5">
+                    <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
                       {getConnectionName(query.connectionId)}
                     </Badge>
                     {query.lastRunAt && (
@@ -333,7 +333,7 @@ function AlertHistoryTab() {
                     </p>
                     <Badge
                       variant={alert.severity === 'critical' ? 'destructive' : 'secondary'}
-                      className="text-[9px] h-4 px-1 shrink-0"
+                      className="text-[10px] h-4 px-1 shrink-0"
                     >
                       {alert.severity}
                     </Badge>

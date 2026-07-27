@@ -126,7 +126,7 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
         <div className="relative w-full max-w-lg overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-2xl">
           <Command.Input
             placeholder="Type a command or search..."
-            className="w-full border-b border-border bg-transparent px-4 py-3 text-sm outline-none placeholder:text-muted-foreground"
+            className="w-full border-b border-border bg-transparent px-4 py-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset placeholder:text-muted-foreground"
           />
 
           <Command.List className="max-h-80 overflow-y-auto p-2">

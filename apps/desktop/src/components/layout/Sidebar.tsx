@@ -357,7 +357,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
           <div className="flex items-center gap-1.5 rounded-sm bg-sidebar-accent/50 px-2 py-1">
             <Search className="h-3 w-3 shrink-0 text-muted-foreground" />
             <input
-              className="flex-1 bg-transparent text-xs text-sidebar-foreground placeholder:text-muted-foreground outline-none"
+              className="flex-1 bg-transparent text-xs text-sidebar-foreground placeholder:text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset rounded"
               placeholder="Search tables & columns..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}

@@ -2,19 +2,22 @@
 
 ## État au 2026-07-27
 
-**Périmètre traité cette passe : Batch 0 → 3** (choix utilisateur), + le CRITICAL et les 2 HIGH perf du Batch 2.
+**Tous les batches (0 → 5) ont été parcourus.** Chaque finding est soit corrigé, soit consciemment reporté en ticket avec justification.
 
-Commits sur `master` (non poussés) : `c79e80b` (Batch 0+1+2), `a374ea4` (Batch 3), `f056d96` (dedup catalogue), `21ba11d` (2.6 parallélisation).
+Commits sur `master` (non poussés) : `c79e80b` (Batch 0+1+2), `a374ea4` (Batch 3), `f056d96` (dedup), `21ba11d` (2.6), `e0f5ffe` (doc), `8a4664a` (Batch 4), + Batch 5.
 
-**✅ Fait & vérifié (tsc / cargo check / 4 tests Rust / 6 vitest) :**
-0.1, 0.2, 0.3 · 1.1, 1.2, 1.3, 1.4, 1.5a, 1.5b, 1.6 · 2.1, 2.2, 2.3, 2.5, 2.6, 2.8 · 3.1, 3.2, 3.3, 3.4, 3.5, 3.7
+**✅ Fait & vérifié (tsc / cargo check / tests Rust / vitest) :**
+- Batch 0 : 0.1, 0.2, 0.3
+- Batch 1 : 1.1, 1.2, 1.3, 1.4, 1.5a, 1.5b, 1.6
+- Batch 2 : 2.1, 2.2, 2.3, 2.5, 2.6, 2.8
+- Batch 3 : 3.1, 3.2, 3.3, 3.4, 3.5, 3.7
+- Batch 4 : 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 4.7, 4.8, 4.9
+- Batch 5 : 5.1, 5.2, 5.3, 5.4, 5.6, 5.8
 
-**🔍 À valider fonctionnellement contre une vraie base (compilent seulement) :**
-1.2 (NUMERIC→bigdecimal), 1.5b (typage MySQL protocole texte), 1.6 (logs catalogue), 2.6 (parallélisation join!), 3.5 (garde de fermeture Tauri — confirmer au runtime en lançant l'app).
+**🔍 À valider fonctionnellement contre une vraie base / en lançant l'app (compilent seulement) :**
+1.2 (NUMERIC→bigdecimal), 1.5b (typage MySQL), 1.6 (logs catalogue), 2.6 (parallélisation), 3.5 (garde de fermeture Tauri), 4.1 (keyring), 4.2 (TLS MySQL), 4.4 (clés IA keyring + migration). Décisions D1–D5 : toutes tranchées par l'assistant sur demande utilisateur (D1 keyring-only, D2 rustls/native-tls, D3 suppression masquage, D4 keyring, D5 dbgate-query-splitter).
 
-**⏭️ Reportés en tickets de suivi (voir section « Suivi » en fin de doc) :** 3.6, 2.7.
-
-**⏳ Non entamés (hors périmètre de cette passe) :** Batch 4 (sécurité au repos, D1–D4), Batch 5 (a11y/UI). Décisions D1–D5 : D5 tranché (librairie `dbgate-query-splitter`), D1–D4 restent ouvertes.
+**⏭️ Reportés en tickets de suivi (section « Suivi ») :** 3.6, 2.7, 5.5, 5.7. Plus la passe visuelle des valeurs de thème (5.4) désormais outillée par le badge de contraste de l'éditeur.
 
 ---
 
@@ -270,3 +273,9 @@ Remonter les `text-[8px]`/`text-[9px]` à `text-xs` (12px) min ; remplacer les p
 
 ### T-2 (ex-2.7) — Index fuzzy incrémental
 **Recommandation : à ne PAS faire sauf besoin avéré.** Le bridge (`lib/fuzzy-search-bridge.ts`) throttle déjà le sync complet (max 1 / 500 ms) et garde le dataset complet pour la récupération après crash du worker. Le seul coût restant (`schemaStore.ts:121-145`, re-scan O(colonnes) au déclenchement par clic) est modeste. Un vrai delta imposerait une API d'index incrémental côté worker + conserver quand même le dataset complet → beaucoup de complexité pour un gain marginal. Mauvais ratio.
+
+### T-3 (ex-5.5) — Menu contextuel de la grille accessible au clavier
+`grid/DataGrid.tsx:~1801` : le menu contextuel custom (`<div>` de `<button>`, ouvert par `onContextMenu`) n'a ni rôles `menu`/`menuitem`, ni ouverture clavier (Shift+F10 / touche Menu), ni navigation flèches. La grille elle-même est déjà un bon pattern ARIA grid (rôles, `aria-sort`, navigation cellules) — c'est seulement le menu contextuel qui manque. **Pourquoi reporté :** le faire proprement = remplacer par le `ContextMenu` radix de `ui/` (ou ajouter rôles + focus trap + navigation flèches + ouverture clavier) dans un fichier de ~2000 lignes, avec vérification d'interaction au runtime impossible ici. À faire en lançant l'app.
+
+### T-4 (ex-5.7) — Tokens de couleur sémantiques (sweep design-system)
+198 usages de couleurs Tailwind en dur (`text-blue-500`, `bg-green-500/10`, `text-green-600`…) dans ~38 fichiers, qui ignorent les tokens de thème (oklch) et cassent la cohérence en Dracula/Nord/etc. **Travail :** introduire `--success`/`--warning`/`--info` (mappés par thème, light+dark) dans `globals.css`, puis remplacer les 198 usages par lots. **Pourquoi reporté :** sweep visuel à fort risque de régression, non vérifiable sans lancer l'app et comparer chaque écran/thème. Cas de contraste concret à traiter en priorité dans le sweep : `query-builder/FilterPanel.tsx` (petit texte `text-blue-500`/`text-orange-500` sur fond `/10`). Note : le finding lié 5.8 (plancher typo) a été partiellement traité — les tailles `text-[8px]`/`text-[9px]` ont été remontées à `text-[10px]` ; reste à décider si les nombreux `text-[10px]` doivent monter à `text-xs` (12px), ce qui est un changement de densité à valider visuellement.

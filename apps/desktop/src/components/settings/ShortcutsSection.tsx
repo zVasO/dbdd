@@ -223,7 +223,7 @@ function ShortcutRow({
         <span className="text-xs flex-1">{def.label}</span>
 
         {/* Category badge */}
-        <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded ${CATEGORY_COLORS[def.category]}`}>
+        <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${CATEGORY_COLORS[def.category]}`}>
           {CATEGORY_LABELS[def.category]}
         </span>
 
@@ -279,7 +279,7 @@ function KbdBadge({ binding, dimmed }: { binding: ShortcutBinding; dimmed?: bool
     <span className={`inline-flex items-center gap-0.5 ${dimmed ? 'opacity-40' : ''}`}>
       {parts.map((part, i) => (
         <span key={i} className="flex items-center">
-          {i > 0 && <span className="text-[8px] text-muted-foreground mx-0.5">+</span>}
+          {i > 0 && <span className="text-[10px] text-muted-foreground mx-0.5">+</span>}
           <kbd className="min-w-[20px] text-center rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
             {part}
           </kbd>

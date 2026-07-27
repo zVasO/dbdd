@@ -359,7 +359,7 @@ function ExportSnippetsTab() {
                 <p className="text-sm font-medium truncate">{snippet.name}</p>
                 <div className="flex items-center gap-1 mt-0.5">
                   {snippet.tags.slice(0, 3).map((tag) => (
-                    <Badge key={tag} variant="secondary" className="text-[9px] h-4 px-1">
+                    <Badge key={tag} variant="secondary" className="text-[10px] h-4 px-1">
                       {tag}
                     </Badge>
                   ))}

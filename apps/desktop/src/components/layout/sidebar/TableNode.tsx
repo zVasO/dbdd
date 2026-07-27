@@ -121,7 +121,7 @@ export function TableNode({
                     <HighlightMatch text={table.name} query={searchQuery} />
                   </span>
                   {table.row_count_estimate != null && (
-                    <Badge variant="secondary" className="ml-auto h-4 px-1 text-[9px]">
+                    <Badge variant="secondary" className="ml-auto h-4 px-1 text-[10px]">
                       ~{table.row_count_estimate.toLocaleString()}
                     </Badge>
                   )}

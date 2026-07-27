@@ -191,7 +191,7 @@ function FilterRow({ filter, columns, onUpdate, onRemove, onToggle, onApply }: F
       )}
 
       {/* Remove button */}
-      <Button variant="ghost" size="icon-xs" onClick={onRemove}>
+      <Button variant="ghost" size="icon-xs" onClick={onRemove} aria-label="Remove filter">
         <X className="h-3 w-3" />
       </Button>
     </div>

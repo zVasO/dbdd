@@ -70,13 +70,13 @@ function ColumnRow({
       </span>
 
       {/* Data type badge */}
-      <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[9px] font-mono text-muted-foreground">
+      <span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] font-mono text-muted-foreground">
         {column.type}
       </span>
 
       {/* Nullable indicator */}
       {column.nullable && (
-        <span className="shrink-0 text-muted-foreground/50 text-[9px]">?</span>
+        <span className="shrink-0 text-muted-foreground/50 text-[10px]">?</span>
       )}
 
       {/* Right handle for connections */}

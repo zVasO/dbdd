@@ -124,12 +124,12 @@ export function ConnectionDialog({ open, onOpenChange }: Props) {
                               {dbLabel}
                             </Badge>
                             {conn.config.environment && (
-                              <Badge variant="outline" className="text-[9px] shrink-0">
+                              <Badge variant="outline" className="text-[10px] shrink-0">
                                 {conn.config.environment}
                               </Badge>
                             )}
                             {isCurrent && (
-                              <Badge className="text-[9px] shrink-0">Current</Badge>
+                              <Badge className="text-[10px] shrink-0">Current</Badge>
                             )}
                           </div>
                           <div className="text-xs text-muted-foreground">

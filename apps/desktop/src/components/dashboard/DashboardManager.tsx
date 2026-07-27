@@ -115,6 +115,7 @@ export function DashboardManager() {
                     variant="ghost"
                     size="icon-xs"
                     onClick={() => handleRename(d.id)}
+                    aria-label="Confirm rename"
                   >
                     <Check className="size-3" />
                   </Button>
@@ -122,6 +123,7 @@ export function DashboardManager() {
                     variant="ghost"
                     size="icon-xs"
                     onClick={() => { setRenamingId(null); setRenameValue(''); }}
+                    aria-label="Cancel rename"
                   >
                     <X className="size-3" />
                   </Button>
@@ -152,6 +154,7 @@ export function DashboardManager() {
                         setRenamingId(d.id);
                         setRenameValue(d.name);
                       }}
+                      aria-label={`Rename dashboard ${d.name}`}
                     >
                       <Pencil className="size-2.5" />
                     </Button>
@@ -163,6 +166,7 @@ export function DashboardManager() {
                         e.preventDefault();
                         handleDelete(d.id);
                       }}
+                      aria-label={deletingId === d.id ? 'Confirm delete dashboard' : `Delete dashboard ${d.name}`}
                     >
                       <Trash2 className="size-2.5" />
                     </Button>
@@ -196,6 +200,7 @@ export function DashboardManager() {
               size="icon-xs"
               onClick={handleCreate}
               disabled={!newName.trim()}
+              aria-label="Create dashboard"
             >
               <Check className="size-3" />
             </Button>
@@ -203,6 +208,7 @@ export function DashboardManager() {
               variant="ghost"
               size="icon-xs"
               onClick={() => { setIsCreating(false); setNewName(''); }}
+              aria-label="Cancel dashboard creation"
             >
               <X className="size-3" />
             </Button>

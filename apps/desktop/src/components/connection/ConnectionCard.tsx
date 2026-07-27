@@ -69,7 +69,7 @@ export function ConnectionCard({ connection, onEdit }: Props) {
                   {connection.config.db_type}
                 </Badge>
                 {connection.config.environment && (
-                  <Badge variant="outline" className="text-[9px]">
+                  <Badge variant="outline" className="text-[10px]">
                     {connection.config.environment}
                   </Badge>
                 )}

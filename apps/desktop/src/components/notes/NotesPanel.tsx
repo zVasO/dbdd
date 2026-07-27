@@ -160,7 +160,7 @@ export function NotesPanel({ filterTargetKey, filterTargetType, className }: Not
                     <>
                       {/* Target badge and timestamp */}
                       <div className="mb-1.5 flex items-center justify-between">
-                        <Badge variant="outline" className="h-4 text-[9px] px-1.5">
+                        <Badge variant="outline" className="h-4 text-[10px] px-1.5">
                           {getTargetLabel(note)}
                         </Badge>
                         <span className="text-[10px] text-muted-foreground">

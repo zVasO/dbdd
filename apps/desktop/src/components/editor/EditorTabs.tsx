@@ -117,6 +117,7 @@ export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTa
                 onCloseTab(tab.id);
               }}
               className="ml-1 size-4 opacity-0 group-hover:opacity-100"
+              aria-label={`Close tab ${tab.title}`}
             >
               <X className="size-3" />
             </Button>
@@ -129,6 +130,7 @@ export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTa
           size="icon-xs"
           onClick={onNewTab}
           className="rounded-r-none text-muted-foreground hover:text-foreground"
+          aria-label="New tab"
         >
           <Plus className="size-3" />
         </Button>
@@ -138,6 +140,7 @@ export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTa
               variant="ghost"
               size="icon-xs"
               className="size-4 rounded-l-none text-muted-foreground hover:text-foreground"
+              aria-label="Open tabs menu"
             >
               <ChevronDown className="size-2" />
             </Button>

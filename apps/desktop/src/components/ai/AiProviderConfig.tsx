@@ -79,7 +79,8 @@ function ApiKeyInput({
         size="icon-xs"
         className="absolute right-1.5 top-1/2 -translate-y-1/2"
         onClick={() => setVisible(!visible)}
-        tabIndex={-1}
+        aria-label={visible ? 'Hide API key' : 'Show API key'}
+        aria-pressed={visible}
       >
         {visible ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
       </Button>

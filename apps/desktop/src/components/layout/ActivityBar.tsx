@@ -57,7 +57,7 @@ export function ActivityBar() {
           <span className="font-medium">Activity</span>
 
           {entries.length > 0 && (
-            <Badge variant="secondary" className="h-3.5 px-1 text-[9px]">
+            <Badge variant="secondary" className="h-3.5 px-1 text-[10px]">
               {entries.length}
             </Badge>
           )}
@@ -207,7 +207,7 @@ function FilterButton({
     >
       {label}
       {count > 0 && (
-        <span className="text-[9px] opacity-70">{count}</span>
+        <span className="text-[10px] opacity-70">{count}</span>
       )}
     </button>
   );
@@ -232,7 +232,7 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
           {entry.durationMs != null && (
             <Badge
               variant={entry.status === 'error' ? 'destructive' : 'secondary'}
-              className="h-3.5 px-1 text-[9px]"
+              className="h-3.5 px-1 text-[10px]"
             >
               {formatDuration(entry.durationMs)}
             </Badge>

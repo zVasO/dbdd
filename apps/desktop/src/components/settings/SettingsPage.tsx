@@ -101,7 +101,7 @@ function SettingsHeader({ onClose, title }: { onClose: () => void; title: string
   return (
     <div className="flex items-center h-10 px-4 border-b border-border shrink-0 bg-card">
       <h1 className="text-sm font-semibold flex-1">{title}</h1>
-      <Button variant="ghost" size="icon-xs" onClick={onClose}>
+      <Button variant="ghost" size="icon-xs" onClick={onClose} aria-label="Close settings">
         <X className="size-4" />
       </Button>
     </div>

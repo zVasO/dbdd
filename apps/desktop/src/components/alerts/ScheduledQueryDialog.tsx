@@ -180,7 +180,7 @@ export function ScheduledQueryDialog({
                   <SelectItem key={conn.config.id} value={conn.config.id}>
                     <span className="flex items-center gap-2">
                       {conn.config.name}
-                      <Badge variant="secondary" className="text-[9px] h-4 px-1">
+                      <Badge variant="secondary" className="text-[10px] h-4 px-1">
                         {conn.config.db_type}
                       </Badge>
                     </span>

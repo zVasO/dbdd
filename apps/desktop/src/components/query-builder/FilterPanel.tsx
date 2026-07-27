@@ -152,6 +152,7 @@ function FilterRow({ filter }: { filter: WhereFilter }) {
         size="icon-xs"
         onClick={handleRemove}
         className="shrink-0 text-muted-foreground hover:text-destructive"
+        aria-label="Delete filter"
       >
         <Trash2 className="size-3" />
       </Button>
@@ -415,6 +416,7 @@ function OrderByRow({ entry, index }: { entry: OrderByEntry; index: number }) {
         size="icon-xs"
         onClick={handleRemove}
         className="shrink-0 text-muted-foreground hover:text-destructive"
+        aria-label="Remove sort"
       >
         <Trash2 className="size-3" />
       </Button>

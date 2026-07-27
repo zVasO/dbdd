@@ -2,6 +2,7 @@ import { useState, useRef, useMemo } from 'react';
 import { useThemeStore } from '@/stores/themeStore';
 import type { Theme, ThemeColors } from '@/lib/themeTypes';
 import { getEffectiveColors, getEffectiveTypography, getEffectiveLayout, isDualMode } from '@/lib/themeTypes';
+import { contrastRatio, wcagLevel } from '@/lib/contrast';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -55,6 +56,14 @@ const COLOR_GROUPS: { label: string; keys: (keyof ThemeColors)[] }[] = [
 // Convert camelCase to display label
 function formatLabel(key: string): string {
   return key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
+}
+
+// For a "*Foreground" color, the paired background is the same key without the
+// suffix (primaryForeground -> primary); "foreground" pairs with "background".
+function pairedBackground(key: keyof ThemeColors, colors: ThemeColors): string | undefined {
+  if (!key.endsWith('Foreground')) return undefined;
+  const base = key === 'foreground' ? 'background' : key.slice(0, -'Foreground'.length);
+  return base in colors ? colors[base as keyof ThemeColors] : undefined;
 }
 
 export function ThemeEditor({ themeId, onBack }: Props) {
@@ -173,6 +182,7 @@ export function ThemeEditor({ themeId, onBack }: Props) {
                         key={key}
                         label={formatLabel(key)}
                         value={editColors[key]}
+                        bgValue={pairedBackground(key, editColors)}
                         readOnly={isReadOnly}
                         onChange={(v) => {
                           if (dual && previewDark && theme.darkColors) {
@@ -262,16 +272,23 @@ export function ThemeEditor({ themeId, onBack }: Props) {
 function ColorField({
   label,
   value,
+  bgValue,
   readOnly,
   onChange,
 }: {
   label: string;
   value: string;
+  bgValue?: string;
   readOnly: boolean;
   onChange: (v: string) => void;
 }) {
   const pickerRef = useRef<HTMLInputElement>(null);
   const hexValue = useMemo(() => cssColorToHex(value), [value]);
+  const contrast = useMemo(() => {
+    if (!bgValue) return null;
+    const ratio = contrastRatio(cssColorToHex(value), cssColorToHex(bgValue));
+    return { ratio, level: wcagLevel(ratio) };
+  }, [value, bgValue]);
 
   return (
     <div className="flex items-center gap-2">
@@ -291,6 +308,20 @@ function ColorField({
         />
       </div>
       <span className="text-[10px] text-muted-foreground flex-1 truncate">{label}</span>
+      {contrast && (
+        <span
+          className={`text-[10px] tabular-nums rounded px-1 py-0.5 shrink-0 ${
+            contrast.level === 'Fail'
+              ? 'bg-destructive/15 text-destructive'
+              : contrast.level === 'AA Large'
+                ? 'bg-yellow-500/15 text-yellow-600 dark:text-yellow-400'
+                : 'bg-muted text-muted-foreground'
+          }`}
+          title={`Contrast vs its background: ${contrast.ratio.toFixed(2)}:1 (${contrast.level}). WCAG AA needs 4.5:1 for normal text.`}
+        >
+          {contrast.ratio.toFixed(1)} {contrast.level}
+        </span>
+      )}
       <Input
         className="text-[10px] h-6 w-44 font-mono"
         value={value}

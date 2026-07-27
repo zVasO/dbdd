@@ -1415,11 +1415,11 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
                   {col.name}
                 </div>
                 <div className="flex items-center gap-1">
-                  <Badge variant="secondary" className="h-3.5 rounded px-1 py-0 text-[9px] font-normal">
+                  <Badge variant="secondary" className="h-3.5 rounded px-1 py-0 text-[10px] font-normal">
                     {formatDataType(col.data_type)}
                   </Badge>
                   {col.nullable && (
-                    <span className="text-[9px] text-muted-foreground">null</span>
+                    <span className="text-[10px] text-muted-foreground">null</span>
                   )}
                 </div>
               </div>
@@ -1605,7 +1605,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
                         {col.nullable && (
                           <button
                             className={cn(
-                              'shrink-0 px-1 text-[9px] font-mono rounded mr-0.5',
+                              'shrink-0 px-1 text-[10px] font-mono rounded mr-0.5',
                               editingCell.isNull
                                 ? 'text-primary font-bold bg-primary/10'
                                 : 'text-muted-foreground/40 hover:text-muted-foreground'

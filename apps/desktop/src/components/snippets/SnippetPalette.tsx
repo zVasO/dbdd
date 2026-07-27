@@ -203,7 +203,7 @@ export function SnippetPalette({
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Search snippets..."
-              className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              className="flex-1 bg-transparent text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset rounded placeholder:text-muted-foreground"
             />
             <Button
               size="xs"

@@ -18,7 +18,7 @@ export function NoteIndicator({ targetKey, size = 'sm' }: NoteIndicatorProps) {
   }
 
   const iconSize = size === 'sm' ? 'h-3 w-3' : 'h-4 w-4';
-  const badgeSize = size === 'sm' ? 'h-3 min-w-[12px] text-[8px]' : 'h-4 min-w-[16px] text-[10px]';
+  const badgeSize = size === 'sm' ? 'h-3 min-w-[12px] text-[10px]' : 'h-4 min-w-[16px] text-[10px]';
 
   return (
     <button

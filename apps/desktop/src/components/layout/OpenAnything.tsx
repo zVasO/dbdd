@@ -76,7 +76,7 @@ export function OpenAnything() {
         <div className="relative w-full max-w-lg overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-2xl">
           <Command.Input
             placeholder="Search tables, views, databases... (Ctrl+P)"
-            className="w-full border-b border-border bg-transparent px-4 py-3 text-sm outline-none placeholder:text-muted-foreground"
+            className="w-full border-b border-border bg-transparent px-4 py-3 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-inset placeholder:text-muted-foreground"
           />
 
           <Command.List className="max-h-80 overflow-y-auto p-2">
@@ -143,7 +143,7 @@ function SearchResultItem({ item, onSelect }: { item: SearchItem; onSelect: (ite
       </span>
       <span className="flex-1 truncate">{item.name}</span>
       {item.type !== 'database' && (
-        <Badge variant="secondary" className="h-4 shrink-0 px-1.5 text-[9px] font-normal">
+        <Badge variant="secondary" className="h-4 shrink-0 px-1.5 text-[10px] font-normal">
           {item.database}
         </Badge>
       )}

@@ -319,7 +319,7 @@ function ColumnRow({
       <div className="flex items-center gap-1 truncate font-medium">
         {name}
         {isPrimaryKey && (
-          <Badge variant="outline" className="text-[9px] px-1 py-0">
+          <Badge variant="outline" className="text-[10px] px-1 py-0">
             PK
           </Badge>
         )}

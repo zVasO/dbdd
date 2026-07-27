@@ -107,7 +107,7 @@ export function ColumnNode({ column, selected, onClick, onDoubleClick, searchQue
             {formatDataType(column.data_type)}
           </span>
           {column.nullable && (
-            <span className="text-[9px] text-muted-foreground/60">?</span>
+            <span className="text-[10px] text-muted-foreground/60">?</span>
           )}
         </button>
       </TooltipTrigger>

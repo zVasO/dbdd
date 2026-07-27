@@ -74,13 +74,17 @@ function TableNodeComponent({ id, data }: NodeProps<ERNode>) {
       />
 
       {/* Header */}
-      <div
+      <button
+        type="button"
         className={cn(
-          'flex items-center gap-2 px-3 py-2 cursor-pointer select-none',
+          'flex w-full items-center gap-2 px-3 py-2 cursor-pointer select-none text-left',
           'bg-muted/60 rounded-t-lg border-b border-border',
+          'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring',
           collapsed && 'rounded-b-lg'
         )}
         onClick={handleToggle}
+        aria-expanded={!collapsed}
+        aria-label={`${collapsed ? 'Expand' : 'Collapse'} table ${tableName}`}
       >
         {collapsed ? (
           <ChevronRight className="size-3.5 text-muted-foreground shrink-0" />
@@ -93,7 +97,7 @@ function TableNodeComponent({ id, data }: NodeProps<ERNode>) {
         <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
           {columns.length}
         </span>
-      </div>
+      </button>
 
       {/* Columns */}
       {!collapsed && columns.length > 0 && (
