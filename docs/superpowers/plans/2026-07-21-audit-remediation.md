@@ -1,5 +1,23 @@
 # Plan de remédiation — Audit VasOdb
 
+## État au 2026-07-27
+
+**Périmètre traité cette passe : Batch 0 → 3** (choix utilisateur), + le CRITICAL et les 2 HIGH perf du Batch 2.
+
+Commits sur `master` (non poussés) : `c79e80b` (Batch 0+1+2), `a374ea4` (Batch 3), `f056d96` (dedup catalogue), `21ba11d` (2.6 parallélisation).
+
+**✅ Fait & vérifié (tsc / cargo check / 4 tests Rust / 6 vitest) :**
+0.1, 0.2, 0.3 · 1.1, 1.2, 1.3, 1.4, 1.5a, 1.5b, 1.6 · 2.1, 2.2, 2.3, 2.5, 2.6, 2.8 · 3.1, 3.2, 3.3, 3.4, 3.5, 3.7
+
+**🔍 À valider fonctionnellement contre une vraie base (compilent seulement) :**
+1.2 (NUMERIC→bigdecimal), 1.5b (typage MySQL protocole texte), 1.6 (logs catalogue), 2.6 (parallélisation join!), 3.5 (garde de fermeture Tauri — confirmer au runtime en lançant l'app).
+
+**⏭️ Reportés en tickets de suivi (voir section « Suivi » en fin de doc) :** 3.6, 2.7.
+
+**⏳ Non entamés (hors périmètre de cette passe) :** Batch 4 (sécurité au repos, D1–D4), Batch 5 (a11y/UI). Décisions D1–D5 : D5 tranché (librairie `dbgate-query-splitter`), D1–D4 restent ouvertes.
+
+---
+
 > **Contexte de test :** le repo a ~0 couverture (2 fichiers vitest, 0 test Rust, pas de script `test`).
 > Les correctifs de **fonctions pures** (splitter SQL, safety-limit, type mapping, contraste) DOIVENT recevoir un test unitaire (vitest / `#[test]` cargo) — ce sont de bons candidats TDD.
 > Les correctifs touchant **DB / TLS / keyring** n'ont pas de harnais d'intégration ici : la vérification est **manuelle** contre une vraie base, et le plan le dit explicitement plutôt que d'inventer une commande de test.
@@ -237,3 +255,18 @@ Remonter les `text-[8px]`/`text-[9px]` à `text-xs` (12px) min ; remplacer les p
 - **Couverture :** 31 findings de l'audit → tous mappés (Batch 0 : 3 ; Batch 1 : 6 ; Batch 2 : 8 ; Batch 3 : 7 ; Batch 4 : 9 ; Batch 5 : 8). Certains findings groupés (erreurs `String(e)` = Task 0.1/0.2 ; `try_join!` schema = perf + backend fusionnés en 2.6).
 - **Décisions ouvertes :** D1–D5 bloquent Batch 4 et Task 1.1 — à trancher avant de coder ces parties.
 - **Réalisme test :** TDD réel sur fonctions pures (1.1, 1.3, 1.5 partiel, 3.4, 5.4) ; vérif manuelle honnêtement notée ailleurs (pas de harnais DB/keyring).
+
+---
+
+## Suivi — tickets à traiter avec une base branchée
+
+### T-1 (ex-3.6) — Annulation ciblée des requêtes single-shot / batch
+**Pourquoi ce n'est pas un simple câblage UI :** en implémentant, découverte que l'annulation backend est un moignon, pas une infra id-ciblée :
+- Postgres (`crates/purrql-postgres/src/connection.rs:292`) : `cancel_query` **ignore le `query_id`** — il fait `pg_stat_activity ... LIMIT 1` + `pg_cancel_backend(pid)`, donc annule **une requête active arbitraire**. Aggravé par 2.6 (plus de requêtes concurrentes) → peut annuler la mauvaise.
+- MySQL (`crates/purrql-mysql/src/connection.rs:166`) : renvoie `NotSupported`.
+- SQLite : non implémenté.
+
+**Travail réel :** enregistrer le PID/thread-id par `query_id` au moment de l'exécution (map dans `state`), puis annuler *ce* backend précis (`pg_cancel_backend(pid_enregistré)` / MySQL `KILL QUERY <thread_id>`). Ensuite seulement, câbler le frontend : générer un `queryId` sur les chemins single-shot/batch (`queryStore.ts:258-295`) pour afficher le bouton Stop (`EditorToolbar.tsx:125`). **À tester contre une vraie base** (l'annulation aboutit ? le `.await` de la commande renvoie une erreur propre ? l'état frontend se réinitialise ?).
+
+### T-2 (ex-2.7) — Index fuzzy incrémental
+**Recommandation : à ne PAS faire sauf besoin avéré.** Le bridge (`lib/fuzzy-search-bridge.ts`) throttle déjà le sync complet (max 1 / 500 ms) et garde le dataset complet pour la récupération après crash du worker. Le seul coût restant (`schemaStore.ts:121-145`, re-scan O(colonnes) au déclenchement par clic) est modeste. Un vrai delta imposerait une API d'index incrémental côté worker + conserver quand même le dataset complet → beaucoup de complexité pour un gain marginal. Mauvais ratio.
