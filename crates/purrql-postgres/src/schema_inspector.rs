@@ -200,16 +200,64 @@ impl SchemaInspector for PostgresSchemaInspector {
              WHERE n.nspname = $1 AND c.relname = $2 \
              AND a.attnum > 0 AND NOT a.attisdropped \
              ORDER BY a.attnum";
-        let col_result = self
-            .conn
-            .execute_with_params(
-                col_sql,
-                &[
-                    CellValue::Text(schema_name.to_string()),
-                    CellValue::Text(table.table.clone()),
-                ],
-            )
-            .await?;
+        // Indexes, foreign keys and constraints are independent of the column
+        // query and of each other — run all four catalog queries concurrently
+        // (the pool hands each its own connection) instead of serializing them.
+        let idx_sql = "SELECT ic.relname AS index_name, \
+             a.attname AS column_name, \
+             ix.indisunique AS is_unique, \
+             ix.indisprimary AS is_primary, \
+             am.amname AS index_type \
+             FROM pg_catalog.pg_index ix \
+             JOIN pg_catalog.pg_class t ON t.oid = ix.indrelid \
+             JOIN pg_catalog.pg_class ic ON ic.oid = ix.indexrelid \
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
+             JOIN pg_catalog.pg_am am ON am.oid = ic.relam \
+             CROSS JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS u(attnum, ord) \
+             JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attnum = u.attnum \
+             WHERE n.nspname = $1 AND t.relname = $2 \
+             ORDER BY ic.relname, u.ord";
+        let fk_sql = "SELECT con.conname AS name, \
+             a.attname AS column_name, \
+             fn.nspname AS ref_schema, \
+             fc.relname AS ref_table, \
+             fa.attname AS ref_column, \
+             con.confupdtype, con.confdeltype \
+             FROM pg_catalog.pg_constraint con \
+             JOIN pg_catalog.pg_class t ON t.oid = con.conrelid \
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
+             JOIN pg_catalog.pg_class fc ON fc.oid = con.confrelid \
+             JOIN pg_catalog.pg_namespace fn ON fn.oid = fc.relnamespace \
+             CROSS JOIN LATERAL unnest(con.conkey, con.confkey) WITH ORDINALITY AS u(local_attnum, ref_attnum, ord) \
+             JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attnum = u.local_attnum \
+             JOIN pg_catalog.pg_attribute fa ON fa.attrelid = fc.oid AND fa.attnum = u.ref_attnum \
+             WHERE con.contype = 'f' AND n.nspname = $1 AND t.relname = $2 \
+             ORDER BY con.conname, u.ord";
+        let cst_sql = "SELECT con.conname AS name, \
+             con.contype, \
+             pg_get_constraintdef(con.oid) AS definition, \
+             ARRAY(SELECT a.attname FROM pg_catalog.pg_attribute a \
+                   WHERE a.attrelid = con.conrelid AND a.attnum = ANY(con.conkey)) AS col_names \
+             FROM pg_catalog.pg_constraint con \
+             JOIN pg_catalog.pg_class t ON t.oid = con.conrelid \
+             JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
+             WHERE n.nspname = $1 AND t.relname = $2 \
+             ORDER BY con.conname";
+
+        let params = [
+            CellValue::Text(schema_name.to_string()),
+            CellValue::Text(table.table.clone()),
+        ];
+        let (col_result, idx_result, fk_result, cst_result) = tokio::join!(
+            self.conn.execute_with_params(col_sql, &params),
+            self.conn.execute_with_params(idx_sql, &params),
+            self.conn.execute_with_params(fk_sql, &params),
+            self.conn.execute_with_params(cst_sql, &params),
+        );
+        let col_result = col_result?;
+        let idx_result = idx_result.unwrap_or_else(warn_empty_result);
+        let fk_result = fk_result.unwrap_or_else(warn_empty_result);
+        let cst_result = cst_result.unwrap_or_else(warn_empty_result);
 
         let columns: Vec<ColumnInfo> = col_result
             .rows
@@ -271,32 +319,6 @@ impl SchemaInspector for PostgresSchemaInspector {
         };
 
         // --- Indexes ---
-        let idx_sql = "SELECT ic.relname AS index_name, \
-             a.attname AS column_name, \
-             ix.indisunique AS is_unique, \
-             ix.indisprimary AS is_primary, \
-             am.amname AS index_type \
-             FROM pg_catalog.pg_index ix \
-             JOIN pg_catalog.pg_class t ON t.oid = ix.indrelid \
-             JOIN pg_catalog.pg_class ic ON ic.oid = ix.indexrelid \
-             JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
-             JOIN pg_catalog.pg_am am ON am.oid = ic.relam \
-             CROSS JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS u(attnum, ord) \
-             JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attnum = u.attnum \
-             WHERE n.nspname = $1 AND t.relname = $2 \
-             ORDER BY ic.relname, u.ord";
-        let idx_result = self
-            .conn
-            .execute_with_params(
-                idx_sql,
-                &[
-                    CellValue::Text(schema_name.to_string()),
-                    CellValue::Text(table.table.clone()),
-                ],
-            )
-            .await
-            .unwrap_or_else(warn_empty_result);
-
         let mut idx_map: BTreeMap<String, (Vec<String>, bool, bool, String)> = BTreeMap::new();
         for row in &idx_result.rows {
             if row.cells.len() < 5 {
@@ -341,34 +363,6 @@ impl SchemaInspector for PostgresSchemaInspector {
             .collect();
 
         // --- Foreign Keys ---
-        let fk_sql = "SELECT con.conname AS name, \
-             a.attname AS column_name, \
-             fn.nspname AS ref_schema, \
-             fc.relname AS ref_table, \
-             fa.attname AS ref_column, \
-             con.confupdtype, con.confdeltype \
-             FROM pg_catalog.pg_constraint con \
-             JOIN pg_catalog.pg_class t ON t.oid = con.conrelid \
-             JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
-             JOIN pg_catalog.pg_class fc ON fc.oid = con.confrelid \
-             JOIN pg_catalog.pg_namespace fn ON fn.oid = fc.relnamespace \
-             CROSS JOIN LATERAL unnest(con.conkey, con.confkey) WITH ORDINALITY AS u(local_attnum, ref_attnum, ord) \
-             JOIN pg_catalog.pg_attribute a ON a.attrelid = t.oid AND a.attnum = u.local_attnum \
-             JOIN pg_catalog.pg_attribute fa ON fa.attrelid = fc.oid AND fa.attnum = u.ref_attnum \
-             WHERE con.contype = 'f' AND n.nspname = $1 AND t.relname = $2 \
-             ORDER BY con.conname, u.ord";
-        let fk_result = self
-            .conn
-            .execute_with_params(
-                fk_sql,
-                &[
-                    CellValue::Text(schema_name.to_string()),
-                    CellValue::Text(table.table.clone()),
-                ],
-            )
-            .await
-            .unwrap_or_else(warn_empty_result);
-
         let mut fk_map: BTreeMap<
             String,
             (Vec<String>, String, String, Vec<String>, String, String),
@@ -432,28 +426,6 @@ impl SchemaInspector for PostgresSchemaInspector {
             .collect();
 
         // --- Constraints ---
-        let cst_sql = "SELECT con.conname AS name, \
-             con.contype, \
-             pg_get_constraintdef(con.oid) AS definition, \
-             ARRAY(SELECT a.attname FROM pg_catalog.pg_attribute a \
-                   WHERE a.attrelid = con.conrelid AND a.attnum = ANY(con.conkey)) AS col_names \
-             FROM pg_catalog.pg_constraint con \
-             JOIN pg_catalog.pg_class t ON t.oid = con.conrelid \
-             JOIN pg_catalog.pg_namespace n ON n.oid = t.relnamespace \
-             WHERE n.nspname = $1 AND t.relname = $2 \
-             ORDER BY con.conname";
-        let cst_result = self
-            .conn
-            .execute_with_params(
-                cst_sql,
-                &[
-                    CellValue::Text(schema_name.to_string()),
-                    CellValue::Text(table.table.clone()),
-                ],
-            )
-            .await
-            .unwrap_or_else(warn_empty_result);
-
         let constraints: Vec<ConstraintInfo> = cst_result
             .rows
             .iter()

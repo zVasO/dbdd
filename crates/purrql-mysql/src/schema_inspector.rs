@@ -148,16 +148,46 @@ impl SchemaInspector for MySqlSchemaInspector {
              FROM information_schema.COLUMNS \
              WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
              ORDER BY ORDINAL_POSITION";
-        let col_result = self
-            .conn
-            .execute_with_params(
-                col_sql,
-                &[
-                    CellValue::Text(db.to_string()),
-                    CellValue::Text(table.table.clone()),
-                ],
-            )
-            .await?;
+        // Indexes, foreign keys and constraints are independent of the column
+        // query and of each other — run all four catalog queries concurrently
+        // (the pool hands each its own connection) instead of serializing them.
+        let idx_sql = "SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE, INDEX_TYPE \
+             FROM information_schema.STATISTICS \
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
+             ORDER BY INDEX_NAME, SEQ_IN_INDEX";
+        let fk_sql = "SELECT kcu.CONSTRAINT_NAME, kcu.COLUMN_NAME, \
+             kcu.REFERENCED_TABLE_SCHEMA, kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME, \
+             rc.UPDATE_RULE, rc.DELETE_RULE \
+             FROM information_schema.KEY_COLUMN_USAGE kcu \
+             JOIN information_schema.REFERENTIAL_CONSTRAINTS rc \
+               ON rc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA \
+               AND rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME \
+             WHERE kcu.TABLE_SCHEMA = ? AND kcu.TABLE_NAME = ? \
+               AND kcu.REFERENCED_TABLE_NAME IS NOT NULL \
+             ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION";
+        let cst_sql = "SELECT tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, kcu.COLUMN_NAME \
+             FROM information_schema.TABLE_CONSTRAINTS tc \
+             LEFT JOIN information_schema.KEY_COLUMN_USAGE kcu \
+               ON kcu.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA \
+               AND kcu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME \
+               AND kcu.TABLE_NAME = tc.TABLE_NAME \
+             WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ? \
+             ORDER BY tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION";
+
+        let params = [
+            CellValue::Text(db.to_string()),
+            CellValue::Text(table.table.clone()),
+        ];
+        let (col_result, idx_result, fk_result, cst_result) = tokio::join!(
+            self.conn.execute_with_params(col_sql, &params),
+            self.conn.execute_with_params(idx_sql, &params),
+            self.conn.execute_with_params(fk_sql, &params),
+            self.conn.execute_with_params(cst_sql, &params),
+        );
+        let col_result = col_result?;
+        let idx_result = idx_result.unwrap_or_else(warn_empty_result);
+        let fk_result = fk_result.unwrap_or_else(warn_empty_result);
+        let cst_result = cst_result.unwrap_or_else(warn_empty_result);
 
         let columns: Vec<ColumnInfo> = col_result
             .rows
@@ -219,15 +249,6 @@ impl SchemaInspector for MySqlSchemaInspector {
         };
 
         // --- Indexes ---
-        let idx_sql = "SELECT INDEX_NAME, COLUMN_NAME, NON_UNIQUE, INDEX_TYPE \
-             FROM information_schema.STATISTICS \
-             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? \
-             ORDER BY INDEX_NAME, SEQ_IN_INDEX";
-        let idx_result = self.conn.execute_with_params(
-            idx_sql,
-            &[CellValue::Text(db.to_string()), CellValue::Text(table.table.clone())],
-        ).await.unwrap_or_else(warn_empty_result);
-
         let mut idx_map: BTreeMap<String, (Vec<String>, bool, bool, String)> = BTreeMap::new();
         for row in &idx_result.rows {
             if row.cells.len() < 4 { continue; }
@@ -247,21 +268,6 @@ impl SchemaInspector for MySqlSchemaInspector {
         }).collect();
 
         // --- Foreign Keys ---
-        let fk_sql = "SELECT kcu.CONSTRAINT_NAME, kcu.COLUMN_NAME, \
-             kcu.REFERENCED_TABLE_SCHEMA, kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME, \
-             rc.UPDATE_RULE, rc.DELETE_RULE \
-             FROM information_schema.KEY_COLUMN_USAGE kcu \
-             JOIN information_schema.REFERENTIAL_CONSTRAINTS rc \
-               ON rc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA \
-               AND rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME \
-             WHERE kcu.TABLE_SCHEMA = ? AND kcu.TABLE_NAME = ? \
-               AND kcu.REFERENCED_TABLE_NAME IS NOT NULL \
-             ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION";
-        let fk_result = self.conn.execute_with_params(
-            fk_sql,
-            &[CellValue::Text(db.to_string()), CellValue::Text(table.table.clone())],
-        ).await.unwrap_or_else(warn_empty_result);
-
         let mut fk_map: BTreeMap<String, (Vec<String>, String, String, Vec<String>, String, String)> = BTreeMap::new();
         for row in &fk_result.rows {
             if row.cells.len() < 7 { continue; }
@@ -293,19 +299,6 @@ impl SchemaInspector for MySqlSchemaInspector {
         }).collect();
 
         // --- Constraints ---
-        let cst_sql = "SELECT tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, kcu.COLUMN_NAME \
-             FROM information_schema.TABLE_CONSTRAINTS tc \
-             LEFT JOIN information_schema.KEY_COLUMN_USAGE kcu \
-               ON kcu.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA \
-               AND kcu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME \
-               AND kcu.TABLE_NAME = tc.TABLE_NAME \
-             WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ? \
-             ORDER BY tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION";
-        let cst_result = self.conn.execute_with_params(
-            cst_sql,
-            &[CellValue::Text(db.to_string()), CellValue::Text(table.table.clone())],
-        ).await.unwrap_or_else(warn_empty_result);
-
         let mut cst_map: BTreeMap<String, (ConstraintType, Vec<String>)> = BTreeMap::new();
         for row in &cst_result.rows {
             if row.cells.len() < 3 { continue; }
