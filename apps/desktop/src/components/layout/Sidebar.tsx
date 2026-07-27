@@ -265,12 +265,17 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
         className="flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar/80 backdrop-blur-xl text-sidebar-foreground"
         style={{ width: 'var(--sidebar-width)' }}
       >
-        {/* Database selector — pl-[78px] reserves space for macOS traffic lights */}
+        {/* Database selector — pl-[78px] reserves space for macOS traffic lights.
+            The row is a window drag region; interactive controls opt out with no-drag. */}
         <div className="relative border-b border-sidebar-border h-9" ref={dbSelectorRef}>
-          <div className="flex h-full items-center pl-[78px]">
+          <div
+            className="flex h-full items-center pl-[78px]"
+            style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+          >
           <button
             onClick={() => setDbSelectorOpen(!dbSelectorOpen)}
             className="flex flex-1 min-w-0 h-full items-center gap-2 px-3 text-left hover:bg-sidebar-accent/50 transition-colors"
+            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
           >
             <Database className="h-3.5 w-3.5 shrink-0 text-primary" />
             <div className="min-w-0 flex-1">
@@ -300,6 +305,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
                 <button
                   onClick={onOpenConnectionDialog}
                   className="flex h-full shrink-0 items-center px-2 text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/50 transition-colors"
+                  style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </button>

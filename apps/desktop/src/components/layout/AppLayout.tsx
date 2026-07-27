@@ -257,11 +257,9 @@ export function AppLayout() {
 
   return (
     <div className="flex h-full flex-col bg-background">
-      {/* macOS drag region for window movement */}
-      <div
-        className="fixed top-0 left-0 right-0 h-10 z-10"
-        style={{ WebkitAppRegion: 'drag', pointerEvents: 'none' } as React.CSSProperties}
-      />
+      {/* Window dragging is handled per top-bar via -webkit-app-region on the
+          header containers (with no-drag on their interactive controls); a
+          full-width overlay can't both drag and let buttons beneath be clicked. */}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar onOpenConnectionDialog={handleOpenConnectionDialog} />
         {sidebarOpen && (

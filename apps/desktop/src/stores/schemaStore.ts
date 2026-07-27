@@ -19,6 +19,9 @@ interface SchemaState {
   loadDatabases: (connectionId: string) => Promise<void>;
   loadTables: (connectionId: string, database: string, schema?: string) => Promise<void>;
   loadTableStructure: (connectionId: string, tableRef: TableRef) => Promise<void>;
+  /** Background-load column metadata for all tables of a database so columns
+      become searchable in the sidebar without expanding each table first. */
+  prefetchStructures: (connectionId: string, database: string) => Promise<void>;
   setActiveDatabase: (database: string | null) => void;
   /** Clear all cached schema data (used on connection switch) */
   reset: () => void;
@@ -28,8 +31,12 @@ function structureKey(db: string, table: string): string {
   return `${db}.${table}`;
 }
 
+const PREFETCH_BATCH = 4;
+const PREFETCH_CAP = 500;
+
 let _loadGeneration = 0;
 let _selectedStructureKey: string | null = null;
+let _prefetchToken = 0;
 
 export const useSchemaStore = create<SchemaState>((set, get) => ({
   databases: [],
@@ -64,6 +71,8 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
         tables: { ...s.tables, [database]: tables },
         loading: false,
       }));
+      // Populate the column index in the background (non-blocking).
+      void get().prefetchStructures(connectionId, database);
     } catch (e) {
       const msg = extractErrorMessage(e);
       console.warn('[schemaStore] loadTables failed', e);
@@ -102,12 +111,44 @@ export const useSchemaStore = create<SchemaState>((set, get) => ({
     }
   },
 
+  prefetchStructures: async (connectionId, database) => {
+    const token = ++_prefetchToken;
+    const tables = get().tables[database] ?? [];
+    const pending = tables
+      .filter((t) => !get().structures[structureKey(database, t.name)])
+      .slice(0, PREFETCH_CAP);
+
+    for (let i = 0; i < pending.length; i += PREFETCH_BATCH) {
+      if (token !== _prefetchToken) return; // superseded by a newer prefetch
+      const batch = pending.slice(i, i + PREFETCH_BATCH);
+      const loaded = await Promise.all(
+        batch.map((t) =>
+          ipc
+            .getTableStructure(connectionId, { database, schema: null, table: t.name })
+            .then((structure) => ({ key: structureKey(database, t.name), structure }))
+            .catch(() => null),
+        ),
+      );
+      if (token !== _prefetchToken) return;
+      const ok = loaded.filter((r): r is { key: string; structure: TableStructure } => r !== null);
+      if (ok.length === 0) continue;
+      // One set per batch so the fuzzy index re-syncs progressively; never
+      // touch selectedTable — this must not hijack the user's selection.
+      set((s) => {
+        const structures = { ...s.structures };
+        for (const r of ok) structures[r.key] = r.structure;
+        return { structures };
+      });
+    }
+  },
+
   setActiveDatabase: (database) => {
     set({ activeDatabase: database });
   },
 
   reset: () => {
     _loadGeneration++;
+    _prefetchToken++; // abort any in-flight background prefetch
     set({
       databases: [],
       tables: {},
