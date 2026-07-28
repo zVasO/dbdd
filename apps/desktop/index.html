@@ -3,10 +3,37 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
     <title>VasOdb</title>
+    <style>
+      #root:empty {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        background: oklch(0.2679 0.0036 106.6427);
+      }
+      #root:empty::after {
+        content: "";
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 3px solid oklch(0.4336 0.0113 100.2195);
+        border-top-color: oklch(0.6724 0.1308 38.7559);
+        animation: root-spin 0.8s linear infinite;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #root:empty::after {
+          animation: root-pulse 1.2s ease-in-out infinite;
+          border-top-color: oklch(0.4336 0.0113 100.2195);
+        }
+      }
+      @keyframes root-spin {
+        to { transform: rotate(360deg); }
+      }
+      @keyframes root-pulse {
+        50% { opacity: 0.25; }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
