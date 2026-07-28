@@ -101,7 +101,11 @@ fn needs_safety_limit(sql: &str) -> bool {
 
 fn apply_safety_limit(sql: &str) -> String {
     let trimmed = sql.trim().trim_end_matches(';');
-    format!("{} LIMIT {}", trimmed, SAFETY_ROW_LIMIT)
+    // A leading newline (rather than a space) guarantees the clause survives
+    // even if `trimmed` ends in an unterminated `--` line comment: a newline
+    // closes such a comment in every dialect, so the LIMIT always lands as
+    // live SQL instead of being swallowed into the comment.
+    format!("{}\nLIMIT {}", trimmed, SAFETY_ROW_LIMIT)
 }
 
 #[tauri::command]
@@ -570,7 +574,7 @@ pub async fn execute_query_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::needs_safety_limit;
+    use super::{apply_safety_limit, needs_safety_limit, SAFETY_ROW_LIMIT};
 
     #[test]
     fn does_not_panic_on_utf8_boundary_in_tail() {
@@ -620,5 +624,17 @@ mod tests {
         // the safety limit — we never emit a second, syntactically invalid
         // LIMIT clause.
         assert!(!needs_safety_limit("SELECT 'LIMIT'"));
+    }
+
+    #[test]
+    fn safety_limit_survives_unterminated_trailing_comment() {
+        let sql = "select * from t -- trailing comment without newline";
+        assert!(needs_safety_limit(sql));
+        // The leading newline before LIMIT closes the `--` comment in every
+        // dialect, so the appended clause lands as live SQL, not more comment.
+        assert_eq!(
+            apply_safety_limit(sql),
+            format!("{}\nLIMIT {}", sql, SAFETY_ROW_LIMIT)
+        );
     }
 }
