@@ -7,6 +7,7 @@ edition = "2021"
 purrql-core = { path = "../purrql-core" }
 sqlx = { workspace = true, features = ["bigdecimal"] }
 async-trait = { workspace = true }
+dashmap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }

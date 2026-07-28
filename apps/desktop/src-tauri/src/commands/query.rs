@@ -315,7 +315,7 @@ pub async fn execute_query(
     let outcome = tokio::select! {
         biased;
         _ = cancel_rx.changed() => return Err(IpcError::from(PurrqlError::QueryCancelled)),
-        result = conn.execute(&effective_sql) => result,
+        result = conn.execute_tracked(&effective_sql, &query_id) => result,
     };
     state.stream_cancellers.remove(&query_id);
 
@@ -419,7 +419,7 @@ pub async fn execute_query_columnar(
     let outcome = tokio::select! {
         biased;
         _ = cancel_rx.changed() => return Err(IpcError::from(PurrqlError::QueryCancelled)),
-        result = conn.execute(&effective_sql) => result,
+        result = conn.execute_tracked(&effective_sql, &query_id) => result,
     };
     state.stream_cancellers.remove(&query_id);
 
@@ -489,12 +489,10 @@ pub async fn cancel_query(
             .ok_or(IpcError::from("Connection not found"))?;
         Arc::clone(&active.connection)
     };
-    // Without a registered canceller nothing of ours is still running, and the
-    // driver call must be skipped rather than merely tolerated: the Postgres
-    // implementation ignores `query_id` and cancels whichever backend it finds
-    // active, so a cancel with nothing to cancel can only hit someone else's
-    // query. Abandoning the wait is what frees the tab; drivers with no
-    // server-side cancellation fail here harmlessly.
+    // Without a registered canceller nothing of ours is still running, so
+    // there's nothing to ask the driver to stop. Abandoning the wait is what
+    // frees the tab; the driver call additionally stops the query server-side
+    // for drivers that can target it by id, and is a no-op for the rest.
     if signal_cancel(&state.stream_cancellers, &query_id) {
         if let Err(e) = conn.cancel_query(&query_id).await {
             tracing::debug!(error = %e, "Driver-level cancellation unavailable");
@@ -650,7 +648,7 @@ pub async fn execute_query_stream(
                 emit_cancelled(0);
                 return;
             }
-            stream = conn.execute_stream(&effective_sql, chunk_size) => stream,
+            stream = conn.execute_stream_tracked(&effective_sql, chunk_size, &query_id) => stream,
         };
 
         match stream {

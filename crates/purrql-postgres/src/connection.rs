@@ -1,15 +1,68 @@
 use async_trait::async_trait;
+use dashmap::DashMap;
+use std::sync::Arc;
 use uuid::Uuid;
 
 use purrql_core::error::{PurrqlError, Result};
 use purrql_core::models::connection::{ConnectionConfig, SslMode};
 use purrql_core::models::query::{CellValue, ColumnMeta, QueryResult, ResultType, Row};
 use purrql_core::ports::connection::DatabaseConnection;
+use sqlx::pool::PoolConnection;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions, PgRow, PgSslMode};
-use sqlx::{Column, ConnectOptions, PgPool, Row as SqlxRow, TypeInfo};
+use sqlx::{Column, ConnectOptions, PgPool, Postgres, Row as SqlxRow, TypeInfo};
+
+/// Backend pid of the Postgres session running each in-flight tracked query,
+/// keyed by the query id the caller will later cancel with.
+///
+/// Cancellation has to name a specific backend, and one `PostgresConnection`
+/// is shared by every tab pointed at that database. Without this map the only
+/// way to pick a pid is to guess at an active one, which cancels whichever
+/// query happens to be running — routinely the wrong tab's.
+type QueryPids = DashMap<Uuid, i32>;
+
+fn record_pid(pids: &QueryPids, query_id: &Uuid, pid: i32) {
+    pids.insert(*query_id, pid);
+}
+
+fn lookup_pid(pids: &QueryPids, query_id: &Uuid) -> Option<i32> {
+    pids.get(query_id).map(|entry| *entry)
+}
+
+fn forget_pid(pids: &QueryPids, query_id: &Uuid) {
+    pids.remove(query_id);
+}
+
+/// Drops a query's pid registration when the query ends, by whichever route.
+///
+/// A guard rather than a cleanup call at the end of the happy path because a
+/// cancelled query never reaches that line: the caller races the query
+/// against a cancellation signal and drops the losing future mid-flight, so
+/// only `Drop` runs. Without this the map would accumulate one dead entry per
+/// cancelled query.
+struct PidRegistration {
+    pids: Arc<QueryPids>,
+    query_id: Uuid,
+}
+
+impl PidRegistration {
+    /// `None` for an untracked query, which registers no pid to clean up.
+    fn new(pids: &Arc<QueryPids>, query_id: Option<&Uuid>) -> Option<Self> {
+        query_id.map(|id| Self {
+            pids: Arc::clone(pids),
+            query_id: *id,
+        })
+    }
+}
+
+impl Drop for PidRegistration {
+    fn drop(&mut self) {
+        forget_pid(&self.pids, &self.query_id);
+    }
+}
 
 pub struct PostgresConnection {
     pool: PgPool,
+    query_pids: Arc<QueryPids>,
 }
 
 impl PostgresConnection {
@@ -24,7 +77,154 @@ impl PostgresConnection {
             .await
             .map_err(|e| PurrqlError::Connection(e.to_string()))?;
 
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            query_pids: Arc::new(QueryPids::new()),
+        })
+    }
+
+    /// Take a connection out of the pool and, when `query_id` is set, record
+    /// the pid of the backend serving it.
+    ///
+    /// The statement must then run on the returned connection: `pg_backend_pid()`
+    /// is per-session, so a pid read here says nothing about a statement sent
+    /// through the pool separately. Retries call this again and overwrite the
+    /// entry, so the recorded pid always belongs to the connection the query
+    /// is actually running on.
+    async fn acquire_tracked(
+        &self,
+        query_id: Option<&Uuid>,
+    ) -> std::result::Result<PoolConnection<Postgres>, sqlx::Error> {
+        let mut conn = self.pool.acquire().await?;
+        if let Some(id) = query_id {
+            let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&mut *conn)
+                .await?;
+            record_pid(&self.query_pids, id, pid);
+        }
+        Ok(conn)
+    }
+
+    async fn run_query(&self, sql: &str, query_id: Option<&Uuid>) -> Result<QueryResult> {
+        let start = std::time::Instant::now();
+        let _registration = PidRegistration::new(&self.query_pids, query_id);
+
+        let outcome = with_retry(is_retryable_statement(sql), move || async move {
+            let mut conn = self.acquire_tracked(query_id).await?;
+            sqlx::query(sql).fetch_all(&mut *conn).await
+        })
+        .await;
+
+        let rows: Vec<PgRow> = outcome.map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
+        let (columns, result_rows) = extract_pg_result(&rows);
+        let row_count = result_rows.len() as u64;
+
+        Ok(QueryResult {
+            query_id: query_id.copied().unwrap_or_else(Uuid::new_v4),
+            columns,
+            rows: result_rows,
+            total_rows: Some(row_count),
+            affected_rows: None,
+            execution_time_ms: start.elapsed().as_millis() as u64,
+            warnings: vec![],
+            result_type: ResultType::Select,
+        })
+    }
+
+    async fn run_stream(
+        &self,
+        sql: &str,
+        chunk_size: usize,
+        query_id: Option<&Uuid>,
+    ) -> Result<(Vec<ColumnMeta>, tokio::sync::mpsc::Receiver<Result<Vec<Row>>>)> {
+        use futures::StreamExt;
+
+        // Acquired up front rather than inside the task so the stream runs on
+        // the same session whose pid was recorded, and so an acquire failure
+        // surfaces to the caller instead of only reaching the channel.
+        let mut conn = self
+            .acquire_tracked(query_id)
+            .await
+            .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
+
+        let registration = PidRegistration::new(&self.query_pids, query_id);
+        let sql = sql.to_string();
+        let chunk_size = chunk_size.max(1);
+        let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+
+        tokio::spawn(async move {
+            // Moved into the task so the pid stays registered for as long as
+            // the stream is actually running on this connection, and is
+            // cleared however the task ends.
+            let _registration = registration;
+            {
+                let mut stream = sqlx::query(&sql).fetch(&mut *conn);
+                let mut col_types: Vec<String> = vec![];
+                let mut meta_tx = Some(meta_tx);
+                let mut chunk: Vec<Row> = Vec::with_capacity(chunk_size);
+
+                while let Some(result) = stream.next().await {
+                    match result {
+                        Ok(row) => {
+                            if let Some(sender) = meta_tx.take() {
+                                let cols: Vec<ColumnMeta> = row
+                                    .columns()
+                                    .iter()
+                                    .map(|col| {
+                                        let (data_type, native_type) = map_pg_column_meta(col);
+                                        ColumnMeta {
+                                            name: col.name().to_string(),
+                                            data_type,
+                                            native_type,
+                                            nullable: true,
+                                            is_primary_key: false,
+                                            max_length: None,
+                                        }
+                                    })
+                                    .collect();
+                                col_types = row
+                                    .columns()
+                                    .iter()
+                                    .map(|c| c.type_info().name().to_string())
+                                    .collect();
+                                let _ = sender.send(Ok(cols));
+                            }
+                            chunk.push(convert_pg_row(&row, &col_types));
+                            if chunk.len() >= chunk_size {
+                                let full =
+                                    std::mem::replace(&mut chunk, Vec::with_capacity(chunk_size));
+                                if tx.send(Ok(full)).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let err_msg = e.to_string();
+                            if let Some(sender) = meta_tx.take() {
+                                let _ =
+                                    sender.send(Err(PurrqlError::QueryExecution(err_msg.clone())));
+                            }
+                            let _ = tx.send(Err(PurrqlError::QueryExecution(err_msg))).await;
+                            return;
+                        }
+                    }
+                }
+
+                if let Some(sender) = meta_tx.take() {
+                    let _ = sender.send(Ok(vec![]));
+                }
+                if !chunk.is_empty() {
+                    let _ = tx.send(Ok(chunk)).await;
+                }
+            }
+        });
+
+        let columns = meta_rx
+            .await
+            .map_err(|_| PurrqlError::QueryExecution("Stream task failed".to_string()))??;
+
+        Ok((columns, rx))
     }
 }
 
@@ -303,29 +503,16 @@ fn extract_pg_result(rows: &[PgRow]) -> (Vec<ColumnMeta>, Vec<Row>) {
 #[async_trait]
 impl DatabaseConnection for PostgresConnection {
     async fn execute(&self, sql: &str) -> Result<QueryResult> {
-        let start = std::time::Instant::now();
-
-        let rows: Vec<PgRow> = with_retry(is_retryable_statement(sql), || {
-            sqlx::query(sql).fetch_all(&self.pool)
-        })
-        .await
-        .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
-
-        let (columns, result_rows) = extract_pg_result(&rows);
-        let row_count = result_rows.len() as u64;
-
-        Ok(QueryResult {
-            query_id: Uuid::new_v4(),
-            columns,
-            rows: result_rows,
-            total_rows: Some(row_count),
-            affected_rows: None,
-            execution_time_ms: start.elapsed().as_millis() as u64,
-            warnings: vec![],
-            result_type: ResultType::Select,
-        })
+        self.run_query(sql, None).await
     }
 
+    async fn execute_tracked(&self, sql: &str, query_id: &Uuid) -> Result<QueryResult> {
+        self.run_query(sql, Some(query_id)).await
+    }
+
+    /// Deliberately untracked: every caller is a schema inspector, none of
+    /// which runs under a user query id, so there is no id for `cancel_query`
+    /// to name. Adding a tracked variant here would be unreachable code.
     async fn execute_with_params(
         &self,
         sql: &str,
@@ -382,32 +569,25 @@ impl DatabaseConnection for PostgresConnection {
         })
     }
 
-    async fn cancel_query(&self, _query_id: &Uuid) -> Result<()> {
-        let row: Option<PgRow> = sqlx::query(
-            "SELECT pid FROM pg_stat_activity \
-             WHERE state = 'active' \
-             AND pid != pg_backend_pid() \
-             AND query NOT LIKE '%pg_stat_activity%' \
-             LIMIT 1",
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
+    /// Cancel the backend running `query_id`, and only that one.
+    ///
+    /// Nothing recorded means there is nothing this driver may cancel: the
+    /// query already finished, or it ran on a path that doesn't register a
+    /// pid. Both are a no-op. Falling back to "cancel whichever backend looks
+    /// busy" is what let closing one tab kill another tab's query.
+    async fn cancel_query(&self, query_id: &Uuid) -> Result<()> {
+        // Read the pid out before awaiting so no map guard is held across it.
+        let pid = lookup_pid(&self.query_pids, query_id);
+        let Some(pid) = pid else {
+            return Ok(());
+        };
 
-        match row {
-            Some(row) => {
-                let pid: i32 = row
-                    .try_get("pid")
-                    .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
-                sqlx::query("SELECT pg_cancel_backend($1)")
-                    .bind(pid)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
-                Ok(())
-            }
-            None => Ok(()),
-        }
+        sqlx::query("SELECT pg_cancel_backend($1)")
+            .bind(pid)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
+        Ok(())
     }
 
     async fn ping(&self) -> Result<()> {
@@ -434,97 +614,125 @@ impl DatabaseConnection for PostgresConnection {
         sql: &str,
         chunk_size: usize,
     ) -> Result<(Vec<ColumnMeta>, tokio::sync::mpsc::Receiver<Result<Vec<Row>>>)> {
-        use futures::StreamExt;
+        self.run_stream(sql, chunk_size, None).await
+    }
 
-        let pool = self.pool.clone();
-        let sql = sql.to_string();
-        let chunk_size = chunk_size.max(1);
-        let (meta_tx, meta_rx) = tokio::sync::oneshot::channel();
-        let (tx, rx) = tokio::sync::mpsc::channel(4);
-
-        tokio::spawn(async move {
-            let mut stream = sqlx::query(&sql).fetch(&pool);
-            let mut col_types: Vec<String> = vec![];
-            let mut meta_tx = Some(meta_tx);
-            let mut chunk: Vec<Row> = Vec::with_capacity(chunk_size);
-
-            while let Some(result) = stream.next().await {
-                match result {
-                    Ok(row) => {
-                        if let Some(sender) = meta_tx.take() {
-                            let cols: Vec<ColumnMeta> = row
-                                .columns()
-                                .iter()
-                                .map(|col| {
-                                    let (data_type, native_type) = map_pg_column_meta(col);
-                                    ColumnMeta {
-                                        name: col.name().to_string(),
-                                        data_type,
-                                        native_type,
-                                        nullable: true,
-                                        is_primary_key: false,
-                                        max_length: None,
-                                    }
-                                })
-                                .collect();
-                            col_types = row
-                                .columns()
-                                .iter()
-                                .map(|c| c.type_info().name().to_string())
-                                .collect();
-                            let _ = sender.send(Ok(cols));
-                        }
-                        chunk.push(convert_pg_row(&row, &col_types));
-                        if chunk.len() >= chunk_size {
-                            let full =
-                                std::mem::replace(&mut chunk, Vec::with_capacity(chunk_size));
-                            if tx.send(Ok(full)).await.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let err_msg = e.to_string();
-                        if let Some(sender) = meta_tx.take() {
-                            let _ = sender
-                                .send(Err(PurrqlError::QueryExecution(err_msg.clone())));
-                        }
-                        let _ = tx
-                            .send(Err(PurrqlError::QueryExecution(err_msg)))
-                            .await;
-                        return;
-                    }
-                }
-            }
-
-            if let Some(sender) = meta_tx.take() {
-                let _ = sender.send(Ok(vec![]));
-            }
-            if !chunk.is_empty() {
-                let _ = tx.send(Ok(chunk)).await;
-            }
-        });
-
-        let columns = meta_rx
-            .await
-            .map_err(|_| PurrqlError::QueryExecution("Stream task failed".to_string()))??;
-
-        Ok((columns, rx))
+    async fn execute_stream_tracked(
+        &self,
+        sql: &str,
+        chunk_size: usize,
+        query_id: &Uuid,
+    ) -> Result<(Vec<ColumnMeta>, tokio::sync::mpsc::Receiver<Result<Vec<Row>>>)> {
+        self.run_stream(sql, chunk_size, Some(query_id)).await
     }
 
     async fn close(&self) -> Result<()> {
         self.pool.close().await;
+        // Nothing left to cancel once the pool is gone.
+        self.query_pids.clear();
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_closed_connection_error, is_retryable_statement, with_retry};
+    use super::{
+        forget_pid, is_closed_connection_error, is_retryable_statement, lookup_pid, record_pid,
+        with_retry, PidRegistration, QueryPids,
+    };
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
+    use uuid::Uuid;
 
     fn io_error(kind: std::io::ErrorKind) -> sqlx::Error {
         sqlx::Error::Io(std::io::Error::new(kind, "closed"))
+    }
+
+    #[test]
+    fn records_and_looks_up_the_pid_of_a_tracked_query() {
+        let pids = QueryPids::new();
+        let query_id = Uuid::new_v4();
+
+        record_pid(&pids, &query_id, 4242);
+
+        assert_eq!(lookup_pid(&pids, &query_id), Some(4242));
+    }
+
+    #[test]
+    fn an_unknown_query_id_has_no_pid_to_cancel() {
+        let pids = QueryPids::new();
+        // The lookup returning None is what makes cancel_query a no-op rather
+        // than a guess at some other backend.
+        assert_eq!(lookup_pid(&pids, &Uuid::new_v4()), None);
+    }
+
+    #[test]
+    fn a_finished_query_leaves_no_pid_behind() {
+        let pids = QueryPids::new();
+        let query_id = Uuid::new_v4();
+
+        record_pid(&pids, &query_id, 4242);
+        forget_pid(&pids, &query_id);
+
+        assert_eq!(lookup_pid(&pids, &query_id), None);
+        assert!(pids.is_empty());
+        // Cleanup runs on success and on error alike, so a second removal
+        // (or one for a query that never registered) is harmless.
+        forget_pid(&pids, &query_id);
+        assert_eq!(lookup_pid(&pids, &query_id), None);
+    }
+
+    #[test]
+    fn each_query_keeps_its_own_pid() {
+        // Two tabs on one connection: cancelling either must not disturb the
+        // other's recorded backend.
+        let pids = QueryPids::new();
+        let tab_a = Uuid::new_v4();
+        let tab_b = Uuid::new_v4();
+
+        record_pid(&pids, &tab_a, 111);
+        record_pid(&pids, &tab_b, 222);
+        forget_pid(&pids, &tab_a);
+
+        assert_eq!(lookup_pid(&pids, &tab_a), None);
+        assert_eq!(lookup_pid(&pids, &tab_b), Some(222));
+    }
+
+    #[test]
+    fn dropping_the_registration_clears_the_pid_even_when_the_query_never_finishes() {
+        // The cancellation path: the caller drops the in-flight query future,
+        // so nothing after the await runs and only Drop can clean up.
+        let pids = Arc::new(QueryPids::new());
+        let query_id = Uuid::new_v4();
+
+        {
+            let _registration = PidRegistration::new(&pids, Some(&query_id));
+            record_pid(&pids, &query_id, 4242);
+            assert_eq!(lookup_pid(&pids, &query_id), Some(4242));
+        }
+
+        assert_eq!(lookup_pid(&pids, &query_id), None);
+    }
+
+    #[test]
+    fn an_untracked_query_registers_nothing() {
+        let pids = Arc::new(QueryPids::new());
+        assert!(PidRegistration::new(&pids, None).is_none());
+    }
+
+    #[test]
+    fn a_retry_repoints_the_query_at_the_connection_it_landed_on() {
+        // A retry acquires a different pooled connection, so the recorded pid
+        // must be replaced — cancelling the first, dead backend would leave
+        // the query that's actually running untouched.
+        let pids = QueryPids::new();
+        let query_id = Uuid::new_v4();
+
+        record_pid(&pids, &query_id, 111);
+        record_pid(&pids, &query_id, 222);
+
+        assert_eq!(lookup_pid(&pids, &query_id), Some(222));
+        assert_eq!(pids.len(), 1);
     }
 
     #[test]
