@@ -355,7 +355,6 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
   // result updates don't re-render grids that aren't sourcing from the active tab.
   const tabResult = useResultStore((s) => (explicitData ? undefined : (activeTabId ? s.results[activeTabId] : undefined)));
   // Columnar data — primary data source for rendering
-  const columnarSource: ColumnData[] | undefined = explicitData ?? tabResult?.data;
   const { data: columnarData, rowCount: columnarRowCount } = resolveColumnarSource(
     explicitData,
     explicitRowCount,
@@ -364,7 +363,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
     result.rows.length,
   );
   const { filteredIndices: workerFilteredIndices, sortedIndices: workerSortedIndices, useWorker } = useGridWorker(
-    columnarSource,
+    columnarData,
     filterText,
     sortColumns,
     columnarRowCount,

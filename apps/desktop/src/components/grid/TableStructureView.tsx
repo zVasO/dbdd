@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { Hash, Link2, ShieldCheck, Loader2, Key } from 'lucide-react';
 import { useSchemaStore } from '@/stores/schemaStore';
@@ -138,6 +138,23 @@ export function TableStructureView({ database, table }: Props) {
     }
   }, [connectionId, database, table, structure, loading, loadTableStructure]);
 
+  const columnsData = useMemo(
+    () => (structure ? columnsResult(structure.columns) : null),
+    [structure?.columns],
+  );
+  const indexesData = useMemo(
+    () => (structure ? indexesResult(structure.indexes) : null),
+    [structure?.indexes],
+  );
+  const foreignKeysData = useMemo(
+    () => (structure ? foreignKeysResult(structure.foreign_keys) : null),
+    [structure?.foreign_keys],
+  );
+  const constraintsData = useMemo(
+    () => (structure ? constraintsResult(structure.constraints) : null),
+    [structure?.constraints],
+  );
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -192,10 +209,10 @@ export function TableStructureView({ database, table }: Props) {
 
       {/* Content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'columns' && <DataGrid {...columnsResult(structure.columns)} />}
-        {activeTab === 'indexes' && <DataGrid {...indexesResult(structure.indexes)} />}
-        {activeTab === 'foreign_keys' && <DataGrid {...foreignKeysResult(structure.foreign_keys)} />}
-        {activeTab === 'constraints' && <DataGrid {...constraintsResult(structure.constraints)} />}
+        {activeTab === 'columns' && columnsData && <DataGrid {...columnsData} />}
+        {activeTab === 'indexes' && indexesData && <DataGrid {...indexesData} />}
+        {activeTab === 'foreign_keys' && foreignKeysData && <DataGrid {...foreignKeysData} />}
+        {activeTab === 'constraints' && constraintsData && <DataGrid {...constraintsData} />}
       </div>
 
       {/* Footer */}
