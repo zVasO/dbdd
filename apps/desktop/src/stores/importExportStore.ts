@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import Papa from 'papaparse';
 import { ipc, extractErrorMessage } from '@/lib/ipc';
 import { toExcel } from '@/lib/exportFormats';
 import { showErrorToast } from './toastStore';
@@ -137,6 +136,7 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
       const text = await file.text();
 
       if (fileType === 'csv') {
+        const { default: Papa } = await import('papaparse');
         const separator = get().csvSeparator;
         const parsed = Papa.parse<string[]>(text, {
           delimiter: separator,

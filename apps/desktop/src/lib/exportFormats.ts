@@ -1,4 +1,3 @@
-import Papa from 'papaparse';
 import type { QueryResult, CellValue } from '@/lib/types';
 
 /** Convert a tagged CellValue union to a plain JS primitive. */
@@ -69,7 +68,8 @@ export interface CsvOptions {
   includeHeaders?: boolean;
 }
 
-export function toCSV(result: QueryResult, options?: CsvOptions): string {
+export async function toCSV(result: QueryResult, options?: CsvOptions): Promise<string> {
+  const { default: Papa } = await import('papaparse');
   const data = resultToObjectArray(result);
   return Papa.unparse(data, {
     delimiter: options?.separator ?? ',',

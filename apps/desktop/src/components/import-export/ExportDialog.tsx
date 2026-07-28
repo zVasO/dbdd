@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect } from 'react';
+import { useMemo, useCallback, useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -113,8 +113,13 @@ export function ExportDialog() {
   const rowCount = tabResult?.rowCount ?? 0;
   const colCount = result?.columns.length ?? 0;
 
-  const preview = useMemo(() => {
-    if (!result || !activeTab || rowCount === 0) return '';
+  const [preview, setPreview] = useState('');
+
+  useEffect(() => {
+    if (!result || !activeTab || rowCount === 0) {
+      setPreview('');
+      return;
+    }
 
     const previewRows = useResultStore.getState().getRowsPreview(activeTab.id, 5);
     const previewResult: QueryResult = {
@@ -123,26 +128,42 @@ export function ExportDialog() {
       total_rows: previewRows.length,
     };
 
-    try {
-      switch (exportFormat) {
-        case 'csv':
-          return toCSV(previewResult);
-        case 'json':
-          return toJSON(previewResult, { pretty: true });
-        case 'sql-insert':
-          return toSQLInsert(previewResult, tableName);
-        case 'sql-create':
-          return toSQLCreateAndInsert(previewResult, tableName);
-        case 'markdown':
-          return toMarkdown(previewResult);
-        case 'excel':
-          return '[Excel preview not available — binary format]';
-        default:
-          return '';
+    let cancelled = false;
+
+    (async () => {
+      try {
+        let text: string;
+        switch (exportFormat) {
+          case 'csv':
+            text = await toCSV(previewResult);
+            break;
+          case 'json':
+            text = toJSON(previewResult, { pretty: true });
+            break;
+          case 'sql-insert':
+            text = toSQLInsert(previewResult, tableName);
+            break;
+          case 'sql-create':
+            text = toSQLCreateAndInsert(previewResult, tableName);
+            break;
+          case 'markdown':
+            text = toMarkdown(previewResult);
+            break;
+          case 'excel':
+            text = '[Excel preview not available — binary format]';
+            break;
+          default:
+            text = '';
+        }
+        if (!cancelled) setPreview(text);
+      } catch {
+        if (!cancelled) setPreview('Preview not available');
       }
-    } catch {
-      return 'Preview not available';
-    }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [result, activeTab, rowCount, exportFormat, tableName]);
 
   const handleExport = useCallback(() => {
