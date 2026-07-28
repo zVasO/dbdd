@@ -16,6 +16,7 @@ import { useConnectionStore } from '@/stores/connectionStore';
 import type { RowInsert } from '@/stores/changeStore';
 import { Button } from '@/components/ui/button';
 import { QuickLook } from './QuickLook';
+import { resolveColumnarSource } from './gridDataSource';
 import { usePreferencesStore } from '@/stores/preferencesStore';
 import { useShortcutStore, matchesBinding } from '@/stores/shortcutStore';
 import { quoteIdentifier, escapeStringLiteral } from '@/lib/sql-utils';
@@ -30,6 +31,10 @@ interface Props {
   result: QueryResult;
   database?: string;
   table?: string;
+  /** Explicit columnar data source, bypassing the active-tab result store (e.g. synthetic views like TableStructureView) */
+  data?: ColumnData[];
+  /** Row count for `data`; defaults to result.rows.length when omitted */
+  rowCount?: number;
   onServerSort?: (sorts: SortRequest[]) => void;
   /** Server-side pagination: called when user navigates to a different page (browse mode only) */
   onServerPageChange?: (page: number, pageSize: number) => void;
@@ -220,7 +225,7 @@ function buildRowsOnDemand(
   }));
 }
 
-export const DataGrid = memo(function DataGrid({ result, database, table, onServerSort, onServerPageChange, serverTotalRows, serverPage, highlightedColumnName, onHighlightDone }: Props) {
+export const DataGrid = memo(function DataGrid({ result, database, table, data: explicitData, rowCount: explicitRowCount, onServerSort, onServerPageChange, serverTotalRows, serverPage, highlightedColumnName, onHighlightDone }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [lastSelectedRow, setLastSelectedRow] = useState<number | null>(null);
@@ -346,12 +351,20 @@ export const DataGrid = memo(function DataGrid({ result, database, table, onServ
 
   // Worker-based filter/sort for large datasets
   const activeTabId = useQueryStore((s) => s.activeTabId);
-  const tabResult = useResultStore((s) => activeTabId ? s.results[activeTabId] : undefined);
+  // Short-circuits when an explicit `data` prop is supplied, so unrelated active-tab
+  // result updates don't re-render grids that aren't sourcing from the active tab.
+  const tabResult = useResultStore((s) => (explicitData ? undefined : (activeTabId ? s.results[activeTabId] : undefined)));
   // Columnar data — primary data source for rendering
-  const columnarData: ColumnData[] = tabResult?.data ?? [];
-  const columnarRowCount = tabResult?.rowCount ?? result.rows.length;
-  const { filteredIndices: workerFilteredIndices, sortedIndices: workerSortedIndices, useWorker } = useGridWorker(
+  const columnarSource: ColumnData[] | undefined = explicitData ?? tabResult?.data;
+  const { data: columnarData, rowCount: columnarRowCount } = resolveColumnarSource(
+    explicitData,
+    explicitRowCount,
     tabResult?.data,
+    tabResult?.rowCount,
+    result.rows.length,
+  );
+  const { filteredIndices: workerFilteredIndices, sortedIndices: workerSortedIndices, useWorker } = useGridWorker(
+    columnarSource,
     filterText,
     sortColumns,
     columnarRowCount,

@@ -120,8 +120,6 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     };
   }, [searchQuery]);
 
-  if (!sidebarOpen) return null;
-
   const handleSelectDatabase = (dbName: string | null) => {
     setActiveDatabase(dbName);
     setDbSelectorOpen(false);
@@ -258,6 +256,8 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   // Determine the active DB info for display
   const activeDbInfo = databases.find((db) => db.name === activeDatabase);
   const activeTables = activeDatabase ? (tables[activeDatabase] ?? []) : [];
+
+  if (!sidebarOpen) return null;
 
   return (
     <TooltipProvider delayDuration={400}>

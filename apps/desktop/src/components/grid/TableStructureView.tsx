@@ -3,11 +3,16 @@ import { cn } from '@/lib/utils';
 import { Hash, Link2, ShieldCheck, Loader2, Key } from 'lucide-react';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
-import type { ColumnInfo, IndexInfo, ForeignKeyInfo, ConstraintInfo, QueryResult, ColumnMeta, Row, CellValue } from '@/lib/types';
+import type { ColumnInfo, IndexInfo, ForeignKeyInfo, ConstraintInfo, QueryResult, ColumnMeta, Row, CellValue, ColumnData } from '@/lib/types';
 import { DataGrid } from '@/components/grid/DataGrid';
 
-// Helper — builds a QueryResult from column names and raw cell values
-function makeResult(columnNames: string[], rows: (string | number | boolean | null)[][]): QueryResult {
+interface SyntheticResult {
+  result: QueryResult;
+  data: ColumnData[];
+}
+
+// Helper — builds a QueryResult plus its columnar data from column names and raw cell values
+function makeResult(columnNames: string[], rows: (string | number | boolean | null)[][]): SyntheticResult {
   const columns: ColumnMeta[] = columnNames.map(name => ({
     name,
     data_type: 'Text',
@@ -24,19 +29,33 @@ function makeResult(columnNames: string[], rows: (string | number | boolean | nu
       return { type: 'Text', value: cell };
     }),
   }));
+  const data: ColumnData[] = columnNames.map((_, colIndex) => {
+    const values = rows.map(r => r[colIndex]);
+    const sample = values.find(v => v !== null && v !== undefined && v !== '');
+    if (typeof sample === 'boolean') {
+      return { kind: 'Booleans', values: values.map(v => (v === null || v === undefined || v === '') ? null : Boolean(v)) };
+    }
+    if (typeof sample === 'number') {
+      return { kind: 'Integers', values: values.map(v => (v === null || v === undefined || v === '') ? null : Number(v)) };
+    }
+    return { kind: 'Strings', values: values.map(v => (v === null || v === undefined || v === '') ? null : String(v)) };
+  });
   return {
-    query_id: '',
-    columns,
-    rows: resultRows,
-    total_rows: resultRows.length,
-    affected_rows: null,
-    execution_time_ms: 0,
-    warnings: [],
-    result_type: 'Select',
+    result: {
+      query_id: '',
+      columns,
+      rows: resultRows,
+      total_rows: resultRows.length,
+      affected_rows: null,
+      execution_time_ms: 0,
+      warnings: [],
+      result_type: 'Select',
+    },
+    data,
   };
 }
 
-function columnsResult(columns: ColumnInfo[]): QueryResult {
+function columnsResult(columns: ColumnInfo[]): SyntheticResult {
   return makeResult(
     ['#', 'Name', 'Type', 'Nullable', 'Default', 'Comment'],
     columns.map(col => [
@@ -50,7 +69,7 @@ function columnsResult(columns: ColumnInfo[]): QueryResult {
   );
 }
 
-function indexesResult(indexes: IndexInfo[]): QueryResult {
+function indexesResult(indexes: IndexInfo[]): SyntheticResult {
   return makeResult(
     ['Name', 'Columns', 'Type', 'Unique', 'Primary'],
     indexes.map(idx => [
@@ -63,7 +82,7 @@ function indexesResult(indexes: IndexInfo[]): QueryResult {
   );
 }
 
-function foreignKeysResult(foreignKeys: ForeignKeyInfo[]): QueryResult {
+function foreignKeysResult(foreignKeys: ForeignKeyInfo[]): SyntheticResult {
   return makeResult(
     ['Name', 'Columns', 'References', 'On Update', 'On Delete'],
     foreignKeys.map(fk => [
@@ -76,7 +95,7 @@ function foreignKeysResult(foreignKeys: ForeignKeyInfo[]): QueryResult {
   );
 }
 
-function constraintsResult(constraints: ConstraintInfo[]): QueryResult {
+function constraintsResult(constraints: ConstraintInfo[]): SyntheticResult {
   return makeResult(
     ['Name', 'Type', 'Columns', 'Definition'],
     constraints.map(c => [
@@ -173,10 +192,10 @@ export function TableStructureView({ database, table }: Props) {
 
       {/* Content */}
       <div className="flex-1 overflow-hidden">
-        {activeTab === 'columns' && <DataGrid result={columnsResult(structure.columns)} />}
-        {activeTab === 'indexes' && <DataGrid result={indexesResult(structure.indexes)} />}
-        {activeTab === 'foreign_keys' && <DataGrid result={foreignKeysResult(structure.foreign_keys)} />}
-        {activeTab === 'constraints' && <DataGrid result={constraintsResult(structure.constraints)} />}
+        {activeTab === 'columns' && <DataGrid {...columnsResult(structure.columns)} />}
+        {activeTab === 'indexes' && <DataGrid {...indexesResult(structure.indexes)} />}
+        {activeTab === 'foreign_keys' && <DataGrid {...foreignKeysResult(structure.foreign_keys)} />}
+        {activeTab === 'constraints' && <DataGrid {...constraintsResult(structure.constraints)} />}
       </div>
 
       {/* Footer */}
