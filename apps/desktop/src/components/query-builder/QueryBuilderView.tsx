@@ -5,8 +5,10 @@ import {
   Background,
   Controls,
   BackgroundVariant,
+  applyNodeChanges,
+  applyEdgeChanges,
 } from '@xyflow/react';
-import type { Connection, NodeTypes, EdgeTypes } from '@xyflow/react';
+import type { Connection, NodeTypes, EdgeTypes, Node, Edge, NodeChange, EdgeChange } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -14,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { Code2, Filter, ArrowUpDown, Blocks } from 'lucide-react';
 
 import { useQueryBuilderStore } from '@/stores/queryBuilderStore';
+import type { TableNodeData } from '@/stores/queryBuilderStore';
 import { TableBlock } from '@/components/query-builder/TableBlock';
 import { JoinEdge } from '@/components/query-builder/JoinEdge';
 import { BuilderToolbar } from '@/components/query-builder/BuilderToolbar';
@@ -29,8 +32,8 @@ const edgeTypes = { joinEdge: JoinEdge } as unknown as EdgeTypes;
 function QueryBuilderInner() {
   const nodes = useQueryBuilderStore((s) => s.nodes);
   const edges = useQueryBuilderStore((s) => s.edges);
-  const onNodesChange = useQueryBuilderStore((s) => s.onNodesChange);
-  const onEdgesChange = useQueryBuilderStore((s) => s.onEdgesChange);
+  const setNodes = useQueryBuilderStore((s) => s.setNodes);
+  const setEdges = useQueryBuilderStore((s) => s.setEdges);
   const onConnect = useQueryBuilderStore((s) => s.onConnect);
 
   const handleConnect = useCallback(
@@ -38,6 +41,20 @@ function QueryBuilderInner() {
       onConnect(connection);
     },
     [onConnect]
+  );
+
+  const handleNodesChange = useCallback(
+    (changes: NodeChange<Node<TableNodeData>>[]) => {
+      setNodes(applyNodeChanges(changes, useQueryBuilderStore.getState().nodes));
+    },
+    [setNodes]
+  );
+
+  const handleEdgesChange = useCallback(
+    (changes: EdgeChange<Edge>[]) => {
+      setEdges(applyEdgeChanges(changes, useQueryBuilderStore.getState().edges));
+    },
+    [setEdges]
   );
 
   const defaultEdgeOptions = useMemo(
@@ -74,8 +91,8 @@ function QueryBuilderInner() {
             edges={edges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
+            onNodesChange={handleNodesChange}
+            onEdgesChange={handleEdgesChange}
             onConnect={handleConnect}
             defaultEdgeOptions={defaultEdgeOptions}
             fitView

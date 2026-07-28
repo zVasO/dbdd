@@ -1,7 +1,5 @@
 import { create } from 'zustand';
 import type { Node, Edge, Connection } from '@xyflow/react';
-import { applyNodeChanges, applyEdgeChanges } from '@xyflow/react';
-import type { NodeChange, EdgeChange } from '@xyflow/react';
 
 // === Types ===
 
@@ -53,8 +51,8 @@ interface QueryBuilderState {
   selectAllColumns: (nodeId: string) => void;
   deselectAllColumns: (nodeId: string) => void;
 
-  onNodesChange: (changes: NodeChange<Node<TableNodeData>>[]) => void;
-  onEdgesChange: (changes: EdgeChange<Edge>[]) => void;
+  setNodes: (nodes: Node<TableNodeData>[]) => void;
+  setEdges: (edges: Edge[]) => void;
   onConnect: (connection: Connection) => void;
 
   updateJoinType: (joinId: string, type: JoinConfig['joinType']) => void;
@@ -203,17 +201,8 @@ export const useQueryBuilderStore = create<QueryBuilderState>((set, get) => ({
     }));
   },
 
-  onNodesChange: (changes) => {
-    set((s) => ({
-      nodes: applyNodeChanges(changes, s.nodes),
-    }));
-  },
-
-  onEdgesChange: (changes) => {
-    set((s) => ({
-      edges: applyEdgeChanges(changes, s.edges),
-    }));
-  },
+  setNodes: (nodes) => set({ nodes }),
+  setEdges: (edges) => set({ edges }),
 
   onConnect: (connection) => {
     const { source, target, sourceHandle, targetHandle } = connection;
