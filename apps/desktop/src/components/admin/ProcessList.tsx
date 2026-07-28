@@ -129,7 +129,7 @@ FROM pg_stat_activity
 WHERE pid <> pg_backend_pid()
 ORDER BY query_start DESC NULLS LAST`;
 
-      const result = await ipc.executeQuery(activeConnectionId, sql);
+      const result = await ipc.executeQuery(activeConnectionId, sql, undefined, false);
       const parsed =
         dbType === 'mysql'
           ? parseMysqlProcessList(result)

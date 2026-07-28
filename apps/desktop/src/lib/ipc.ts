@@ -68,11 +68,11 @@ export const ipc = {
   getAiKey: (provider: string) =>
     invoke<string | null>('get_ai_key', { provider }),
 
-  executeQuery: (connectionId: string, sql: string, queryId?: string) =>
-    invoke<QueryResult>('execute_query', { connectionId, sql, queryId }),
+  executeQuery: (connectionId: string, sql: string, queryId?: string, recordHistory?: boolean) =>
+    invoke<QueryResult>('execute_query', { connectionId, sql, queryId, recordHistory }),
 
-  executeQueryColumnar: (connectionId: string, sql: string, queryId?: string) =>
-    invoke<ColumnarResult>('execute_query_columnar', { connectionId, sql, queryId }),
+  executeQueryColumnar: (connectionId: string, sql: string, queryId?: string, recordHistory?: boolean) =>
+    invoke<ColumnarResult>('execute_query_columnar', { connectionId, sql, queryId, recordHistory }),
 
   cancelQuery: (connectionId: string, queryId: string) =>
     invoke<void>('cancel_query', { connectionId, queryId }),

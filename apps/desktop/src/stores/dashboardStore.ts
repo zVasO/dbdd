@@ -226,7 +226,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     });
 
     try {
-      const result = await ipc.executeQuery(connectionId, widget.sql);
+      const result = await ipc.executeQuery(connectionId, widget.sql, undefined, false);
       get().updateWidget(dashboardId, widgetId, {
         result,
         loading: false,

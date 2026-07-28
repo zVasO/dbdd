@@ -112,7 +112,7 @@ export function SlowQueryList({ refreshTrigger }: SlowQueryListProps) {
           ? 'SELECT * FROM information_schema.processlist WHERE TIME > 1 ORDER BY TIME DESC'
           : "SELECT pid, usename, datname, now() - pg_stat_activity.query_start AS duration, query, state FROM pg_stat_activity WHERE state != 'idle' AND (now() - pg_stat_activity.query_start) > interval '1 second' ORDER BY duration DESC";
 
-      const result = await ipc.executeQuery(activeConnectionId, sql);
+      const result = await ipc.executeQuery(activeConnectionId, sql, undefined, false);
       setQueries(parseResult(result, dbType));
     } catch (e) {
       setError(String(e));

@@ -236,7 +236,7 @@ function checkAlerts(metricName: string, value: number) {
 
 async function pollMySQL(connectionId: string) {
   const sql = `SHOW GLOBAL STATUS WHERE Variable_name IN ('Queries', 'Threads_connected', 'Threads_running', 'Slow_queries', 'Innodb_buffer_pool_read_requests', 'Innodb_buffer_pool_reads')`;
-  const result = await ipc.executeQuery(connectionId, sql);
+  const result = await ipc.executeQuery(connectionId, sql, undefined, false);
 
   const statusMap: Record<string, number> = {};
   for (const row of result.rows) {
@@ -287,7 +287,7 @@ async function pollMySQL(connectionId: string) {
 
 async function pollPostgres(connectionId: string) {
   const sql = `SELECT xact_commit + xact_rollback as total_xacts, numbackends, blks_hit, blks_read FROM pg_stat_database WHERE datname = current_database()`;
-  const result = await ipc.executeQuery(connectionId, sql);
+  const result = await ipc.executeQuery(connectionId, sql, undefined, false);
 
   if (result.rows.length === 0) return;
 

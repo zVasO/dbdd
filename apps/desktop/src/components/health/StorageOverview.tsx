@@ -140,7 +140,7 @@ export function StorageOverview({ refreshTrigger }: StorageOverviewProps) {
           ? 'SELECT table_name, table_rows, data_length, index_length FROM information_schema.tables WHERE table_schema = DATABASE() ORDER BY data_length DESC'
           : 'SELECT relname, n_live_tup, pg_total_relation_size(relid) as total_size FROM pg_stat_user_tables ORDER BY pg_total_relation_size(relid) DESC';
 
-      const result = await ipc.executeQuery(activeConnectionId, sql);
+      const result = await ipc.executeQuery(activeConnectionId, sql, undefined, false);
       setTables(parseResult(result, dbType));
     } catch (e) {
       setError(String(e));

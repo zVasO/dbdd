@@ -111,7 +111,7 @@ async function executeAndCheck(id: string): Promise<void> {
   if (!query) return;
 
   try {
-    const result = await ipc.executeQuery(query.connectionId, query.sql);
+    const result = await ipc.executeQuery(query.connectionId, query.sql, undefined, false);
     const resultStr = JSON.stringify(result.rows);
     const resultHash = hashResult(resultStr);
     let conditionMet = false;

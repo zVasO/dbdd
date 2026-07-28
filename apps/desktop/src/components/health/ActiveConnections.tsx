@@ -121,7 +121,7 @@ export function ActiveConnections({ refreshTrigger }: ActiveConnectionsProps) {
           ? 'SHOW PROCESSLIST'
           : "SELECT pid, usename, datname, query, state, backend_start, query_start FROM pg_stat_activity WHERE state IS NOT NULL";
 
-      const result = await ipc.executeQuery(activeConnectionId, sql);
+      const result = await ipc.executeQuery(activeConnectionId, sql, undefined, false);
       setProcesses(parseResult(result, dbType));
     } catch (e) {
       setError(String(e));

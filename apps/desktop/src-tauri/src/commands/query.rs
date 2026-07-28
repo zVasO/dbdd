@@ -161,6 +161,7 @@ pub async fn execute_query(
     connection_id: Uuid,
     sql: String,
     query_id: Option<Uuid>,
+    record_history: Option<bool>,
 ) -> Result<QueryResult, IpcError> {
     let query_id = query_id.unwrap_or_else(Uuid::new_v4);
     tracing::Span::current().record("query_id", query_id.to_string());
@@ -201,21 +202,20 @@ pub async fn execute_query(
 
             let is_ddl = schema_cache::is_ddl(&sql);
 
-            let history_entry = QueryHistoryEntry {
-                id: query_id,
-                connection_id,
-                sql,
-                executed_at: chrono::Utc::now(),
-                duration_ms: result.execution_time_ms,
-                row_count: Some(row_count),
-                status: QueryStatus::Success,
-                error_message: None,
-            };
-            {
+            if record_history.unwrap_or(true) {
+                let history_entry = QueryHistoryEntry {
+                    id: query_id,
+                    connection_id,
+                    sql,
+                    executed_at: chrono::Utc::now(),
+                    duration_ms: result.execution_time_ms,
+                    row_count: Some(row_count),
+                    status: QueryStatus::Success,
+                    error_message: None,
+                };
                 let config_store = state.config_store.clone();
-                let entry = history_entry.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = config_store.add_to_history(&entry).await {
+                    if let Err(e) = config_store.add_to_history(&history_entry).await {
                         tracing::warn!(error = %e, "Failed to write query history");
                     }
                 });
@@ -265,6 +265,7 @@ pub async fn execute_query_columnar(
     connection_id: Uuid,
     sql: String,
     query_id: Option<Uuid>,
+    record_history: Option<bool>,
 ) -> Result<purrql_core::models::columnar::ColumnarResult, IpcError> {
     let query_id = query_id.unwrap_or_else(Uuid::new_v4);
     tracing::Span::current().record("query_id", query_id.to_string());
@@ -305,21 +306,20 @@ pub async fn execute_query_columnar(
 
             let is_ddl = schema_cache::is_ddl(&sql);
 
-            let history_entry = QueryHistoryEntry {
-                id: query_id,
-                connection_id,
-                sql,
-                executed_at: chrono::Utc::now(),
-                duration_ms: result.execution_time_ms,
-                row_count: Some(row_count),
-                status: QueryStatus::Success,
-                error_message: None,
-            };
-            {
+            if record_history.unwrap_or(true) {
+                let history_entry = QueryHistoryEntry {
+                    id: query_id,
+                    connection_id,
+                    sql,
+                    executed_at: chrono::Utc::now(),
+                    duration_ms: result.execution_time_ms,
+                    row_count: Some(row_count),
+                    status: QueryStatus::Success,
+                    error_message: None,
+                };
                 let config_store = state.config_store.clone();
-                let entry = history_entry.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = config_store.add_to_history(&entry).await {
+                    if let Err(e) = config_store.add_to_history(&history_entry).await {
                         tracing::warn!(error = %e, "Failed to write query history");
                     }
                 });
