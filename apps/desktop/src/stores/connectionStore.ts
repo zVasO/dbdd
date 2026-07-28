@@ -71,7 +71,6 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         connecting: false,
         lostConnectionIds: s.lostConnectionIds.filter((x) => x !== connectionId),
       }));
-      await get().loadSavedConnections();
       return connectionId;
     } catch (e) {
       const msg = extractErrorMessage(e);
