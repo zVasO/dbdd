@@ -1,10 +1,10 @@
 import { create } from 'zustand';
-import { ipc, extractErrorMessage } from '../lib/ipc';
+import { ipc, extractErrorMessage, isCancellationError } from '../lib/ipc';
 import { showErrorToast } from './toastStore';
 import { useActivityStore } from './activityStore';
 import { useConnectionStore } from './connectionStore';
 import { usePreferencesStore } from './preferencesStore';
-import { useResultStore, registerAdjacentTabResolver } from './resultStore';
+import { useResultStore, registerAdjacentTabResolver, FLUSH_THRESHOLD } from './resultStore';
 import { saveSession } from '../lib/sessionRecovery';
 import { splitStatements } from '../lib/sql-utils';
 import type { QueryResult, QueryHistoryEntry, ColumnarResult } from '../lib/types';
@@ -100,6 +100,47 @@ function getActiveConnectionId(): string | null {
   return useConnectionStore.getState().activeConnectionId;
 }
 
+/**
+ * Streams currently registered per tab. Kept at module scope (not only in the
+ * stream callbacks' closures) so `closeTab` can tear a stream down: without
+ * this the backend keeps emitting chunks for a tab that no longer exists.
+ */
+interface ActiveStream {
+  connectionId: string;
+  queryId: string;
+  activityId: string;
+  startedAt: number;
+  dispose: () => void;
+}
+
+const activeStreams = new Map<string, ActiveStream>();
+
+/** Cancellation is best-effort: a driver without server-side cancel still frees the tab. */
+function cancelQuietly(connectionId: string, queryId: string): void {
+  ipc.cancelQuery(connectionId, queryId).catch((e) => {
+    console.warn('[queryStore] Cancel failed:', e);
+  });
+}
+
+/**
+ * Unregister a tab's stream listeners, optionally cancelling it backend-side.
+ * Idempotent: whichever of cancel / terminal-event / close happens first wins.
+ */
+function releaseStream(tabId: string, cancel: boolean): void {
+  const stream = activeStreams.get(tabId);
+  if (!stream) return;
+  activeStreams.delete(tabId);
+  stream.dispose();
+  if (cancel) {
+    cancelQuietly(stream.connectionId, stream.queryId);
+    // The terminal event is no longer listened for, so close out the activity
+    // entry here or it stays "running" forever.
+    useActivityStore
+      .getState()
+      .logError(stream.activityId, Math.round(performance.now() - stream.startedAt), 'Cancelled');
+  }
+}
+
 function computeVisibleTabs(allTabs: QueryTab[], connId: string | null): QueryTab[] {
   if (!connId) return allTabs.filter((t) => !t.connectionId);
   return allTabs.filter((t) => t.connectionId === connId || !t.connectionId);
@@ -180,6 +221,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       ? { ...activeTabIds, [connId]: newActiveId ?? '' }
       : activeTabIds;
     set({ allTabs: newAllTabs, activeTabIds: newActiveTabIds });
+    releaseStream(id, true);
     useResultStore.getState().clearResult(id);
     get()._syncVisibleTabs();
   },
@@ -292,8 +334,13 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         const isTableBrowse = !!tab.table;
 
         if (hasSmallLimit || isTableBrowse) {
-          // Single-shot columnar path (fast for small results)
-          const result = await ipc.executeQueryColumnar(connectionId, tab.sql);
+          // Single-shot columnar path (fast for small results). The id is
+          // generated here and published before the await so the Stop button
+          // has something to cancel while the query runs.
+          const queryId = crypto.randomUUID();
+          set((s) => updateTab(s, tabId, (t) => ({ ...t, activeQueryId: queryId })));
+
+          const result = await ipc.executeQueryColumnar(connectionId, tab.sql, queryId);
           const durationMs = Math.round(performance.now() - startTime);
           useActivityStore.getState().logSuccess(activityId, durationMs, result.row_count);
           useResultStore.getState().setColumnarResult(tabId, result);
@@ -319,7 +366,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
               useResultStore.getState().appendChunk(tabId, chunk.offset, chunk.data);
             },
             onDone: (done) => {
-              cleanup();
+              releaseStream(tabId, false);
               const durationMs = done.execution_time_ms;
               useResultStore.getState().finishStream(tabId, done.total_rows, durationMs);
               activity.logSuccess(activityId, durationMs, done.total_rows);
@@ -328,7 +375,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
               set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null })));
             },
             onError: (err) => {
-              cleanup();
+              releaseStream(tabId, false);
               useResultStore.getState().setError(tabId, err.error);
               const durationMs = Math.round(performance.now() - startTime);
               activity.logError(activityId, durationMs, err.error);
@@ -336,10 +383,43 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
               set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null, error: err.error })));
             },
+            onCancelled: (cancelled) => {
+              releaseStream(tabId, false);
+              useResultStore.getState().finishStream(tabId, cancelled.total_rows, cancelled.execution_time_ms, true);
+              activity.logError(activityId, cancelled.execution_time_ms, 'Cancelled');
+
+              set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null })));
+            },
+          });
+
+          // The tab may have been closed while the listeners were registering;
+          // starting the stream then would leave it running for nobody.
+          if (!get().allTabs.some((t) => t.id === tabId)) {
+            cleanup();
+            activity.logError(activityId, Math.round(performance.now() - startTime), 'Cancelled');
+            return;
+          }
+          activeStreams.set(tabId, {
+            connectionId,
+            queryId,
+            activityId,
+            startedAt: startTime,
+            dispose: cleanup,
           });
 
           // Now start the stream — listeners are already registered
-          await ipc.executeQueryStream(connectionId, tab.sql, undefined, queryId);
+          try {
+            await ipc.executeQueryStream(connectionId, tab.sql, FLUSH_THRESHOLD, queryId);
+          } catch (e) {
+            releaseStream(tabId, false);
+            throw e;
+          }
+
+          // The tab can also disappear while the stream is starting; a no-op
+          // when `closeTab` already tore this stream down.
+          if (!get().allTabs.some((t) => t.id === tabId)) {
+            releaseStream(tabId, true);
+          }
 
           // Streaming is event-driven — don't fall through to catch block
           return;
@@ -347,6 +427,14 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       }
     } catch (e) {
       const durationMs = Math.round(performance.now() - startTime);
+
+      if (isCancellationError(e)) {
+        useActivityStore.getState().logError(activityId, durationMs, 'Cancelled');
+        useResultStore.getState().markCancelled(tabId);
+        set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null })));
+        return;
+      }
+
       const errMsg = extractErrorMessage(e);
       useActivityStore.getState().logError(activityId, durationMs, errMsg);
       useResultStore.getState().setError(tabId, errMsg);

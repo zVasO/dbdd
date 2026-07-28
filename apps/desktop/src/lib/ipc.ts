@@ -4,8 +4,17 @@ import type {
   ConnectionConfig, SavedConnection, QueryResult, ColumnarResult,
   DatabaseInfo, SchemaInfo, TableInfo, TableStructure, TableRef, ColumnRef,
   QueryHistoryEntry, IpcError,
-  StreamMeta, StreamChunk, StreamDone, StreamError,
+  StreamMeta, StreamChunk, StreamDone, StreamError, StreamCancelled,
 } from './types';
+
+/** `code` of the IpcError returned when a query is cancelled by the user. */
+export const QUERY_CANCELLED_CODE = 'QUERY_CANCELLED';
+
+/** Whether a rejected IPC call failed because the user cancelled the query. */
+export function isCancellationError(e: unknown): boolean {
+  return !!e && typeof e === 'object' && 'code' in e
+    && (e as IpcError).code === QUERY_CANCELLED_CODE;
+}
 
 /**
  * Extract a human-readable error message from a Tauri IPC error.
@@ -59,11 +68,11 @@ export const ipc = {
   getAiKey: (provider: string) =>
     invoke<string | null>('get_ai_key', { provider }),
 
-  executeQuery: (connectionId: string, sql: string) =>
-    invoke<QueryResult>('execute_query', { connectionId, sql }),
+  executeQuery: (connectionId: string, sql: string, queryId?: string) =>
+    invoke<QueryResult>('execute_query', { connectionId, sql, queryId }),
 
-  executeQueryColumnar: (connectionId: string, sql: string) =>
-    invoke<ColumnarResult>('execute_query_columnar', { connectionId, sql }),
+  executeQueryColumnar: (connectionId: string, sql: string, queryId?: string) =>
+    invoke<ColumnarResult>('execute_query_columnar', { connectionId, sql, queryId }),
 
   cancelQuery: (connectionId: string, queryId: string) =>
     invoke<void>('cancel_query', { connectionId, queryId }),
@@ -122,6 +131,7 @@ export const ipc = {
     onChunk: (chunk: StreamChunk) => void;
     onDone: (done: StreamDone) => void;
     onError: (error: StreamError) => void;
+    onCancelled: (cancelled: StreamCancelled) => void;
   }): Promise<() => void> => {
     const unlisteners = await Promise.all([
       listen<Omit<StreamMeta, 'query_id'>>(
@@ -139,6 +149,10 @@ export const ipc = {
       listen<Omit<StreamError, 'query_id'>>(
         `query_error_${queryId}`,
         (e) => callbacks.onError({ ...e.payload, query_id: queryId }),
+      ),
+      listen<Omit<StreamCancelled, 'query_id'>>(
+        `query_cancelled_${queryId}`,
+        (e) => callbacks.onCancelled({ ...e.payload, query_id: queryId }),
       ),
     ]);
     return () => unlisteners.forEach((fn) => fn());

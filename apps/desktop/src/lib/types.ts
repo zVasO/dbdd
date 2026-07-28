@@ -243,3 +243,9 @@ export interface StreamError {
   query_id: string;
   error: string;
 }
+
+export interface StreamCancelled {
+  query_id: string;
+  total_rows: number;
+  execution_time_ms: number;
+}

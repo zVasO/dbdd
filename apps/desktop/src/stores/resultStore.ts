@@ -187,7 +187,11 @@ const EMPTY_COLUMNAR_DEFAULTS = {
 };
 
 // --- Stream buffering (module-level, outside Zustand to avoid unnecessary re-renders) ---
-const FLUSH_THRESHOLD = 5000;
+/**
+ * Rows buffered before merging into the store. Also the chunk size requested
+ * from the backend, so one emitted chunk maps to exactly one flush.
+ */
+export const FLUSH_THRESHOLD = 5000;
 
 interface StreamBuffer {
   pendingChunks: ColumnData[][];
@@ -286,10 +290,13 @@ interface ResultState {
   setColumnarResult: (tabId: string, result: ColumnarResult) => void;
   setColumnarResults: (tabId: string, results: ColumnarResult[], error: string | null) => void;
   setError: (tabId: string, error: string) => void;
+  /** Terminal state for a cancelled query: not an error, but whatever is shown is not the answer */
+  markCancelled: (tabId: string) => void;
   setActiveResultIndex: (tabId: string, index: number) => void;
   initStream: (tabId: string, meta: StreamMeta) => void;
   appendChunk: (tabId: string, offset: number, chunkData: ColumnData[]) => void;
-  finishStream: (tabId: string, totalRows: number, executionTimeMs: number) => void;
+  /** `partial` marks a stream that stopped early (cancelled) so the tab shows it needs a re-run */
+  finishStream: (tabId: string, totalRows: number, executionTimeMs: number, partial?: boolean) => void;
   updateLastAccessed: (tabId: string) => void;
   clearResult: (tabId: string) => void;
   clearAll: () => void;
@@ -473,6 +480,25 @@ export const useResultStore = create<ResultState>((set, get) => ({
     }));
   },
 
+  markCancelled: (tabId) => {
+    set((s) => {
+      const current = s.results[tabId];
+      if (!current) return s;
+      return {
+        results: {
+          ...s.results,
+          [tabId]: {
+            ...current,
+            isExecuting: false,
+            isStreaming: false,
+            isStale: true,
+            error: null,
+          },
+        },
+      };
+    });
+  },
+
   setActiveResultIndex: (tabId, index) => {
     set((s) => {
       const current = s.results[tabId];
@@ -581,7 +607,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
     }
   },
 
-  finishStream: (tabId, totalRows, executionTimeMs) => {
+  finishStream: (tabId, totalRows, executionTimeMs, partial = false) => {
     // Flush any remaining buffered chunks before finalizing
     const buffer = streamBuffers.get(tabId);
     const pendingChunks = buffer?.pendingChunks ?? [];
@@ -612,7 +638,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
           data: merged,
           isExecuting: false,
           isStreaming: false,
-          isStale: false,
+          isStale: partial,
           rowCount: totalRows,
           totalRows: totalRows,
           executionTimeMs,
