@@ -43,11 +43,34 @@ fn strip_leading_comments(sql: &str) -> &str {
 /// Remove SQL line (`-- ...`) and block (`/* ... */`) comments so keyword
 /// detection isn't fooled by a row-limiting keyword that only appears inside
 /// a comment (or separated from the real clause by a long trailing one).
+///
+/// Quote-aware: `--`/`/*` inside a `'...'` string literal or a `"..."`
+/// quoted identifier are left untouched, including the doubled-quote
+/// (`''` / `""`) escape for a literal quote character within one, so a
+/// comment marker embedded in a literal never swallows real SQL that
+/// follows it (e.g. an actual trailing `LIMIT`).
 fn strip_comments(sql: &str) -> String {
     let mut out = String::with_capacity(sql.len());
     let mut rest = sql;
+    let mut quote: Option<char> = None;
     while !rest.is_empty() {
-        if rest.starts_with("--") {
+        let ch = rest.chars().next().expect("rest is non-empty");
+        if let Some(q) = quote {
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+            if ch == q {
+                if rest.starts_with(q) {
+                    out.push(q);
+                    rest = &rest[q.len_utf8()..];
+                } else {
+                    quote = None;
+                }
+            }
+        } else if ch == '\'' || ch == '"' {
+            quote = Some(ch);
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+        } else if rest.starts_with("--") {
             match rest.find('\n') {
                 Some(i) => {
                     out.push('\n');
@@ -64,7 +87,6 @@ fn strip_comments(sql: &str) -> String {
                 None => break,
             }
         } else {
-            let ch = rest.chars().next().expect("rest is non-empty");
             out.push(ch);
             rest = &rest[ch.len_utf8()..];
         }
@@ -632,6 +654,29 @@ mod tests {
         assert!(needs_safety_limit(sql));
         // The leading newline before LIMIT closes the `--` comment in every
         // dialect, so the appended clause lands as live SQL, not more comment.
+        assert_eq!(
+            apply_safety_limit(sql),
+            format!("{}\nLIMIT {}", sql, SAFETY_ROW_LIMIT)
+        );
+    }
+
+    #[test]
+    fn comment_marker_inside_string_literal_does_not_hide_a_real_trailing_limit() {
+        // A `--` or `/*` inside a string literal must not be treated as the
+        // start of a comment: doing so would swallow the real `limit 10`
+        // that follows, causing a second LIMIT to be appended (invalid SQL).
+        assert!(!needs_safety_limit(
+            "select * from t where x = '--' limit 10"
+        ));
+        assert!(!needs_safety_limit(
+            "select * from t where x = 'a/*b' limit 10"
+        ));
+    }
+
+    #[test]
+    fn comment_marker_inside_string_literal_without_limit_still_gets_one() {
+        let sql = "select '--' from t";
+        assert!(needs_safety_limit(sql));
         assert_eq!(
             apply_safety_limit(sql),
             format!("{}\nLIMIT {}", sql, SAFETY_ROW_LIMIT)
