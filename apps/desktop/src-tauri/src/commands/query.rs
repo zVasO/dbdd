@@ -362,15 +362,16 @@ pub async fn cancel_query(
             .ok_or(IpcError::from("Connection not found"))?;
         Arc::clone(&active.connection)
     };
-    let abandoned = signal_cancel(&state.stream_cancellers, &query_id);
-    // Drivers without server-side cancellation still let the command abandon
-    // its wait, which is what frees the tab; only surface their error when
-    // there was no in-flight wait to abandon.
-    if let Err(e) = conn.cancel_query(&query_id).await {
-        if !abandoned {
-            return Err(IpcError::from(e));
+    // Without a registered canceller nothing of ours is still running, and the
+    // driver call must be skipped rather than merely tolerated: the Postgres
+    // implementation ignores `query_id` and cancels whichever backend it finds
+    // active, so a cancel with nothing to cancel can only hit someone else's
+    // query. Abandoning the wait is what frees the tab; drivers with no
+    // server-side cancellation fail here harmlessly.
+    if signal_cancel(&state.stream_cancellers, &query_id) {
+        if let Err(e) = conn.cancel_query(&query_id).await {
+            tracing::debug!(error = %e, "Driver-level cancellation unavailable");
         }
-        tracing::debug!(error = %e, "Driver-level cancellation unavailable");
     }
     state
         .event_bus
