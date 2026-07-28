@@ -40,6 +40,48 @@ fn strip_leading_comments(sql: &str) -> &str {
     s
 }
 
+/// Remove SQL line (`-- ...`) and block (`/* ... */`) comments so keyword
+/// detection isn't fooled by a row-limiting keyword that only appears inside
+/// a comment (or separated from the real clause by a long trailing one).
+fn strip_comments(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut rest = sql;
+    while !rest.is_empty() {
+        if rest.starts_with("--") {
+            match rest.find('\n') {
+                Some(i) => {
+                    out.push('\n');
+                    rest = &rest[i + 1..];
+                }
+                None => break,
+            }
+        } else if rest.starts_with("/*") {
+            match rest[2..].find("*/") {
+                Some(i) => {
+                    out.push(' ');
+                    rest = &rest[2 + i + 2..];
+                }
+                None => break,
+            }
+        } else {
+            let ch = rest.chars().next().expect("rest is non-empty");
+            out.push(ch);
+            rest = &rest[ch.len_utf8()..];
+        }
+    }
+    out
+}
+
+/// Whether `sql` contains a row-limiting keyword (`LIMIT`, or `FETCH` as in
+/// the standard `FETCH FIRST ... ROWS ONLY` / `OFFSET ... FETCH NEXT ...`
+/// forms) as a standalone token, not merely as a substring of an identifier
+/// like `rate_limit_exceeded`.
+fn has_limit_keyword(sql: &str) -> bool {
+    strip_comments(sql)
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .any(|tok| tok.eq_ignore_ascii_case("LIMIT") || tok.eq_ignore_ascii_case("FETCH"))
+}
+
 /// Detect whether a SQL string is a SELECT-like query missing a LIMIT clause.
 /// Handles CTEs (`WITH ... SELECT`) and leading SQL comments.
 fn needs_safety_limit(sql: &str) -> bool {
@@ -54,17 +96,7 @@ fn needs_safety_limit(sql: &str) -> bool {
         return false;
     }
 
-    // Case-insensitive search for LIMIT in the tail without allocating.
-    // `start` may land mid-UTF-8-char, so slice safely instead of indexing.
-    let len = trimmed.len();
-    let start = len.saturating_sub(200);
-    let tail = trimmed.get(start..).unwrap_or(trimmed);
-    let tail_bytes = tail.as_bytes();
-    let limit_bytes = b"LIMIT";
-    let has_limit = tail_bytes.windows(limit_bytes.len()).any(|window| {
-        window.eq_ignore_ascii_case(limit_bytes)
-    });
-    !has_limit
+    !has_limit_keyword(trimmed)
 }
 
 fn apply_safety_limit(sql: &str) -> String {
@@ -310,7 +342,12 @@ pub async fn execute_batch(
         // (e.g., CREATE TABLE must complete before INSERT INTO that table)
         let mut results = Vec::with_capacity(statements.len());
         for sql in statements {
-            let result = match conn.execute(&sql).await {
+            let effective_sql = if needs_safety_limit(&sql) {
+                apply_safety_limit(&sql)
+            } else {
+                sql
+            };
+            let result = match conn.execute(&effective_sql).await {
                 Ok(r) => Ok(r),
                 Err(e) => Err(IpcError::from(e)),
             };
@@ -323,7 +360,12 @@ pub async fn execute_batch(
         stream::iter(statements.into_iter().map(|sql| {
             let conn = Arc::clone(&conn);
             async move {
-                match conn.execute(&sql).await {
+                let effective_sql = if needs_safety_limit(&sql) {
+                    apply_safety_limit(&sql)
+                } else {
+                    sql
+                };
+                match conn.execute(&effective_sql).await {
                     Ok(result) => Ok(result),
                     Err(e) => Err(IpcError::from(e)),
                 }
@@ -551,5 +593,32 @@ mod tests {
     #[test]
     fn ignores_non_select() {
         assert!(!needs_safety_limit("UPDATE users SET x = 1"));
+        assert!(!needs_safety_limit("INSERT INTO users (id) VALUES (1)"));
+    }
+
+    #[test]
+    fn identifier_containing_limit_is_not_a_false_positive() {
+        assert!(needs_safety_limit(
+            "SELECT * FROM t WHERE rate_limit_exceeded = true"
+        ));
+    }
+
+    #[test]
+    fn limit_followed_by_long_trailing_comment_is_not_a_false_negative() {
+        let sql = format!(
+            "SELECT * FROM t LIMIT 10 -- {}",
+            "long comment ".repeat(20)
+        );
+        assert!(sql.len() > 200);
+        assert!(!needs_safety_limit(&sql));
+    }
+
+    #[test]
+    fn limit_string_literal_is_a_documented_false_negative_not_invalid_sql() {
+        // "LIMIT" inside a string literal is indistinguishable from a real
+        // keyword by this token-based check, so worst case we skip adding
+        // the safety limit — we never emit a second, syntactically invalid
+        // LIMIT clause.
+        assert!(!needs_safety_limit("SELECT 'LIMIT'"));
     }
 }
