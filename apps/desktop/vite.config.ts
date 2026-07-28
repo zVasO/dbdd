@@ -29,6 +29,7 @@ export default defineConfig({
     },
   },
   build: {
+    target: 'esnext',
     rollupOptions: {
       output: {
         manualChunks(id: string) {
@@ -36,6 +37,15 @@ export default defineConfig({
           if (id.includes('@codemirror/') || id.includes('/codemirror/') || id.includes('@lezer/')) return 'codemirror';
           if (id.includes('/react-dom/')) return 'vendor';
           if (id.includes('node_modules/react/')) return 'vendor';
+          if (
+            id.includes('/clsx/') ||
+            id.includes('/tailwind-merge/') ||
+            id.includes('/class-variance-authority/') ||
+            id.includes('/react-is/') ||
+            id.includes('/zustand/') ||
+            id.includes('/use-sync-external-store/') ||
+            id.includes('/tslib/')
+          ) return 'vendor';
           if (id.includes('@tanstack/')) return 'tanstack';
           if (id.includes('/xlsx/')) return 'xlsx';
           if (id.includes('/recharts/') || id.includes('/victory-vendor/')) return 'charts';
