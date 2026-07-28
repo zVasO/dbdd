@@ -58,19 +58,33 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
         config,
         connectedAt: new Date(),
       };
-      set((s) => ({
-        // Prevent duplicates: remove any existing entry for the same config id or connection id
-        activeConnections: [
-          ...s.activeConnections.filter(
-            (c) => c.connectionId !== connectionId && c.config.id !== config.id,
-          ),
-          activeConn,
-        ],
-        activeConnectionId: connectionId,
-        activeConfig: config,
-        connecting: false,
-        lostConnectionIds: s.lostConnectionIds.filter((x) => x !== connectionId),
-      }));
+      set((s) => {
+        const existing = s.savedConnections.find((c) => c.config.id === config.id);
+        const now = new Date().toISOString();
+        // The backend always persists config on a successful connect; mirror that
+        // locally so consumers of savedConnections see a freshly-connected entry
+        // without a full reload/re-decryption round-trip.
+        const savedEntry: SavedConnection = existing
+          ? { ...existing, config, last_used_at: now }
+          : { config, created_at: now, last_used_at: now, sort_order: s.savedConnections.length };
+
+        return {
+          // Prevent duplicates: remove any existing entry for the same config id or connection id
+          activeConnections: [
+            ...s.activeConnections.filter(
+              (c) => c.connectionId !== connectionId && c.config.id !== config.id,
+            ),
+            activeConn,
+          ],
+          activeConnectionId: connectionId,
+          activeConfig: config,
+          connecting: false,
+          lostConnectionIds: s.lostConnectionIds.filter((x) => x !== connectionId),
+          savedConnections: existing
+            ? s.savedConnections.map((c) => (c.config.id === config.id ? savedEntry : c))
+            : [...s.savedConnections, savedEntry],
+        };
+      });
       return connectionId;
     } catch (e) {
       const msg = extractErrorMessage(e);
