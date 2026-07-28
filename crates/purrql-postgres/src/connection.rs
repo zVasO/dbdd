@@ -47,16 +47,66 @@ fn is_closed_connection_error(e: &sqlx::Error) -> bool {
     }
 }
 
-/// Run `f` once, retrying a single time if it fails with a closed-connection
-/// error. Any other error (including a second closed-connection error) is
-/// returned as-is.
-async fn with_retry<F, Fut, T>(mut f: F) -> std::result::Result<T, sqlx::Error>
+/// Strip leading SQL comments (line and block) to find the first real keyword.
+fn strip_leading_comments(sql: &str) -> &str {
+    let mut s = sql.trim_start();
+    loop {
+        if s.starts_with("--") {
+            s = s.find('\n').map_or("", |i| &s[i + 1..]).trim_start();
+        } else if s.starts_with("/*") {
+            s = s
+                .get(2..)
+                .and_then(|r| r.find("*/").map(|i| &r[i + 2..]))
+                .unwrap_or("")
+                .trim_start();
+        } else {
+            break;
+        }
+    }
+    s
+}
+
+/// Whether `s` starts with `word` as a standalone keyword (not merely as a
+/// prefix of a longer identifier).
+fn starts_with_keyword(s: &str, word: &str) -> bool {
+    s.get(..word.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(word))
+        && s[word.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+}
+
+/// Whether `sql` is read-only enough to safely retry after a
+/// closed-connection error. A `sqlx::Error::Io` carries no phase
+/// information: it looks identical whether the statement never reached the
+/// server (safe to retry) or it already executed and only the response was
+/// lost (retrying would silently re-execute it). Rather than guess, only
+/// statements that are provably side-effect-free — `SELECT`, `SHOW`,
+/// `EXPLAIN` — are retried. `WITH` is deliberately excluded even though most
+/// CTEs are reads, because Postgres allows data-modifying CTEs
+/// (`WITH x AS (INSERT ...) SELECT ...`) that this keyword check can't tell
+/// apart from a plain read. A leading comment that can't be cheaply skipped
+/// also disables retry. False negatives (an unnecessary lack of retry) are
+/// acceptable; false positives (retrying a write) are not.
+fn is_retryable_statement(sql: &str) -> bool {
+    let trimmed = strip_leading_comments(sql);
+    ["SELECT", "SHOW", "EXPLAIN"]
+        .iter()
+        .any(|kw| starts_with_keyword(trimmed, kw))
+}
+
+/// Run `f` once, retrying a single time if `retryable` is set and the first
+/// attempt fails with a closed-connection error. Any other outcome
+/// (including a second closed-connection error, or `retryable` being false)
+/// is returned as-is.
+async fn with_retry<F, Fut, T>(retryable: bool, mut f: F) -> std::result::Result<T, sqlx::Error>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = std::result::Result<T, sqlx::Error>>,
 {
     match f().await {
-        Err(e) if is_closed_connection_error(&e) => f().await,
+        Err(e) if retryable && is_closed_connection_error(&e) => f().await,
         other => other,
     }
 }
@@ -255,9 +305,11 @@ impl DatabaseConnection for PostgresConnection {
     async fn execute(&self, sql: &str) -> Result<QueryResult> {
         let start = std::time::Instant::now();
 
-        let rows: Vec<PgRow> = with_retry(|| sqlx::query(sql).fetch_all(&self.pool))
-            .await
-            .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
+        let rows: Vec<PgRow> = with_retry(is_retryable_statement(sql), || {
+            sqlx::query(sql).fetch_all(&self.pool)
+        })
+        .await
+        .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
 
         let (columns, result_rows) = extract_pg_result(&rows);
         let row_count = result_rows.len() as u64;
@@ -309,9 +361,11 @@ impl DatabaseConnection for PostgresConnection {
             query
         };
 
-        let rows: Vec<PgRow> = with_retry(|| build_query().fetch_all(&self.pool))
-            .await
-            .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
+        let rows: Vec<PgRow> = with_retry(is_retryable_statement(sql), || {
+            build_query().fetch_all(&self.pool)
+        })
+        .await
+        .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
 
         let (columns, result_rows) = extract_pg_result(&rows);
         let row_count = result_rows.len() as u64;
@@ -466,7 +520,7 @@ impl DatabaseConnection for PostgresConnection {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_closed_connection_error, with_retry};
+    use super::{is_closed_connection_error, is_retryable_statement, with_retry};
     use std::sync::atomic::{AtomicU32, Ordering};
 
     fn io_error(kind: std::io::ErrorKind) -> sqlx::Error {
@@ -502,10 +556,51 @@ mod tests {
         )));
     }
 
+    #[test]
+    fn treats_select_show_explain_as_retryable_statements() {
+        assert!(is_retryable_statement("SELECT * FROM users"));
+        assert!(is_retryable_statement("  select 1"));
+        assert!(is_retryable_statement("SHOW TABLES"));
+        assert!(is_retryable_statement("EXPLAIN SELECT * FROM users"));
+        assert!(is_retryable_statement(
+            "-- get the users\nSELECT * FROM users"
+        ));
+        assert!(is_retryable_statement(
+            "/* block comment */ SELECT * FROM users"
+        ));
+    }
+
+    #[test]
+    fn does_not_treat_writes_or_ddl_as_retryable_statements() {
+        assert!(!is_retryable_statement("INSERT INTO t VALUES (1)"));
+        assert!(!is_retryable_statement("UPDATE t SET x = 1"));
+        assert!(!is_retryable_statement("DELETE FROM t"));
+        assert!(!is_retryable_statement("DROP TABLE t"));
+        assert!(!is_retryable_statement("CREATE TABLE t (id INT)"));
+    }
+
+    #[test]
+    fn does_not_treat_a_data_modifying_cte_as_retryable() {
+        // Postgres allows WITH to wrap a write; a keyword check alone can't
+        // tell this apart from a read-only CTE, so WITH is never retried.
+        assert!(!is_retryable_statement(
+            "WITH x AS (INSERT INTO t DEFAULT VALUES RETURNING id) SELECT * FROM x"
+        ));
+        assert!(!is_retryable_statement(
+            "WITH x AS (SELECT 1) SELECT * FROM x"
+        ));
+    }
+
+    #[test]
+    fn does_not_treat_an_identifier_prefix_as_the_keyword() {
+        assert!(!is_retryable_statement("SELECTFOO"));
+        assert!(!is_retryable_statement("SHOWCASE"));
+    }
+
     #[tokio::test]
     async fn retries_once_after_a_closed_connection_then_succeeds() {
         let attempts = AtomicU32::new(0);
-        let result = with_retry(|| {
+        let result = with_retry(true, || {
             let attempt = attempts.fetch_add(1, Ordering::SeqCst);
             async move {
                 if attempt == 0 {
@@ -524,7 +619,7 @@ mod tests {
     #[tokio::test]
     async fn does_not_retry_a_second_closed_connection_failure() {
         let attempts = AtomicU32::new(0);
-        let result: Result<i32, sqlx::Error> = with_retry(|| {
+        let result: Result<i32, sqlx::Error> = with_retry(true, || {
             attempts.fetch_add(1, Ordering::SeqCst);
             async move { Err(io_error(std::io::ErrorKind::BrokenPipe)) }
         })
@@ -537,9 +632,67 @@ mod tests {
     #[tokio::test]
     async fn does_not_retry_a_plain_query_error() {
         let attempts = AtomicU32::new(0);
-        let result: Result<i32, sqlx::Error> = with_retry(|| {
+        let result: Result<i32, sqlx::Error> = with_retry(true, || {
             attempts.fetch_add(1, Ordering::SeqCst);
             async move { Err(sqlx::Error::RowNotFound) }
+        })
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    /// (a) A read-only statement's closed-connection error is retried once.
+    #[tokio::test]
+    async fn read_only_statement_is_retried_on_closed_connection() {
+        let attempts = AtomicU32::new(0);
+        let result = with_retry(is_retryable_statement("SELECT * FROM users"), || {
+            let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if attempt == 0 {
+                    Err(io_error(std::io::ErrorKind::BrokenPipe))
+                } else {
+                    Ok(7)
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(result.unwrap(), 7);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    /// (b) INSERT/UPDATE never retry on a closed-connection error — the
+    /// error surfaces from the single attempt instead of risking a
+    /// duplicate write.
+    #[tokio::test]
+    async fn insert_and_update_are_not_retried_on_closed_connection() {
+        for sql in ["INSERT INTO t VALUES (1)", "UPDATE t SET x = 1"] {
+            let attempts = AtomicU32::new(0);
+            let result: Result<i32, sqlx::Error> = with_retry(is_retryable_statement(sql), || {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                async move { Err(io_error(std::io::ErrorKind::BrokenPipe)) }
+            })
+            .await;
+
+            assert!(result.is_err(), "{sql} should surface the error");
+            assert_eq!(
+                attempts.load(Ordering::SeqCst),
+                1,
+                "{sql} should not be retried"
+            );
+        }
+    }
+
+    /// (c) A data-modifying CTE never retries either, even though it starts
+    /// with WITH ... SELECT superficially.
+    #[tokio::test]
+    async fn data_modifying_cte_is_not_retried_on_closed_connection() {
+        let sql = "WITH x AS (INSERT INTO t DEFAULT VALUES RETURNING id) SELECT * FROM x";
+        let attempts = AtomicU32::new(0);
+        let result: Result<i32, sqlx::Error> = with_retry(is_retryable_statement(sql), || {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            async move { Err(io_error(std::io::ErrorKind::BrokenPipe)) }
         })
         .await;
 
