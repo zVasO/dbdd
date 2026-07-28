@@ -80,6 +80,33 @@ function buildQueryResult(result: ColumnarResult): QueryResult {
   };
 }
 
+const INTEGER_DATA_TYPES = new Set(['SmallInt', 'Integer', 'BigInt', 'Serial', 'BigSerial']);
+const FLOAT_DATA_TYPES = new Set(['Float', 'Double']);
+const JSON_DATA_TYPES = new Set(['Json', 'Jsonb']);
+
+/**
+ * Mirrors the Rust `column_kind_for_data_type` (purrql-core columnar.rs)
+ * mapping from a column's declared `data_type` to a `ColumnData['kind']`.
+ * Unit variants (e.g. `DataType::Integer`) arrive as a bare string; variants
+ * with fields (e.g. `DataType::Decimal { .. }`) arrive as a single-key object
+ * — either way the variant name is the discriminant. `Decimal` (and anything
+ * else not explicitly numeric/boolean/json) stays `Strings`, matching how
+ * every driver decodes it (Postgres/MySQL keep decimals as text to avoid
+ * precision loss).
+ *
+ * Used only as a fallback when `meta.column_kinds` is absent — the backend
+ * now sends the authoritative kind directly (see `initStream`) so the normal
+ * path never depends on this duplicating the Rust mapping exactly.
+ */
+function dataTypeToColumnKind(dataType: string | Record<string, unknown>): ColumnData['kind'] {
+  const variant = typeof dataType === 'string' ? dataType : Object.keys(dataType)[0];
+  if (INTEGER_DATA_TYPES.has(variant)) return 'Integers';
+  if (FLOAT_DATA_TYPES.has(variant)) return 'Floats';
+  if (variant === 'Boolean') return 'Booleans';
+  if (JSON_DATA_TYPES.has(variant)) return 'Json';
+  return 'Strings';
+}
+
 /** Map a CellValue type to ColumnData kind */
 function cellTypeToColumnKind(cellType: string): ColumnData['kind'] {
   switch (cellType) {
@@ -526,16 +553,11 @@ export const useResultStore = create<ResultState>((set, get) => ({
 
   initStream: (tabId, meta) => {
     // Create empty column arrays — rows will grow dynamically via appendChunk
-    // since total row count is unknown at stream start
-    const emptyData: ColumnData[] = meta.columns.map((col) => {
-      const dataType = typeof col.data_type === 'string'
-        ? col.data_type
-        : 'string';
-      const kind = dataType === 'integer' ? 'Integers'
-        : dataType === 'float' ? 'Floats'
-        : dataType === 'boolean' ? 'Booleans'
-        : dataType === 'json' ? 'Json'
-        : 'Strings';
+    // since total row count is unknown at stream start. Prefer the kind the
+    // backend already computed (meta.column_kinds, same source as every
+    // chunk's ColumnData) over re-deriving one from data_type.
+    const emptyData: ColumnData[] = meta.columns.map((col, idx) => {
+      const kind = meta.column_kinds?.[idx] ?? dataTypeToColumnKind(col.data_type);
       return { kind, values: [] } as ColumnData;
     });
 

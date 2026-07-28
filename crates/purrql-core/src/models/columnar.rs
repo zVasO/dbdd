@@ -131,17 +131,39 @@ pub enum ColumnKind {
     Json,
 }
 
+impl ColumnKind {
+    /// Wire tag matching `ColumnData`'s `kind` field (`Integers`/`Floats`/
+    /// `Booleans`/`Strings`/`Json`), so the kind sent once in stream metadata
+    /// and the `kind` tag on every chunk's `ColumnData` share one vocabulary.
+    pub fn as_column_data_tag(&self) -> &'static str {
+        match self {
+            ColumnKind::Integer => "Integers",
+            ColumnKind::Float => "Floats",
+            ColumnKind::Boolean => "Booleans",
+            ColumnKind::String => "Strings",
+            ColumnKind::Json => "Json",
+        }
+    }
+}
+
 /// Maps a column's declared `DataType` to the `ColumnKind` used to lay out
 /// its values. This is the single source of truth for streaming: it is
 /// computed once from the same column metadata sent to the frontend as
 /// `meta.columns`, then reused for every chunk so no chunk can re-infer a
 /// different kind from its own (possibly all-NULL) cells.
+///
+/// `Decimal` stays `String`, not `Float`: every driver (Postgres NUMERIC via
+/// `BigDecimal::to_string`, MySQL DECIMAL/NEWDECIMAL) decodes decimals to
+/// `CellValue::Text` on purpose, to avoid the precision loss `f64` would
+/// introduce. Bucketing it as `Float` would make `extract_float` return
+/// `None` for every row (a `Text` cell isn't `Integer`/`Float`), silently
+/// nulling every decimal value.
 pub fn column_kind_for_data_type(data_type: &DataType) -> ColumnKind {
     match data_type {
         DataType::SmallInt | DataType::Integer | DataType::BigInt | DataType::Serial | DataType::BigSerial => {
             ColumnKind::Integer
         }
-        DataType::Float | DataType::Double | DataType::Decimal { .. } => ColumnKind::Float,
+        DataType::Float | DataType::Double => ColumnKind::Float,
         DataType::Boolean => ColumnKind::Boolean,
         DataType::Json | DataType::Jsonb => ColumnKind::Json,
         _ => ColumnKind::String,
@@ -450,7 +472,7 @@ mod tests {
         ));
         assert!(matches!(
             column_kind_for_data_type(&DataType::Decimal { precision: None, scale: None }),
-            ColumnKind::Float
+            ColumnKind::String
         ));
         assert!(matches!(
             column_kind_for_data_type(&DataType::Boolean),
@@ -464,5 +486,41 @@ mod tests {
             column_kind_for_data_type(&DataType::Uuid),
             ColumnKind::String
         ));
+    }
+
+    #[test]
+    fn decimal_chunk_preserves_text_encoded_values_instead_of_nulling_them() {
+        // Postgres NUMERIC and MySQL DECIMAL/NEWDECIMAL both decode to
+        // CellValue::Text to keep exact precision — the kind used to lay out
+        // a Decimal column must accept that, not silently null every value.
+        let kinds = vec![column_kind_for_data_type(&DataType::Decimal {
+            precision: Some(10),
+            scale: Some(2),
+        })];
+
+        let chunk = vec![
+            row(vec![CellValue::Text("123.45".to_string())]),
+            row(vec![CellValue::Null]),
+            row(vec![CellValue::Text("-0.10".to_string())]),
+        ];
+        let result = rows_to_columnar_chunk(&chunk, 1, &kinds);
+        assert_eq!(result.len(), 1);
+        assert!(matches!(
+            &result[0],
+            ColumnData::Strings { values } if values == &vec![
+                Some("123.45".to_string()),
+                None,
+                Some("-0.10".to_string()),
+            ]
+        ));
+    }
+
+    #[test]
+    fn column_kind_wire_tag_matches_column_data_kind_vocabulary() {
+        assert_eq!(ColumnKind::Integer.as_column_data_tag(), "Integers");
+        assert_eq!(ColumnKind::Float.as_column_data_tag(), "Floats");
+        assert_eq!(ColumnKind::Boolean.as_column_data_tag(), "Booleans");
+        assert_eq!(ColumnKind::String.as_column_data_tag(), "Strings");
+        assert_eq!(ColumnKind::Json.as_column_data_tag(), "Json");
     }
 }

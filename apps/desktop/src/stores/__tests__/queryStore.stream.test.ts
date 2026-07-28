@@ -36,7 +36,7 @@ const STREAMING_SQL = 'SELECT * FROM big_table';
 
 const COLUMN: ColumnMeta = {
   name: 'id',
-  data_type: 'integer',
+  data_type: 'Integer',
   native_type: 'int4',
   nullable: false,
   is_primary_key: true,
@@ -44,7 +44,13 @@ const COLUMN: ColumnMeta = {
 };
 
 function streamMeta(queryId: string): StreamMeta {
-  return { query_id: queryId, columns: [COLUMN], result_type: 'Select', warnings: [] };
+  return {
+    query_id: queryId,
+    columns: [COLUMN],
+    column_kinds: ['Integers'],
+    result_type: 'Select',
+    warnings: [],
+  };
 }
 
 function columnarResult(queryId: string): ColumnarResult {

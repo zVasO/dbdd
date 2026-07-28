@@ -223,6 +223,13 @@ export type AppEvent =
 export interface StreamMeta {
   query_id: string;
   columns: ColumnMeta[];
+  /**
+   * One `ColumnData['kind']` per column, computed once on the Rust side from
+   * the same `data_type` metadata as `columns` and reused for every chunk —
+   * the frontend should adopt these directly rather than re-deriving a kind
+   * from `data_type` (see `initStream`/`dataTypeToColumnKind` in resultStore.ts).
+   */
+  column_kinds?: ColumnData['kind'][];
   result_type: string;
   warnings: string[];
 }

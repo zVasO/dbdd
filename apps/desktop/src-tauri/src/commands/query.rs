@@ -536,13 +536,21 @@ pub async fn execute_query_stream(
                     .iter()
                     .map(|c| column_kind_for_data_type(&c.data_type))
                     .collect();
+                let column_kind_tags: Vec<&'static str> = column_kinds
+                    .iter()
+                    .map(ColumnKind::as_column_data_tag)
+                    .collect();
 
-                // Emit metadata (row_count unknown until stream completes)
+                // Emit metadata (row_count unknown until stream completes).
+                // `column_kinds` is the same list applied to every chunk below,
+                // so the frontend can adopt it directly instead of re-deriving
+                // a kind from `data_type` itself.
                 let _ = app_clone.emit(
                     &event_meta,
                     serde_json::json!({
                         "query_id": query_id.to_string(),
                         "columns": columns,
+                        "column_kinds": column_kind_tags,
                         "result_type": "Select",
                         "warnings": [],
                     }),
