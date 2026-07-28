@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use futures::stream::{self, StreamExt};
 use tauri::{Emitter, State};
+use tokio::sync::watch;
 use tracing::instrument;
 use uuid::Uuid;
 
 use serde::Serialize;
 
-use purrql_core::error::IpcError;
+use purrql_core::error::{IpcError, PurrqlError};
 use purrql_core::models::columnar::ColumnData;
 use purrql_core::models::query::{QueryHistoryEntry, QueryResult, QueryStatus};
 use purrql_engine::event_bus::AppEvent;
@@ -24,6 +26,28 @@ struct ChunkPayload {
 
 /// Maximum rows returned for a SELECT without explicit LIMIT.
 const SAFETY_ROW_LIMIT: usize = 50_000;
+
+type Cancellers = DashMap<Uuid, watch::Sender<bool>>;
+
+/// Register a cancellation channel for `query_id` and return its receiver.
+fn register_canceller(cancellers: &Cancellers, query_id: Uuid) -> watch::Receiver<bool> {
+    let (tx, rx) = watch::channel(false);
+    cancellers.insert(query_id, tx);
+    rx
+}
+
+/// Signal cancellation for `query_id` and drop its channel, so a second
+/// cancel (or the query's own completion) finds nothing left to purge.
+/// Returns whether a live query was registered.
+fn signal_cancel(cancellers: &Cancellers, query_id: &Uuid) -> bool {
+    match cancellers.remove(query_id) {
+        Some((_, tx)) => {
+            let _ = tx.send(true);
+            true
+        }
+        None => false,
+    }
+}
 
 /// Strip leading SQL comments (line and block) to find the first real keyword.
 fn strip_leading_comments(sql: &str) -> &str {
@@ -131,13 +155,14 @@ fn apply_safety_limit(sql: &str) -> String {
 }
 
 #[tauri::command]
-#[instrument(skip(state, connection_id, sql), fields(query_id, row_count))]
+#[instrument(skip(state, connection_id, sql, query_id), fields(query_id, row_count))]
 pub async fn execute_query(
     state: State<'_, AppState>,
     connection_id: Uuid,
     sql: String,
+    query_id: Option<Uuid>,
 ) -> Result<QueryResult, IpcError> {
-    let query_id = Uuid::new_v4();
+    let query_id = query_id.unwrap_or_else(Uuid::new_v4);
     tracing::Span::current().record("query_id", query_id.to_string());
 
     state.event_bus.emit(AppEvent::query_started(query_id, &sql));
@@ -158,7 +183,15 @@ pub async fn execute_query(
         sql.clone()
     };
 
-    match conn.execute(&effective_sql).await {
+    let mut cancel_rx = register_canceller(&state.stream_cancellers, query_id);
+    let outcome = tokio::select! {
+        biased;
+        _ = cancel_rx.changed() => return Err(IpcError::from(PurrqlError::QueryCancelled)),
+        result = conn.execute(&effective_sql) => result,
+    };
+    state.stream_cancellers.remove(&query_id);
+
+    match outcome {
         Ok(mut result) => {
             result.query_id = query_id;
             result.execution_time_ms = start.elapsed().as_millis() as u64;
@@ -226,13 +259,14 @@ pub async fn execute_query(
 /// A native columnar return path in the driver trait would eliminate this
 /// transpose entirely, but that is a larger refactor tracked separately.
 #[tauri::command]
-#[instrument(skip(state, connection_id, sql), fields(query_id, row_count))]
+#[instrument(skip(state, connection_id, sql, query_id), fields(query_id, row_count))]
 pub async fn execute_query_columnar(
     state: State<'_, AppState>,
     connection_id: Uuid,
     sql: String,
+    query_id: Option<Uuid>,
 ) -> Result<purrql_core::models::columnar::ColumnarResult, IpcError> {
-    let query_id = Uuid::new_v4();
+    let query_id = query_id.unwrap_or_else(Uuid::new_v4);
     tracing::Span::current().record("query_id", query_id.to_string());
 
     state.event_bus.emit(AppEvent::query_started(query_id, &sql));
@@ -253,7 +287,15 @@ pub async fn execute_query_columnar(
         sql.clone()
     };
 
-    match conn.execute(&effective_sql).await {
+    let mut cancel_rx = register_canceller(&state.stream_cancellers, query_id);
+    let outcome = tokio::select! {
+        biased;
+        _ = cancel_rx.changed() => return Err(IpcError::from(PurrqlError::QueryCancelled)),
+        result = conn.execute(&effective_sql) => result,
+    };
+    state.stream_cancellers.remove(&query_id);
+
+    match outcome {
         Ok(mut result) => {
             result.query_id = query_id;
             result.execution_time_ms = start.elapsed().as_millis() as u64;
@@ -320,13 +362,16 @@ pub async fn cancel_query(
             .ok_or(IpcError::from("Connection not found"))?;
         Arc::clone(&active.connection)
     };
-    // Signal stream cancellation if this is a streaming query
-    if let Some((_, tx)) = state.stream_cancellers.remove(&query_id) {
-        let _ = tx.send(true);
+    let abandoned = signal_cancel(&state.stream_cancellers, &query_id);
+    // Drivers without server-side cancellation still let the command abandon
+    // its wait, which is what frees the tab; only surface their error when
+    // there was no in-flight wait to abandon.
+    if let Err(e) = conn.cancel_query(&query_id).await {
+        if !abandoned {
+            return Err(IpcError::from(e));
+        }
+        tracing::debug!(error = %e, "Driver-level cancellation unavailable");
     }
-    conn.cancel_query(&query_id)
-        .await
-        .map_err(IpcError::from)?;
     state
         .event_bus
         .emit(AppEvent::QueryCancelled { query_id });
@@ -445,8 +490,7 @@ pub async fn execute_query_stream(
     };
 
     // Create a cancellation channel for this streaming query
-    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
-    state.stream_cancellers.insert(query_id, cancel_tx);
+    let mut cancel_rx = register_canceller(&state.stream_cancellers, query_id);
     let cancellers = state.stream_cancellers.clone();
 
     // Pre-compute event names to avoid per-iteration allocations
@@ -454,9 +498,34 @@ pub async fn execute_query_stream(
     let event_chunk = format!("query_chunk_{}", query_id);
     let event_error = format!("query_error_{}", query_id);
     let event_done = format!("query_done_{}", query_id);
+    let event_cancelled = format!("query_cancelled_{}", query_id);
 
     tokio::spawn(async move {
-        match conn.execute_stream(&effective_sql, chunk_size).await {
+        // A cancelled stream must still deliver a terminal per-query event:
+        // the frontend keys listener teardown and the tab's executing state
+        // off these, never off the global bus.
+        let emit_cancelled = |total_rows: usize| {
+            let _ = app_clone.emit(
+                &event_cancelled,
+                serde_json::json!({
+                    "total_rows": total_rows,
+                    "execution_time_ms": start.elapsed().as_millis() as u64
+                }),
+            );
+            event_bus.emit(AppEvent::QueryCancelled { query_id });
+            cancellers.remove(&query_id);
+        };
+
+        let stream = tokio::select! {
+            biased;
+            _ = cancel_rx.changed() => {
+                emit_cancelled(0);
+                return;
+            }
+            stream = conn.execute_stream(&effective_sql, chunk_size) => stream,
+        };
+
+        match stream {
             Ok((columns, mut rx)) => {
                 let col_count = columns.len();
 
@@ -474,15 +543,20 @@ pub async fn execute_query_stream(
                 let mut total_rows: usize = 0;
                 let mut offset: usize = 0;
                 let mut had_error = false;
-                let cancel_rx = cancel_rx;
+                let mut cancelled = false;
 
-                while let Some(chunk_result) = rx.recv().await {
-                    // Check for cancellation between chunks
-                    if *cancel_rx.borrow() {
-                        event_bus.emit(AppEvent::QueryCancelled { query_id });
-                        cancellers.remove(&query_id);
-                        return;
-                    }
+                loop {
+                    let chunk_result = tokio::select! {
+                        biased;
+                        _ = cancel_rx.changed() => {
+                            cancelled = true;
+                            break;
+                        }
+                        chunk = rx.recv() => match chunk {
+                            Some(chunk) => chunk,
+                            None => break,
+                        },
+                    };
 
                     match chunk_result {
                         Ok(rows) => {
@@ -533,6 +607,11 @@ pub async fn execute_query_stream(
                     }
                 }
 
+                if cancelled {
+                    emit_cancelled(total_rows);
+                    return;
+                }
+
                 // Clean up canceller for this query
                 cancellers.remove(&query_id);
 
@@ -567,6 +646,7 @@ pub async fn execute_query_stream(
                 }
             }
             Err(e) => {
+                cancellers.remove(&query_id);
                 let elapsed_ms = start.elapsed().as_millis() as u64;
                 let _ = app_clone.emit(
                     &event_error,
@@ -596,7 +676,49 @@ pub async fn execute_query_stream(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_safety_limit, needs_safety_limit, SAFETY_ROW_LIMIT};
+    use super::{
+        apply_safety_limit, needs_safety_limit, register_canceller, signal_cancel, Cancellers,
+        SAFETY_ROW_LIMIT,
+    };
+    use uuid::Uuid;
+
+    #[test]
+    fn cancelling_signals_the_receiver_and_purges_the_registration() {
+        let cancellers = Cancellers::new();
+        let query_id = Uuid::new_v4();
+        let rx = register_canceller(&cancellers, query_id);
+
+        assert!(!*rx.borrow());
+        assert!(signal_cancel(&cancellers, &query_id));
+        assert!(*rx.borrow());
+        assert!(cancellers.is_empty());
+    }
+
+    #[test]
+    fn cancelling_an_unknown_or_already_cancelled_query_is_a_no_op() {
+        let cancellers = Cancellers::new();
+        let query_id = Uuid::new_v4();
+
+        assert!(!signal_cancel(&cancellers, &query_id));
+
+        register_canceller(&cancellers, query_id);
+        assert!(signal_cancel(&cancellers, &query_id));
+        assert!(!signal_cancel(&cancellers, &query_id));
+    }
+
+    #[test]
+    fn cancelling_one_query_leaves_other_registrations_alone() {
+        let cancellers = Cancellers::new();
+        let cancelled = Uuid::new_v4();
+        let running = Uuid::new_v4();
+        register_canceller(&cancellers, cancelled);
+        let running_rx = register_canceller(&cancellers, running);
+
+        signal_cancel(&cancellers, &cancelled);
+
+        assert!(!*running_rx.borrow());
+        assert!(cancellers.contains_key(&running));
+    }
 
     #[test]
     fn does_not_panic_on_utf8_boundary_in_tail() {
