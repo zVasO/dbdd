@@ -17,12 +17,47 @@ impl PostgresConnection {
         let opts = build_connect_options(config, password);
         let pool = PgPoolOptions::new()
             .max_connections(config.pool_size.unwrap_or(20))
+            .min_connections(2)
             .acquire_timeout(std::time::Duration::from_secs(10))
+            .test_before_acquire(false)
             .connect_with(opts)
             .await
             .map_err(|e| PurrqlError::Connection(e.to_string()))?;
 
         Ok(Self { pool })
+    }
+}
+
+/// Whether `e` indicates the pooled connection was already closed rather
+/// than a query-level failure, so it's safe to retry once on a fresh
+/// connection. Needed because `test_before_acquire(false)` can hand out a
+/// connection the server (or an idle timeout) has since dropped.
+fn is_closed_connection_error(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::Io(io_err) => matches!(
+            io_err.kind(),
+            std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::NotConnected
+                | std::io::ErrorKind::UnexpectedEof
+        ),
+        sqlx::Error::PoolClosed => true,
+        _ => false,
+    }
+}
+
+/// Run `f` once, retrying a single time if it fails with a closed-connection
+/// error. Any other error (including a second closed-connection error) is
+/// returned as-is.
+async fn with_retry<F, Fut, T>(mut f: F) -> std::result::Result<T, sqlx::Error>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<T, sqlx::Error>>,
+{
+    match f().await {
+        Err(e) if is_closed_connection_error(&e) => f().await,
+        other => other,
     }
 }
 
@@ -220,8 +255,7 @@ impl DatabaseConnection for PostgresConnection {
     async fn execute(&self, sql: &str) -> Result<QueryResult> {
         let start = std::time::Instant::now();
 
-        let rows: Vec<PgRow> = sqlx::query(sql)
-            .fetch_all(&self.pool)
+        let rows: Vec<PgRow> = with_retry(|| sqlx::query(sql).fetch_all(&self.pool))
             .await
             .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
 
@@ -247,30 +281,35 @@ impl DatabaseConnection for PostgresConnection {
     ) -> Result<QueryResult> {
         let start = std::time::Instant::now();
 
-        // Build the query with bound parameters
-        let mut query = sqlx::query(sql);
-        for param in params {
-            query = match param {
-                CellValue::Null => query.bind(None::<String>),
-                CellValue::Text(s) => query.bind(s.as_str()),
-                CellValue::Integer(n) => query.bind(*n),
-                CellValue::Float(n) => query.bind(*n),
-                CellValue::Boolean(b) => query.bind(*b),
-                CellValue::DateTime(s) | CellValue::Date(s) | CellValue::Time(s)
-                | CellValue::Uuid(s) => query.bind(s.as_str()),
-                CellValue::Json(v) => query.bind(v),
-                // For types that don't map cleanly, bind as text
-                CellValue::Bytes { preview, .. } => query.bind(preview.as_str()),
-                CellValue::Array(_) => {
-                    return Err(PurrqlError::NotSupported(
-                        "Array parameters not yet supported".to_string(),
-                    ));
-                }
-            };
+        if params.iter().any(|p| matches!(p, CellValue::Array(_))) {
+            return Err(PurrqlError::NotSupported(
+                "Array parameters not yet supported".to_string(),
+            ));
         }
 
-        let rows: Vec<PgRow> = query
-            .fetch_all(&self.pool)
+        // Rebuilds the query from scratch on each attempt, since a bound
+        // `Query` is consumed by `fetch_all` and can't be replayed as-is.
+        let build_query = || {
+            let mut query = sqlx::query(sql);
+            for param in params {
+                query = match param {
+                    CellValue::Null => query.bind(None::<String>),
+                    CellValue::Text(s) => query.bind(s.as_str()),
+                    CellValue::Integer(n) => query.bind(*n),
+                    CellValue::Float(n) => query.bind(*n),
+                    CellValue::Boolean(b) => query.bind(*b),
+                    CellValue::DateTime(s) | CellValue::Date(s) | CellValue::Time(s)
+                    | CellValue::Uuid(s) => query.bind(s.as_str()),
+                    CellValue::Json(v) => query.bind(v),
+                    // For types that don't map cleanly, bind as text
+                    CellValue::Bytes { preview, .. } => query.bind(preview.as_str()),
+                    CellValue::Array(_) => unreachable!("checked above"),
+                };
+            }
+            query
+        };
+
+        let rows: Vec<PgRow> = with_retry(|| build_query().fetch_all(&self.pool))
             .await
             .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
 
@@ -422,5 +461,89 @@ impl DatabaseConnection for PostgresConnection {
     async fn close(&self) -> Result<()> {
         self.pool.close().await;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_closed_connection_error, with_retry};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    fn io_error(kind: std::io::ErrorKind) -> sqlx::Error {
+        sqlx::Error::Io(std::io::Error::new(kind, "closed"))
+    }
+
+    #[test]
+    fn treats_closed_socket_io_errors_as_retryable() {
+        for kind in [
+            std::io::ErrorKind::BrokenPipe,
+            std::io::ErrorKind::ConnectionReset,
+            std::io::ErrorKind::ConnectionAborted,
+            std::io::ErrorKind::NotConnected,
+            std::io::ErrorKind::UnexpectedEof,
+        ] {
+            assert!(
+                is_closed_connection_error(&io_error(kind)),
+                "{kind:?} should be treated as a closed connection"
+            );
+        }
+    }
+
+    #[test]
+    fn treats_pool_closed_as_retryable() {
+        assert!(is_closed_connection_error(&sqlx::Error::PoolClosed));
+    }
+
+    #[test]
+    fn does_not_treat_query_errors_as_retryable() {
+        assert!(!is_closed_connection_error(&sqlx::Error::RowNotFound));
+        assert!(!is_closed_connection_error(&io_error(
+            std::io::ErrorKind::TimedOut
+        )));
+    }
+
+    #[tokio::test]
+    async fn retries_once_after_a_closed_connection_then_succeeds() {
+        let attempts = AtomicU32::new(0);
+        let result = with_retry(|| {
+            let attempt = attempts.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if attempt == 0 {
+                    Err(io_error(std::io::ErrorKind::BrokenPipe))
+                } else {
+                    Ok(42)
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_a_second_closed_connection_failure() {
+        let attempts = AtomicU32::new(0);
+        let result: Result<i32, sqlx::Error> = with_retry(|| {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            async move { Err(io_error(std::io::ErrorKind::BrokenPipe)) }
+        })
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn does_not_retry_a_plain_query_error() {
+        let attempts = AtomicU32::new(0);
+        let result: Result<i32, sqlx::Error> = with_retry(|| {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            async move { Err(sqlx::Error::RowNotFound) }
+        })
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
     }
 }
