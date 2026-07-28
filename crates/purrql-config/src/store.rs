@@ -13,6 +13,11 @@ use purrql_core::models::query::{QueryHistoryEntry, QueryStatus};
 
 use crate::crypto;
 
+/// Query history rows beyond this count (most recent first) are purged.
+pub const HISTORY_RETAIN_COUNT: u32 = 10_000;
+/// Query history rows older than this are purged regardless of count.
+pub const HISTORY_RETAIN_DAYS: i64 = 90;
+
 pub struct ConfigStore {
     read_conn: Arc<Mutex<Connection>>,
     write_conn: Arc<Mutex<Connection>>,
@@ -424,5 +429,119 @@ impl ConfigStore {
         })
         .await
         .map_err(|e| PurrqlError::Internal(e.to_string()))?
+    }
+
+    /// Purge query history: rows older than `retain_days` are deleted, then
+    /// the remainder is capped to the most recent `retain_count` rows.
+    /// Returns the number of rows deleted.
+    pub async fn purge_history(&self, retain_count: u32, retain_days: i64) -> Result<u64> {
+        let conn = Arc::clone(&self.write_conn);
+        let cutoff = (chrono::Utc::now() - chrono::Duration::days(retain_days)).to_rfc3339();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| PurrqlError::Internal(e.to_string()))?;
+            let mut deleted = conn
+                .execute(
+                    "DELETE FROM query_history WHERE executed_at < ?1",
+                    rusqlite::params![cutoff],
+                )
+                .map_err(|e| PurrqlError::Config(e.to_string()))? as u64;
+            deleted += conn
+                .execute(
+                    "DELETE FROM query_history WHERE id NOT IN ( \
+                        SELECT id FROM query_history ORDER BY executed_at DESC LIMIT ?1 \
+                     )",
+                    rusqlite::params![retain_count],
+                )
+                .map_err(|e| PurrqlError::Config(e.to_string()))? as u64;
+            Ok(deleted)
+        })
+        .await
+        .map_err(|e| PurrqlError::Internal(e.to_string()))?
+    }
+
+    /// Convenience wrapper applying the default retention policy
+    /// (`HISTORY_RETAIN_COUNT` rows, `HISTORY_RETAIN_DAYS` days).
+    pub async fn purge_history_default(&self) -> Result<u64> {
+        self.purge_history(HISTORY_RETAIN_COUNT, HISTORY_RETAIN_DAYS).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_store() -> (ConfigStore, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("purrql-config-test-{}", Uuid::new_v4()));
+        let store = ConfigStore::new(&dir).expect("failed to create test store");
+        (store, dir)
+    }
+
+    fn entry(connection_id: Uuid, executed_at: chrono::DateTime<chrono::Utc>) -> QueryHistoryEntry {
+        QueryHistoryEntry {
+            id: Uuid::new_v4(),
+            connection_id,
+            sql: "SELECT 1".to_string(),
+            executed_at,
+            duration_ms: 1,
+            row_count: Some(1),
+            status: QueryStatus::Success,
+            error_message: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn purge_history_removes_entries_older_than_retain_days() {
+        let (store, dir) = test_store();
+        let connection_id = Uuid::new_v4();
+        let now = chrono::Utc::now();
+
+        store.add_to_history(&entry(connection_id, now)).await.unwrap();
+        store
+            .add_to_history(&entry(connection_id, now - chrono::Duration::days(100)))
+            .await
+            .unwrap();
+
+        let deleted = store.purge_history(HISTORY_RETAIN_COUNT, 90).await.unwrap();
+        assert_eq!(deleted, 1);
+
+        let remaining = store.get_history(&connection_id, 100).await.unwrap();
+        assert_eq!(remaining.len(), 1);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn purge_history_caps_row_count_to_retain_count() {
+        let (store, dir) = test_store();
+        let connection_id = Uuid::new_v4();
+        let now = chrono::Utc::now();
+
+        for i in 0..5 {
+            store
+                .add_to_history(&entry(connection_id, now - chrono::Duration::seconds(i)))
+                .await
+                .unwrap();
+        }
+
+        let deleted = store.purge_history(3, HISTORY_RETAIN_DAYS).await.unwrap();
+        assert_eq!(deleted, 2);
+
+        let remaining = store.get_history(&connection_id, 100).await.unwrap();
+        assert_eq!(remaining.len(), 3);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn purge_history_default_uses_the_default_retention_policy() {
+        let (store, dir) = test_store();
+        let connection_id = Uuid::new_v4();
+        store.add_to_history(&entry(connection_id, chrono::Utc::now())).await.unwrap();
+
+        let deleted = store.purge_history_default().await.unwrap();
+        assert_eq!(deleted, 0);
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

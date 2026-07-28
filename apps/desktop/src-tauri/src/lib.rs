@@ -301,16 +301,21 @@ pub fn run() {
             );
             let schema_cache = Arc::new(purrql_engine::schema_cache::SchemaCache::new());
 
-            // Background task: periodically evict expired schema cache entries.
-            // Use tauri::async_runtime::spawn (not tokio::spawn) because the
-            // Tokio runtime may not yet be current during Tauri's setup phase.
+            // Background task: periodically evict expired schema cache entries
+            // and purge old query history. Use tauri::async_runtime::spawn
+            // (not tokio::spawn) because the Tokio runtime may not yet be
+            // current during Tauri's setup phase.
             {
                 let cache = schema_cache.clone();
+                let config_store = config_store.clone();
                 tauri::async_runtime::spawn(async move {
                     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
                     loop {
                         interval.tick().await;
                         cache.evict_expired();
+                        if let Err(e) = config_store.purge_history_default().await {
+                            tracing::warn!(error = %e, "Failed to purge query history");
+                        }
                     }
                 });
             }
