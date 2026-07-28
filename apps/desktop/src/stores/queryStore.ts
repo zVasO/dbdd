@@ -125,10 +125,11 @@ function cancelQuietly(connectionId: string, queryId: string): void {
 /**
  * Unregister a tab's stream listeners, optionally cancelling it backend-side.
  * Idempotent: whichever of cancel / terminal-event / close happens first wins.
+ * Returns whether there was a stream left to release.
  */
-function releaseStream(tabId: string, cancel: boolean): void {
+function releaseStream(tabId: string, cancel: boolean): boolean {
   const stream = activeStreams.get(tabId);
-  if (!stream) return;
+  if (!stream) return false;
   activeStreams.delete(tabId);
   stream.dispose();
   if (cancel) {
@@ -139,6 +140,7 @@ function releaseStream(tabId: string, cancel: boolean): void {
       .getState()
       .logError(stream.activityId, Math.round(performance.now() - stream.startedAt), 'Cancelled');
   }
+  return true;
 }
 
 function computeVisibleTabs(allTabs: QueryTab[], connId: string | null): QueryTab[] {
@@ -221,7 +223,12 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       ? { ...activeTabIds, [connId]: newActiveId ?? '' }
       : activeTabIds;
     set({ allTabs: newAllTabs, activeTabIds: newActiveTabIds });
-    releaseStream(id, true);
+    // Streaming queries are cancelled through their registration; single-shot
+    // ones have none, so fall back to the id the tab was carrying.
+    const closing = allTabs.find((t) => t.id === id);
+    if (!releaseStream(id, true) && closing?.connectionId && closing.activeQueryId) {
+      cancelQuietly(closing.connectionId, closing.activeQueryId);
+    }
     useResultStore.getState().clearResult(id);
     get()._syncVisibleTabs();
   },
@@ -291,6 +298,10 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     const activity = useActivityStore.getState();
     const activityId = activity.logStart(tab.sql, connectionId);
     const startTime = performance.now();
+    // Result-store setters write their key unconditionally, so anything that
+    // lands after the tab closed would resurrect an entry `clearResult` just
+    // dropped — for a tab that can never display or evict it again.
+    const tabStillOpen = () => get().allTabs.some((t) => t.id === tabId);
 
     useResultStore.getState().setExecuting(tabId);
 
@@ -319,6 +330,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         } else {
           useActivityStore.getState().logSuccess(activityId, durationMs, totalRows);
         }
+        if (!tabStillOpen()) return;
         useResultStore.getState().setResults(tabId, results, errors.length > 0 ? errors.join('\n') : null);
         maybeNotifyQueryComplete(durationMs, totalRows, errors.length > 0 ? errors.join('\n') : null);
 
@@ -343,6 +355,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
           const result = await ipc.executeQueryColumnar(connectionId, tab.sql, queryId);
           const durationMs = Math.round(performance.now() - startTime);
           useActivityStore.getState().logSuccess(activityId, durationMs, result.row_count);
+          if (!tabStillOpen()) return;
           useResultStore.getState().setColumnarResult(tabId, result);
           maybeNotifyQueryComplete(durationMs, result.row_count, null);
 
@@ -394,7 +407,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
           // The tab may have been closed while the listeners were registering;
           // starting the stream then would leave it running for nobody.
-          if (!get().allTabs.some((t) => t.id === tabId)) {
+          if (!tabStillOpen()) {
             cleanup();
             activity.logError(activityId, Math.round(performance.now() - startTime), 'Cancelled');
             return;
@@ -417,7 +430,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
           // The tab can also disappear while the stream is starting; a no-op
           // when `closeTab` already tore this stream down.
-          if (!get().allTabs.some((t) => t.id === tabId)) {
+          if (!tabStillOpen()) {
             releaseStream(tabId, true);
           }
 
@@ -430,6 +443,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
       if (isCancellationError(e)) {
         useActivityStore.getState().logError(activityId, durationMs, 'Cancelled');
+        if (!tabStillOpen()) return;
         useResultStore.getState().markCancelled(tabId);
         set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null })));
         return;
@@ -437,6 +451,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
       const errMsg = extractErrorMessage(e);
       useActivityStore.getState().logError(activityId, durationMs, errMsg);
+      if (!tabStillOpen()) return;
       useResultStore.getState().setError(tabId, errMsg);
       showErrorToast(errMsg);
       maybeNotifyQueryComplete(durationMs, 0, errMsg);

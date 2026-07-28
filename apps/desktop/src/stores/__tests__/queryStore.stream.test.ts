@@ -83,6 +83,28 @@ async function startStream(): Promise<{
   return { tabId, queryId, callbacks: callbacks!, dispose };
 }
 
+/** Start a single-shot query that stays in flight until `finish()` is called. */
+function startSingleShot(): { tabId: string; queryId: string; finish: () => Promise<void> } {
+  let answer: (r: ColumnarResult) => void = () => {};
+  ipcMock.executeQueryColumnar.mockImplementation(
+    () => new Promise<ColumnarResult>((resolve) => { answer = resolve; }),
+  );
+
+  const tabId = useQueryStore.getState().createTab();
+  useQueryStore.getState().updateSql(tabId, 'SELECT * FROM t LIMIT 10');
+  const running = useQueryStore.getState().executeQuery(CONNECTION_ID, tabId);
+  const queryId = useQueryStore.getState().allTabs.find((t) => t.id === tabId)!.activeQueryId!;
+
+  return {
+    tabId,
+    queryId,
+    finish: async () => {
+      answer(columnarResult(queryId));
+      await running;
+    },
+  };
+}
+
 describe('queryStore streaming lifecycle', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -139,6 +161,35 @@ describe('queryStore streaming lifecycle', () => {
 
     await useQueryStore.getState().executeQuery(CONNECTION_ID, tabId);
     expect(ipcMock.listenToStream).toHaveBeenCalledTimes(2);
+  });
+
+  it('closing a tab cancels its in-flight single-shot query', async () => {
+    const { tabId, queryId, finish } = startSingleShot();
+
+    useQueryStore.getState().closeTab(tabId);
+
+    expect(ipcMock.cancelQuery).toHaveBeenCalledWith(CONNECTION_ID, queryId);
+    await finish();
+  });
+
+  it('a single-shot query answered after its tab closed writes no result', async () => {
+    const { tabId, finish } = startSingleShot();
+    useQueryStore.getState().closeTab(tabId);
+
+    // The backend may answer anyway — cancellation is best-effort.
+    await finish();
+
+    expect(useResultStore.getState().results[tabId]).toBeUndefined();
+  });
+
+  it('a late terminal event cannot resurrect a closed tab', async () => {
+    const { tabId, queryId, callbacks } = await startStream();
+    callbacks.onMeta(streamMeta(queryId));
+
+    useQueryStore.getState().closeTab(tabId);
+    callbacks.onDone({ query_id: queryId, total_rows: 2, execution_time_ms: 5 });
+
+    expect(useResultStore.getState().results[tabId]).toBeUndefined();
   });
 
   it('a finished stream is not cancelled when its tab is closed afterwards', async () => {
