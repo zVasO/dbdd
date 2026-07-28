@@ -118,14 +118,141 @@ fn strip_comments(sql: &str) -> String {
     out
 }
 
-/// Whether `sql` contains a row-limiting keyword (`LIMIT`, or `FETCH` as in
-/// the standard `FETCH FIRST ... ROWS ONLY` / `OFFSET ... FETCH NEXT ...`
-/// forms) as a standalone token, not merely as a substring of an identifier
-/// like `rate_limit_exceeded`.
+/// A word token of a SQL string, tagged with the context needed to tell a
+/// clause-level keyword from one nested inside a subquery.
+struct Token<'a> {
+    word: &'a str,
+    /// Parenthesis nesting depth the token appears at. Parens inside string
+    /// literals and quoted identifiers don't count.
+    depth: u32,
+    /// Whether only whitespace separated this token from the previous one.
+    adjacent: bool,
+}
+
+/// Split `sql` (already comment-stripped) into word tokens tagged with their
+/// parenthesis depth.
+///
+/// Only the depth tracking is quote-aware: a `(` or `)` inside a `'...'`
+/// literal or a `"..."` identifier is literal text and must not shift the
+/// depth of the real SQL around it. Words *inside* quotes are still emitted
+/// as tokens, which keeps `SELECT 'LIMIT'` a false positive for the caller —
+/// deliberately, since suppressing the safety limit is the safe failure mode
+/// and never produces a second, invalid LIMIT clause.
+fn depth_tagged_tokens(sql: &str) -> Vec<Token<'_>> {
+    let mut tokens: Vec<Token<'_>> = Vec::new();
+    let mut depth: u32 = 0;
+    let mut quote: Option<char> = None;
+    let mut word_start: Option<usize> = None;
+    let mut only_ws_since_prev = true;
+    let mut chars = sql.char_indices().peekable();
+    let mut skip_escaped_quote = false;
+
+    while let Some((i, ch)) = chars.next() {
+        if skip_escaped_quote {
+            skip_escaped_quote = false;
+            continue;
+        }
+
+        if ch.is_alphanumeric() || ch == '_' {
+            if word_start.is_none() {
+                word_start = Some(i);
+            }
+            continue;
+        }
+
+        // Any non-word character terminates the word in progress.
+        if let Some(start) = word_start.take() {
+            tokens.push(Token {
+                word: &sql[start..i],
+                depth,
+                adjacent: only_ws_since_prev,
+            });
+            only_ws_since_prev = true;
+        }
+
+        match quote {
+            Some(q) => {
+                if ch == q {
+                    // A doubled quote is an escaped quote character, not the
+                    // end of the literal.
+                    if matches!(chars.peek(), Some((_, c)) if *c == q) {
+                        skip_escaped_quote = true;
+                    } else {
+                        quote = None;
+                    }
+                }
+                only_ws_since_prev = false;
+            }
+            None => match ch {
+                '\'' | '"' => {
+                    quote = Some(ch);
+                    only_ws_since_prev = false;
+                }
+                '(' => {
+                    depth += 1;
+                    only_ws_since_prev = false;
+                }
+                ')' => {
+                    depth = depth.saturating_sub(1);
+                    only_ws_since_prev = false;
+                }
+                c if c.is_whitespace() => {}
+                _ => only_ws_since_prev = false,
+            },
+        }
+    }
+
+    if let Some(start) = word_start {
+        tokens.push(Token {
+            word: &sql[start..],
+            depth,
+            adjacent: only_ws_since_prev,
+        });
+    }
+
+    tokens
+}
+
+/// Whether `sql` already bounds its own top-level result set with a
+/// row-limiting keyword: `LIMIT`, or `FETCH` in the standard
+/// `FETCH FIRST/NEXT ... ROWS ONLY` form.
+///
+/// The keyword must appear as a standalone token (not as part of an
+/// identifier like `rate_limit_exceeded`) at parenthesis depth 0. Depth
+/// matters because a `LIMIT` that bounds a subquery says nothing about the
+/// outer query: `SELECT * FROM huge WHERE id IN (SELECT id FROM small LIMIT 5)`
+/// still returns every row of `huge`, so it must keep the safety cap.
+/// A bare `FETCH` doesn't count either — it also begins cursor `FETCH`
+/// statements, which limit nothing.
+///
+/// Known false negatives, i.e. queries wrongly reported as already bounded.
+/// All of them merely skip the safety limit, which is the safe direction:
+/// no second LIMIT clause is ever appended to SQL that has one.
+/// - A `LIMIT`/`FETCH` token inside a string literal (`SELECT 'LIMIT'`) —
+///   indistinguishable from the keyword without a real SQL parser.
+/// - A top-level SELECT wrapped in its own parentheses
+///   (`(SELECT ... LIMIT 10)`), whose keyword never reaches depth 0.
 fn has_limit_keyword(sql: &str) -> bool {
-    strip_comments(sql)
-        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .any(|tok| tok.eq_ignore_ascii_case("LIMIT") || tok.eq_ignore_ascii_case("FETCH"))
+    let stripped = strip_comments(sql);
+    let tokens = depth_tagged_tokens(&stripped);
+
+    tokens.iter().enumerate().any(|(i, tok)| {
+        if tok.depth != 0 {
+            return false;
+        }
+        if tok.word.eq_ignore_ascii_case("LIMIT") {
+            return true;
+        }
+        if tok.word.eq_ignore_ascii_case("FETCH") {
+            return tokens.get(i + 1).is_some_and(|next| {
+                next.depth == 0
+                    && next.adjacent
+                    && (next.word.eq_ignore_ascii_case("FIRST")
+                        || next.word.eq_ignore_ascii_case("NEXT"))
+            });
+        }
+        false
+    })
 }
 
 /// Detect whether a SQL string is a SELECT-like query missing a LIMIT clause.
@@ -819,5 +946,82 @@ mod tests {
             apply_safety_limit(sql),
             format!("{}\nLIMIT {}", sql, SAFETY_ROW_LIMIT)
         );
+    }
+
+    #[test]
+    fn limit_inside_a_subquery_does_not_bound_the_outer_select() {
+        // The subquery's LIMIT bounds only the IN-list; the outer SELECT can
+        // still return every row of `huge`, so it must keep the safety cap.
+        let sql = "SELECT * FROM huge WHERE id IN (SELECT id FROM small ORDER BY ts LIMIT 5)";
+        assert!(needs_safety_limit(sql));
+        assert_eq!(
+            apply_safety_limit(sql),
+            format!("{}\nLIMIT {}", sql, SAFETY_ROW_LIMIT)
+        );
+    }
+
+    #[test]
+    fn limit_inside_a_cte_body_does_not_bound_the_outer_select() {
+        assert!(needs_safety_limit(
+            "WITH recent AS (SELECT * FROM events ORDER BY ts DESC LIMIT 10) \
+             SELECT * FROM huge JOIN recent USING (id)"
+        ));
+    }
+
+    #[test]
+    fn limit_after_a_closed_subquery_still_bounds_the_outer_select() {
+        // Depth returns to 0 after the subquery closes, so this trailing
+        // LIMIT is the outer query's own and suppresses the cap.
+        assert!(!needs_safety_limit(
+            "SELECT * FROM huge WHERE id IN (SELECT id FROM small LIMIT 5) LIMIT 100"
+        ));
+        assert!(!needs_safety_limit("SELECT * FROM users LIMIT 10"));
+    }
+
+    #[test]
+    fn fetch_first_rows_only_bounds_the_query_but_a_bare_fetch_does_not() {
+        // The standard row-limiting forms.
+        assert!(!needs_safety_limit(
+            "SELECT * FROM t FETCH FIRST 10 ROWS ONLY"
+        ));
+        assert!(!needs_safety_limit(
+            "SELECT * FROM t OFFSET 20 ROWS FETCH NEXT 10 ROWS ONLY"
+        ));
+        // A FETCH not followed by FIRST/NEXT limits nothing (e.g. the cursor
+        // statement), so it must not suppress the cap.
+        assert!(needs_safety_limit("SELECT fetch FROM t"));
+        assert!(needs_safety_limit("SELECT * FROM t WHERE op = fetch"));
+    }
+
+    #[test]
+    fn fetch_first_inside_a_subquery_does_not_bound_the_outer_select() {
+        assert!(needs_safety_limit(
+            "SELECT * FROM huge WHERE id IN (SELECT id FROM small FETCH FIRST 5 ROWS ONLY)"
+        ));
+    }
+
+    #[test]
+    fn parens_inside_a_string_literal_do_not_corrupt_the_depth() {
+        // The unbalanced `(` and `)` are literal text. If they shifted the
+        // depth, the real top-level LIMIT would be misread as nested (and a
+        // second LIMIT appended, producing invalid SQL).
+        assert!(!needs_safety_limit(
+            "SELECT * FROM t WHERE label = 'a )( b' LIMIT 10"
+        ));
+        assert!(!needs_safety_limit(
+            "SELECT * FROM t WHERE label = 'it''s ((' LIMIT 10"
+        ));
+        // Symmetrically, a literal `)` must not close a real subquery early
+        // and promote its nested LIMIT to top level.
+        assert!(needs_safety_limit(
+            "SELECT * FROM huge WHERE id IN (SELECT id FROM small WHERE tag = ')' LIMIT 5)"
+        ));
+    }
+
+    #[test]
+    fn quoted_identifier_parens_do_not_corrupt_the_depth() {
+        assert!(!needs_safety_limit(
+            r#"SELECT "weird)(name" FROM t LIMIT 10"#
+        ));
     }
 }
