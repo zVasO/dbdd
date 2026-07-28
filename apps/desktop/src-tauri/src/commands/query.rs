@@ -10,7 +10,7 @@ use uuid::Uuid;
 use serde::Serialize;
 
 use purrql_core::error::{IpcError, PurrqlError};
-use purrql_core::models::columnar::ColumnData;
+use purrql_core::models::columnar::{column_kind_for_data_type, ColumnData, ColumnKind};
 use purrql_core::models::query::{QueryHistoryEntry, QueryResult, QueryStatus};
 use purrql_engine::event_bus::AppEvent;
 use purrql_engine::schema_cache;
@@ -530,6 +530,13 @@ pub async fn execute_query_stream(
             Ok((columns, mut rx)) => {
                 let col_count = columns.len();
 
+                // Determined once from the same column metadata sent below as
+                // `meta.columns`, so no chunk can re-infer a different kind.
+                let column_kinds: Vec<ColumnKind> = columns
+                    .iter()
+                    .map(|c| column_kind_for_data_type(&c.data_type))
+                    .collect();
+
                 // Emit metadata (row_count unknown until stream completes)
                 let _ = app_clone.emit(
                     &event_meta,
@@ -567,7 +574,7 @@ pub async fn execute_query_stream(
                             // Pass ColumnData directly; emit serializes once
                             let chunk_data: Vec<ColumnData> =
                                 purrql_core::models::columnar::rows_to_columnar_chunk(
-                                    &rows, col_count,
+                                    &rows, col_count, &column_kinds,
                                 );
 
                             let _ = app_clone.emit(

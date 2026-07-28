@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::query::{CellValue, ColumnMeta, QueryResult, ResultType};
+use super::types::DataType;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
@@ -122,12 +123,29 @@ fn build_column(
 }
 
 #[derive(Debug)]
-enum ColumnKind {
+pub enum ColumnKind {
     Integer,
     Float,
     Boolean,
     String,
     Json,
+}
+
+/// Maps a column's declared `DataType` to the `ColumnKind` used to lay out
+/// its values. This is the single source of truth for streaming: it is
+/// computed once from the same column metadata sent to the frontend as
+/// `meta.columns`, then reused for every chunk so no chunk can re-infer a
+/// different kind from its own (possibly all-NULL) cells.
+pub fn column_kind_for_data_type(data_type: &DataType) -> ColumnKind {
+    match data_type {
+        DataType::SmallInt | DataType::Integer | DataType::BigInt | DataType::Serial | DataType::BigSerial => {
+            ColumnKind::Integer
+        }
+        DataType::Float | DataType::Double | DataType::Decimal { .. } => ColumnKind::Float,
+        DataType::Boolean => ColumnKind::Boolean,
+        DataType::Json | DataType::Jsonb => ColumnKind::Json,
+        _ => ColumnKind::String,
+    }
 }
 
 fn extract_integer(cells: &[CellValue], col_idx: usize) -> Option<i64> {
@@ -308,36 +326,21 @@ fn take_json(cells: &mut [CellValue], col_idx: usize) -> Option<serde_json::Valu
 
 /// Convert a chunk of rows into columnar ColumnData vectors.
 /// Used by streaming query execution to convert row chunks on-the-fly.
+/// `kinds` must have one entry per column, determined once at stream start
+/// (see `column_kind_for_data_type`) — chunks never re-infer their own kind,
+/// so an all-NULL chunk cannot silently disagree with a later chunk.
 pub fn rows_to_columnar_chunk(
     rows: &[super::query::Row],
     col_count: usize,
+    kinds: &[ColumnKind],
 ) -> Vec<ColumnData> {
     if rows.is_empty() || col_count == 0 {
         return vec![];
     }
 
     (0..col_count)
-        .map(|col_idx| {
-            let kind = determine_chunk_column_kind(rows, col_idx);
-            build_chunk_column(rows, col_idx, &kind)
-        })
+        .map(|col_idx| build_chunk_column(rows, col_idx, &kinds[col_idx]))
         .collect()
-}
-
-fn determine_chunk_column_kind(rows: &[super::query::Row], col_idx: usize) -> ColumnKind {
-    for row in rows {
-        if let Some(cell) = row.cells.get(col_idx) {
-            match cell {
-                CellValue::Null => continue,
-                CellValue::Integer(_) => return ColumnKind::Integer,
-                CellValue::Float(_) => return ColumnKind::Float,
-                CellValue::Boolean(_) => return ColumnKind::Boolean,
-                CellValue::Json(_) => return ColumnKind::Json,
-                _ => return ColumnKind::String,
-            }
-        }
-    }
-    ColumnKind::Integer
 }
 
 fn build_chunk_column(
@@ -382,5 +385,84 @@ fn build_chunk_column(
             }
             ColumnData::Strings { values }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::query::Row;
+
+    fn row(cells: Vec<CellValue>) -> Row {
+        Row { cells }
+    }
+
+    #[test]
+    fn chunk_kind_stays_stable_across_all_null_then_populated_chunks() {
+        let kinds = vec![column_kind_for_data_type(&DataType::Text)];
+
+        let all_null_chunk = vec![row(vec![CellValue::Null]), row(vec![CellValue::Null])];
+        let first = rows_to_columnar_chunk(&all_null_chunk, 1, &kinds);
+        assert_eq!(first.len(), 1);
+        assert!(matches!(
+            &first[0],
+            ColumnData::Strings { values } if values == &vec![None, None]
+        ));
+
+        let populated_chunk = vec![
+            row(vec![CellValue::Text("a".to_string())]),
+            row(vec![CellValue::Text("b".to_string())]),
+        ];
+        let second = rows_to_columnar_chunk(&populated_chunk, 1, &kinds);
+        assert_eq!(second.len(), 1);
+        assert!(matches!(
+            &second[0],
+            ColumnData::Strings { values } if values == &vec![Some("a".to_string()), Some("b".to_string())]
+        ));
+    }
+
+    #[test]
+    fn numeric_chunk_preserves_numeric_values() {
+        let kinds = vec![column_kind_for_data_type(&DataType::Integer)];
+
+        let chunk = vec![
+            row(vec![CellValue::Integer(5)]),
+            row(vec![CellValue::Null]),
+            row(vec![CellValue::Integer(7)]),
+        ];
+        let result = rows_to_columnar_chunk(&chunk, 1, &kinds);
+        assert_eq!(result.len(), 1);
+        assert!(matches!(
+            &result[0],
+            ColumnData::Integers { values } if values == &vec![Some(5), None, Some(7)]
+        ));
+    }
+
+    #[test]
+    fn column_kind_mapping_covers_numeric_boolean_json_and_default_string() {
+        assert!(matches!(
+            column_kind_for_data_type(&DataType::SmallInt),
+            ColumnKind::Integer
+        ));
+        assert!(matches!(
+            column_kind_for_data_type(&DataType::BigInt),
+            ColumnKind::Integer
+        ));
+        assert!(matches!(
+            column_kind_for_data_type(&DataType::Decimal { precision: None, scale: None }),
+            ColumnKind::Float
+        ));
+        assert!(matches!(
+            column_kind_for_data_type(&DataType::Boolean),
+            ColumnKind::Boolean
+        ));
+        assert!(matches!(
+            column_kind_for_data_type(&DataType::Jsonb),
+            ColumnKind::Json
+        ));
+        assert!(matches!(
+            column_kind_for_data_type(&DataType::Uuid),
+            ColumnKind::String
+        ));
     }
 }
