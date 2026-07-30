@@ -35,7 +35,6 @@ interface Props {
 // ---------------------------------------------------------------------------
 
 const DEBOUNCE_MS = 150;
-const THEME_SWITCH_DELAY_MS = 50;
 
 // ---------------------------------------------------------------------------
 // Component
@@ -176,13 +175,9 @@ export function CodemirrorEditor({ value, onChange, onExecute }: Props) {
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    // Small delay to let CSS variables update on DOM first
-    const timer = setTimeout(() => {
-      view.dispatch({
-        effects: themeCompartment.reconfigure(purrqlTheme(isDark)),
-      });
-    }, THEME_SWITCH_DELAY_MS);
-    return () => clearTimeout(timer);
+    view.dispatch({
+      effects: themeCompartment.reconfigure(purrqlTheme(isDark)),
+    });
   }, [isDark, activeThemeId]);
 
   // --- Preference reconfiguration: font size ---
