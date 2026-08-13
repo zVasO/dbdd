@@ -748,11 +748,10 @@ export const useResultStore = create<ResultState>((set, get) => ({
       warnings: columnar.warnings,
       result_type: columnar.result_type,
     };
-    set((s) => {
-      const existing = s.results[tabId];
-      if (!existing) return s;
-      return { results: { ...s.results, [tabId]: { ...existing, _activeResultCache: built } } };
-    });
+    // Mutate in place rather than set(): this runs during PanelLayout's render,
+    // and _activeResultCache is a derived cache invalidated by every writer, so
+    // the mutation is invisible to anything reading through the store's identity.
+    current._activeResultCache = built;
     return built;
   },
 
