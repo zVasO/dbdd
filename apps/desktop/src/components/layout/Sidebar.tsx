@@ -69,19 +69,59 @@ interface SidebarVirtualRowsProps {
   handlers: Omit<SidebarRowHandlers, 'onRowMouseEnter'>;
 }
 
-// Owns hoveredKey so a hover change only re-renders this subtree, not the
-// whole Sidebar (which also holds search, favorites, and the db selector).
+const TOOLTIP_OPEN_DELAY_MS = 300;
+
+// Owns hoveredKey (+ the tooltip's open timer) so a hover change only
+// re-renders this subtree, not the whole Sidebar (which also holds search,
+// favorites, and the db selector).
 const SidebarVirtualRows = React.memo(function SidebarVirtualRows({
   virtualItems, flatNodes, selectedColumn, favoriteSet, handlers,
 }: SidebarVirtualRowsProps) {
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+  // Radix's TooltipTrigger only starts its own open sequence from a real
+  // onPointerMove — since we swap a row between a bare button and a
+  // Tooltip-wrapped one on `isHovered`, the trigger is freshly mounted under
+  // an already-stationary pointer and never receives that event, so a
+  // hover-and-hold would never open it. Drive `open` ourselves instead.
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  const clearOpenTimer = useCallback(() => {
+    if (openTimerRef.current) {
+      clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
+    }
+  }, []);
+
+  const closeTooltip = useCallback(() => {
+    clearOpenTimer();
+    setHoveredKey(null);
+    setTooltipOpen(false);
+  }, [clearOpenTimer]);
 
   const handleRowMouseEnter = useCallback((e: React.MouseEvent<HTMLElement>) => {
     const key = (e.currentTarget as HTMLElement).dataset.key;
-    if (key) setHoveredKey(key);
-  }, []);
+    if (!key) return;
+    setHoveredKey(key);
+    // Restart the delay on every row change so adjacent-row hovering never
+    // flashes the previous row's (already-open) tooltip onto the new one.
+    setTooltipOpen(false);
+    clearOpenTimer();
+    openTimerRef.current = setTimeout(() => setTooltipOpen(true), TOOLTIP_OPEN_DELAY_MS);
+  }, [clearOpenTimer]);
 
-  const handleMouseLeave = useCallback(() => setHoveredKey(null), []);
+  // Scrolling moves rows out from under a stationary pointer without firing
+  // mouse events, which would otherwise leave a stale tooltip tracking (via
+  // Radix's own Popper reposition) a row the cursor is no longer over.
+  useEffect(() => {
+    const scrollEl = wrapperRef.current?.closest<HTMLElement>('[data-tree-scroll]');
+    if (!scrollEl) return;
+    scrollEl.addEventListener('scroll', closeTooltip, { passive: true });
+    return () => scrollEl.removeEventListener('scroll', closeTooltip);
+  }, [closeTooltip]);
+
+  useEffect(() => () => clearOpenTimer(), [clearOpenTimer]);
 
   const rowHandlers = useMemo<SidebarRowHandlers>(
     () => ({ ...handlers, onRowMouseEnter: handleRowMouseEnter }),
@@ -89,9 +129,10 @@ const SidebarVirtualRows = React.memo(function SidebarVirtualRows({
   );
 
   return (
-    <div onMouseLeave={handleMouseLeave}>
+    <div ref={wrapperRef} onMouseLeave={closeTooltip}>
       {virtualItems.map((item) => {
         const node = flatNodes[item.index];
+        const isHovered = node.key === hoveredKey;
         return (
           <div
             key={node.key}
@@ -106,7 +147,8 @@ const SidebarVirtualRows = React.memo(function SidebarVirtualRows({
                 selectedColumn?.ordinal_position === node.ordinalPosition
               }
               isFavorite={node.kind === 'table' && favoriteSet.has(node.table)}
-              isHovered={node.key === hoveredKey}
+              isHovered={isHovered}
+              isTooltipOpen={isHovered && tooltipOpen}
               handlers={rowHandlers}
             />
           </div>
@@ -637,6 +679,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
 
         <div
           ref={treeScrollRef}
+          data-tree-scroll
           onContextMenuCapture={handleTreeContextMenuCapture}
           className="flex-1 overflow-y-auto py-1"
         >

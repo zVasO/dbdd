@@ -34,6 +34,7 @@ export interface SidebarRowProps {
   isActive: boolean;
   isFavorite: boolean;
   isHovered: boolean;
+  isTooltipOpen: boolean;
   handlers: SidebarRowHandlers;
 }
 
@@ -85,6 +86,7 @@ function sidebarRowPropsEqual(prev: SidebarRowProps, next: SidebarRowProps): boo
     prev.isActive === next.isActive &&
     prev.isFavorite === next.isFavorite &&
     prev.isHovered === next.isHovered &&
+    prev.isTooltipOpen === next.isTooltipOpen &&
     prev.handlers === next.handlers &&
     nodesEqual(prev.node, next.node)
   );
@@ -95,6 +97,7 @@ export const SidebarRow = React.memo(function SidebarRow({
   isActive,
   isFavorite,
   isHovered,
+  isTooltipOpen,
   handlers,
 }: SidebarRowProps) {
   if (node.kind === 'db') {
@@ -129,7 +132,7 @@ export const SidebarRow = React.memo(function SidebarRow({
         className="flex h-full items-center"
       >
         {isHovered ? (
-          <Tooltip>
+          <Tooltip open={isTooltipOpen} delayDuration={0}>
             <TooltipTrigger asChild>{dbButton}</TooltipTrigger>
             <TooltipContent side="right"><TooltipLines lines={[node.db]} /></TooltipContent>
           </Tooltip>
@@ -185,7 +188,7 @@ export const SidebarRow = React.memo(function SidebarRow({
         </button>
 
         {isHovered ? (
-          <Tooltip>
+          <Tooltip open={isTooltipOpen} delayDuration={0}>
             <TooltipTrigger asChild>{tableButton}</TooltipTrigger>
             <TooltipContent side="right"><TooltipLines lines={tableTooltipLines(node)} /></TooltipContent>
           </Tooltip>
@@ -255,7 +258,7 @@ export const SidebarRow = React.memo(function SidebarRow({
         style={{ width: node.depth === 2 ? 40 : 28 }}
       />
       {isHovered ? (
-        <Tooltip>
+        <Tooltip open={isTooltipOpen} delayDuration={0}>
           <TooltipTrigger asChild>{columnButton}</TooltipTrigger>
           <TooltipContent side="right"><TooltipLines lines={columnTooltipLines(node)} /></TooltipContent>
         </Tooltip>
