@@ -1,10 +1,10 @@
-import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useQueryStore } from '@/stores/queryStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useActivityStore } from '@/stores/activityStore';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import {
   Tooltip,
@@ -13,14 +13,29 @@ import {
   TooltipProvider,
 } from '@/components/ui/tooltip';
 import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from '@/components/ui/context-menu';
+import {
   ChevronDown,
   Clock,
+  Copy,
   Database,
   Check,
+  Eraser,
+  Hash,
+  Info,
   Layers,
+  Pencil,
   Plus,
   Search,
   Star,
+  Table2,
+  Terminal,
+  Trash2,
   X,
 } from 'lucide-react';
 import { ipc, extractErrorMessage } from '@/lib/ipc';
@@ -33,11 +48,14 @@ import { usePreferencesStore } from '@/stores/preferencesStore';
 import type { ColumnInfo } from '@/lib/types';
 
 import { formatBytes } from './sidebar/utils';
-import { ColumnProperties } from './sidebar/ColumnNode';
+import { ColumnProperties } from './sidebar/ColumnProperties';
 import { FuzzySearchResults } from './sidebar/FuzzySearchResults';
 import { SearchableTree } from './sidebar/SchemaTree';
-import { TableNode } from './sidebar/TableNode';
 import { ConfirmDestructiveDialog } from './sidebar/ConfirmDestructiveDialog';
+import { flattenSidebarTree, type FlatNode } from './sidebar/sidebarTree';
+import { SidebarRow, ROW_HEIGHT, type SidebarRowHandlers } from './sidebar/SidebarRow';
+
+const EMPTY_NODES: FlatNode[] = [];
 
 interface SidebarProps {
   onOpenConnectionDialog?: () => void;
@@ -58,7 +76,6 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
 
   const favoritesMap = useFavoritesStore((s) => s.favorites);
   const toggleFavorite = useFavoritesStore((s) => s.toggleFavorite);
-  const isFavorite = useFavoritesStore((s) => s.isFavorite);
   const favorites = useMemo(
     () => (activeConnectionId ? favoritesMap[activeConnectionId] ?? [] : []),
     [favoritesMap, activeConnectionId],
@@ -85,8 +102,10 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     db: string;
     tableName: string;
   } | null>(null);
+  const [contextTable, setContextTable] = useState<{ db: string; table: string } | null>(null);
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dbSelectorRef = useRef<HTMLDivElement>(null);
+  const treeScrollRef = useRef<HTMLDivElement>(null);
 
   // Close DB selector on outside click
   useEffect(() => {
@@ -133,41 +152,6 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   const visibleDatabases = activeDatabase
     ? databases.filter((db) => db.name === activeDatabase)
     : databases;
-
-  const toggleDb = (dbName: string) => {
-    setExpandedDbs((prev) => {
-      const next = new Set(prev);
-      if (next.has(dbName)) {
-        next.delete(dbName);
-      } else {
-        next.add(dbName);
-        if (activeConnectionId && !tables[dbName]) {
-          loadTables(activeConnectionId, dbName);
-        }
-      }
-      return next;
-    });
-  };
-
-  const toggleTable = (dbName: string, tableName: string) => {
-    const key = `${dbName}.${tableName}`;
-    setExpandedTables((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-        if (activeConnectionId && !structures[key]) {
-          loadTableStructure(activeConnectionId, {
-            database: dbName,
-            schema: null,
-            table: tableName,
-          });
-        }
-      }
-      return next;
-    });
-  };
 
   const handleTableClick = useCallback((db: string, tableName: string) => {
     if (!activeConnectionId) return;
@@ -229,6 +213,141 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   const handleRenameTable = (db: string, tableName: string) => {
     setDestructiveDialog({ open: true, operation: 'rename', db, tableName });
   };
+
+  // Everything the row handlers below read at call time. They must never take a
+  // dependency on these values directly: their identities feed the one
+  // `handlers` object each SidebarRow memo compares against.
+  const rowState = {
+    activeConnectionId, expandedDbs, expandedTables, tables, structures,
+    handleTableClick, handleColumnClick, handleColumnDoubleClick, toggleFavorite,
+  };
+  const rowStateRef = useRef(rowState);
+  useLayoutEffect(() => {
+    rowStateRef.current = rowState;
+  });
+
+  const toggleDb = useCallback((dbName: string) => {
+    const { activeConnectionId, expandedDbs, tables } = rowStateRef.current;
+    const next = new Set(expandedDbs);
+    if (next.has(dbName)) {
+      next.delete(dbName);
+    } else {
+      next.add(dbName);
+      if (activeConnectionId && !tables[dbName]) {
+        loadTables(activeConnectionId, dbName);
+      }
+    }
+    setExpandedDbs(next);
+  }, [loadTables]);
+
+  const toggleTable = useCallback((dbName: string, tableName: string) => {
+    const { activeConnectionId, expandedTables, structures } = rowStateRef.current;
+    const key = `${dbName}.${tableName}`;
+    const next = new Set(expandedTables);
+    if (next.has(key)) {
+      next.delete(key);
+    } else {
+      next.add(key);
+      if (activeConnectionId && !structures[key]) {
+        loadTableStructure(activeConnectionId, {
+          database: dbName,
+          schema: null,
+          table: tableName,
+        });
+      }
+    }
+    setExpandedTables(next);
+  }, [loadTableStructure]);
+
+  const handleRowClick = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    const { kind, db, table, colname, ordinal } = (e.currentTarget as HTMLElement).dataset;
+    const s = rowStateRef.current;
+    const act = (e.target as HTMLElement).closest('[data-act]')?.getAttribute('data-act');
+    if (act === 'fav') {
+      if (s.activeConnectionId && table) s.toggleFavorite(s.activeConnectionId, table);
+      return;
+    }
+    if (kind === 'db') {
+      if (db) toggleDb(db);
+      return;
+    }
+    if (kind === 'table') {
+      if (db && table) s.handleTableClick(db, table);
+      return;
+    }
+    if (db && table && colname) {
+      const column = s.structures[`${db}.${table}`]?.columns.find(
+        (c) => c.name === colname && String(c.ordinal_position) === ordinal,
+      );
+      if (column) s.handleColumnClick(column);
+    }
+  }, [toggleDb]);
+
+  const handleRowDoubleClick = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    const { kind, db, table, colname } = (e.currentTarget as HTMLElement).dataset;
+    if (kind !== 'column' || !db || !table || !colname) return;
+    rowStateRef.current.handleColumnDoubleClick(db, table, colname);
+  }, []);
+
+  const handleRowContextMenu = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    const { kind, db, table } = (e.currentTarget as HTMLElement).dataset;
+    if (kind !== 'table' || !db || !table) return;
+    setContextTable({ db, table });
+  }, []);
+
+  // Right-clicks that miss a table row must not reach the shared menu's trigger.
+  const handleTreeContextMenuCapture = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    if (!(e.target as HTMLElement).closest('[data-kind="table"]')) e.stopPropagation();
+  }, []);
+
+  const handleCaretClick = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    e.stopPropagation();
+    const row = (e.currentTarget as HTMLElement).closest<HTMLElement>('[data-kind]');
+    const { kind, db, table } = row?.dataset ?? {};
+    if (kind === 'table' && db && table) toggleTable(db, table);
+  }, [toggleTable]);
+
+  const rowHandlers = useMemo<SidebarRowHandlers>(() => ({
+    onRowClick: handleRowClick,
+    onRowDoubleClick: handleRowDoubleClick,
+    onRowContextMenu: handleRowContextMenu,
+    onCaretClick: handleCaretClick,
+  }), [handleRowClick, handleRowDoubleClick, handleRowContextMenu, handleCaretClick]);
+
+  const flatNodes = useMemo(() => {
+    if (searchQuery) return EMPTY_NODES;
+    if (activeDatabase) {
+      return flattenSidebarTree({
+        mode: 'flat',
+        databases: [activeDatabase],
+        tablesByDb: tables,
+        expandedDbs, expandedTables, structures, structureLoading,
+      });
+    }
+    const dbSizes: Record<string, number | null> = {};
+    for (const db of databases) dbSizes[db.name] = db.size_bytes;
+    return flattenSidebarTree({
+      mode: 'nested',
+      databases: databases.map((db) => db.name),
+      tablesByDb: tables,
+      expandedDbs, expandedTables, structures, structureLoading, dbSizes,
+    });
+  }, [searchQuery, activeDatabase, databases, tables, expandedDbs, expandedTables, structures, structureLoading]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: flatNodes.length,
+    getScrollElement: () => treeScrollRef.current,
+    estimateSize: (index) => ROW_HEIGHT[flatNodes[index].kind],
+    overscan: 8,
+  });
+
+  // Row heights come from the node kinds, never from the DOM, so a reshaped
+  // tree of the same length has to invalidate the size cache by hand.
+  useEffect(() => {
+    rowVirtualizer.measure();
+  }, [flatNodes, rowVirtualizer]);
+
+  const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
 
   const handleDestructiveConfirm = async (newName?: string) => {
     if (!destructiveDialog || !activeConnectionId) return;
@@ -376,10 +495,10 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
           </div>
         </div>
 
-        <ScrollArea className="flex-1 overflow-hidden">
-          <div className="py-1">
-            {/* Favorites section */}
-            {favorites.length > 0 && !searchQuery && (
+        {/* Favorites and recent tables — pinned above the virtualized tree */}
+        {(favorites.length > 0 || recentTables.length > 0) && !searchQuery && (
+          <div className="max-h-[35%] shrink-0 overflow-y-auto py-1">
+            {favorites.length > 0 && (
               <div className="px-2 py-1">
                 <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider px-2 py-1">
                   Favorites
@@ -407,8 +526,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
               </div>
             )}
 
-            {/* Recent tables section */}
-            {recentTables.length > 0 && !searchQuery && (
+            {recentTables.length > 0 && (
               <div className="px-2 py-1">
                 <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider px-2 py-1">
                   Recent
@@ -426,97 +544,114 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
                 <Separator className="mt-1" />
               </div>
             )}
-
-            {/* Fuzzy search results */}
-            {searchQuery && fuzzyResults ? (
-              <FuzzySearchResults
-                results={fuzzyResults}
-                searchQuery={searchQuery}
-                onTableClick={handleTableClick}
-                onColumnClick={handleColumnClick}
-                onColumnDoubleClick={handleColumnDoubleClick}
-                selectedColumn={selectedColumn}
-              />
-            ) : searchQuery ? (
-              /* Fallback while fuzzy results load — show existing search */
-              <SearchableTree
-                databases={visibleDatabases}
-                tables={tables}
-                structures={structures}
-                structureLoading={structureLoading}
-                searchQuery={searchQuery}
-                expandedDbs={expandedDbs}
-                expandedTables={expandedTables}
-                selectedColumn={selectedColumn}
-                onToggleDb={toggleDb}
-                onToggleTable={toggleTable}
-                onTableClick={handleTableClick}
-                onColumnClick={handleColumnClick}
-                onColumnDoubleClick={handleColumnDoubleClick}
-                onTruncateTable={handleTruncateTable}
-                onDropTable={handleDropTable}
-                onRenameTable={handleRenameTable}
-              />
-            ) : activeDatabase ? (
-              activeTables.length === 0 ? (
-                <p className="px-3 py-4 text-center text-xs text-muted-foreground">
-                  No tables in {activeDatabase}
-                </p>
-              ) : (
-                activeTables.map((table) => {
-                  const key = `${activeDatabase}.${table.name}`;
-                  return (
-                    <TableNode
-                      key={table.name}
-                      table={table}
-                      dbName={activeDatabase}
-                      expanded={expandedTables.has(key)}
-                      loading={structureLoading[key] ?? false}
-                      columns={structures[key]?.columns}
-                      onToggle={() => toggleTable(activeDatabase, table.name)}
-                      onClick={() => handleTableClick(activeDatabase, table.name)}
-                      onColumnClick={handleColumnClick}
-                      onColumnDoubleClick={(colName) => handleColumnDoubleClick(activeDatabase, table.name, colName)}
-                      selectedColumn={selectedColumn}
-                      searchQuery=""
-                      onTruncate={() => handleTruncateTable(activeDatabase, table.name)}
-                      onDrop={() => handleDropTable(activeDatabase, table.name)}
-                      onRename={() => handleRenameTable(activeDatabase, table.name)}
-                      flat
-                      isFavorited={activeConnectionId ? isFavorite(activeConnectionId, table.name) : false}
-                      onToggleFavorite={activeConnectionId ? () => toggleFavorite(activeConnectionId, table.name) : undefined}
-                    />
-                  );
-                })
-              )
-            ) : visibleDatabases.length === 0 ? (
-              <p className="px-3 py-4 text-center text-xs text-muted-foreground">
-                No databases found
-              </p>
-            ) : (
-              <SearchableTree
-                databases={visibleDatabases}
-                tables={tables}
-                structures={structures}
-                structureLoading={structureLoading}
-                searchQuery={searchQuery}
-                expandedDbs={expandedDbs}
-                expandedTables={expandedTables}
-                selectedColumn={selectedColumn}
-                onToggleDb={toggleDb}
-                onToggleTable={toggleTable}
-                onTableClick={handleTableClick}
-                onColumnClick={handleColumnClick}
-                onColumnDoubleClick={handleColumnDoubleClick}
-                onTruncateTable={handleTruncateTable}
-                onDropTable={handleDropTable}
-                onRenameTable={handleRenameTable}
-                isFavorite={activeConnectionId ? (table: string) => isFavorite(activeConnectionId, table) : undefined}
-                onToggleFavorite={activeConnectionId ? (table: string) => toggleFavorite(activeConnectionId, table) : undefined}
-              />
-            )}
           </div>
-        </ScrollArea>
+        )}
+
+        <div
+          ref={treeScrollRef}
+          onContextMenuCapture={handleTreeContextMenuCapture}
+          className="flex-1 overflow-y-auto py-1"
+        >
+          {/* One context menu for the whole tree — opened by the right-clicked row */}
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
+              <div>
+                {searchQuery && fuzzyResults ? (
+                  <FuzzySearchResults
+                    results={fuzzyResults}
+                    searchQuery={searchQuery}
+                    onTableClick={handleTableClick}
+                    onColumnClick={handleColumnClick}
+                    onColumnDoubleClick={handleColumnDoubleClick}
+                    selectedColumn={selectedColumn}
+                  />
+                ) : searchQuery ? (
+                  /* Fallback while fuzzy results load — show existing search */
+                  <SearchableTree
+                    databases={visibleDatabases}
+                    tables={tables}
+                    structures={structures}
+                    searchQuery={searchQuery}
+                    selectedColumn={selectedColumn}
+                    onTableClick={handleTableClick}
+                    onColumnClick={handleColumnClick}
+                    onColumnDoubleClick={handleColumnDoubleClick}
+                  />
+                ) : flatNodes.length === 0 ? (
+                  <p className="px-3 py-4 text-center text-xs text-muted-foreground">
+                    {activeDatabase ? `No tables in ${activeDatabase}` : 'No databases found'}
+                  </p>
+                ) : (
+                  <div className="relative w-full" style={{ height: rowVirtualizer.getTotalSize() }}>
+                    {rowVirtualizer.getVirtualItems().map((item) => {
+                      const node = flatNodes[item.index];
+                      return (
+                        <div
+                          key={node.key}
+                          className="absolute left-0 top-0 w-full"
+                          style={{ height: item.size, transform: `translateY(${item.start}px)` }}
+                        >
+                          <SidebarRow
+                            node={node}
+                            isActive={
+                              node.kind === 'column' &&
+                              selectedColumn?.name === node.name &&
+                              selectedColumn?.ordinal_position === node.ordinalPosition
+                            }
+                            isFavorite={node.kind === 'table' && favoriteSet.has(node.table)}
+                            handlers={rowHandlers}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </ContextMenuTrigger>
+            {contextTable && (
+              <ContextMenuContent className="w-48">
+                <ContextMenuItem onClick={() => handleTableClick(contextTable.db, contextTable.table)}>
+                  <Table2 className="mr-2 h-3.5 w-3.5" /> Open Table
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => navigator.clipboard.writeText(contextTable.table)}>
+                  <Copy className="mr-2 h-3.5 w-3.5" /> Copy Name
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem onClick={() => {
+                  const pageSize = usePreferencesStore.getState().defaultPageSize;
+                  navigator.clipboard.writeText(pageSize > 0
+                    ? `SELECT * FROM \`${contextTable.table}\` LIMIT ${pageSize}`
+                    : `SELECT * FROM \`${contextTable.table}\``);
+                }}>
+                  <Terminal className="mr-2 h-3.5 w-3.5" /> Copy SELECT Query
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => {
+                  navigator.clipboard.writeText(`SELECT COUNT(*) FROM \`${contextTable.table}\``);
+                }}>
+                  <Hash className="mr-2 h-3.5 w-3.5" /> Copy COUNT Query
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => {
+                  navigator.clipboard.writeText(`DESCRIBE \`${contextTable.table}\``);
+                }}>
+                  <Info className="mr-2 h-3.5 w-3.5" /> Copy DESCRIBE Query
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem onClick={() => handleRenameTable(contextTable.db, contextTable.table)}>
+                  <Pencil className="mr-2 h-3.5 w-3.5" /> Rename Table
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => handleTruncateTable(contextTable.db, contextTable.table)}>
+                  <Eraser className="mr-2 h-3.5 w-3.5" /> Truncate Table
+                </ContextMenuItem>
+                <ContextMenuItem
+                  onClick={() => handleDropTable(contextTable.db, contextTable.table)}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="mr-2 h-3.5 w-3.5" /> Drop Table
+                </ContextMenuItem>
+              </ContextMenuContent>
+            )}
+          </ContextMenu>
+        </div>
 
         {/* Column properties panel */}
         {selectedColumn && (
