@@ -133,10 +133,10 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
     executeQuery(activeConnectionId, activeTab.id);
   }, [activeConnectionId, activeTab, defaultPageSize, dbType, updateSql, executeQuery]);
 
-  const currentSql = activeTab?.sql ?? '';
   const buildTableSql = useCallback((tableName: string, sorts: SortRequest[]): string => {
+    const tab = useQueryStore.getState().tabs.find((t) => t.id === activeTabId);
     // Preserve existing WHERE clause from current SQL
-    const whereMatch = currentSql.match(/WHERE\s+(.+?)(?:\s+ORDER\s+BY|\s+LIMIT|$)/i);
+    const whereMatch = (tab?.sql ?? '').match(/WHERE\s+(.+?)(?:\s+ORDER\s+BY|\s+LIMIT|$)/i);
     const whereClause = whereMatch ? ` WHERE ${whereMatch[1].trim()}` : '';
 
     const orderByClause = sorts.length > 0
@@ -145,14 +145,15 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
 
     const limitClause = defaultPageSize > 0 ? ` LIMIT ${defaultPageSize}` : '';
     return `SELECT * FROM ${quoteIdentifier(tableName, dbType)}${whereClause}${orderByClause}${limitClause}`;
-  }, [currentSql, defaultPageSize, dbType]);
+  }, [activeTabId, defaultPageSize, dbType]);
 
   const handleServerSort = useCallback((sorts: SortRequest[]) => {
-    if (!activeConnectionId || !activeTab?.table || !activeTab?.database) return;
-    const sql = buildTableSql(activeTab.table, sorts);
-    updateSql(activeTab.id, sql);
-    executeQuery(activeConnectionId, activeTab.id);
-  }, [activeConnectionId, activeTab, buildTableSql, updateSql, executeQuery]);
+    const tab = useQueryStore.getState().tabs.find((t) => t.id === activeTabId);
+    if (!activeConnectionId || !tab?.table || !tab?.database) return;
+    const sql = buildTableSql(tab.table, sorts);
+    updateSql(tab.id, sql);
+    executeQuery(activeConnectionId, tab.id);
+  }, [activeConnectionId, activeTabId, buildTableSql, updateSql, executeQuery]);
 
   // ─── Server-side pagination for table browse ─────────────────────────────
   const [serverPage, setServerPage] = useState(0);
@@ -182,21 +183,23 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
   }, [activeConnectionId, activeTab?.table, activeTab?.database, dbType]);
 
   const handleServerPageChange = useCallback((page: number, pageSize: number) => {
-    if (!activeConnectionId || !activeTab?.table || !activeTab?.database) return;
+    const tab = useQueryStore.getState().tabs.find((t) => t.id === activeTabId);
+    if (!activeConnectionId || !tab?.table || !tab?.database) return;
     setServerPage(page);
 
-    const qt = quoteIdentifier(activeTab.table, dbType);
+    const qt = quoteIdentifier(tab.table, dbType);
+    const sql0 = tab.sql ?? '';
     // Preserve existing WHERE / ORDER BY from current SQL
-    const whereMatch = currentSql.match(/WHERE\s+(.+?)(?:\s+ORDER\s+BY|\s+LIMIT|\s+OFFSET|$)/i);
-    const orderMatch = currentSql.match(/ORDER\s+BY\s+(.+?)(?:\s+LIMIT|\s+OFFSET|$)/i);
+    const whereMatch = sql0.match(/WHERE\s+(.+?)(?:\s+ORDER\s+BY|\s+LIMIT|\s+OFFSET|$)/i);
+    const orderMatch = sql0.match(/ORDER\s+BY\s+(.+?)(?:\s+LIMIT|\s+OFFSET|$)/i);
     const whereClause = whereMatch ? ` WHERE ${whereMatch[1].trim()}` : '';
     const orderByClause = orderMatch ? ` ORDER BY ${orderMatch[1].trim()}` : '';
     const limitClause = pageSize > 0 ? ` LIMIT ${pageSize}` : '';
     const offsetClause = page > 0 && pageSize > 0 ? ` OFFSET ${page * pageSize}` : '';
 
     const sql = `SELECT * FROM ${qt}${whereClause}${orderByClause}${limitClause}${offsetClause}`;
-    updateSql(activeTab.id, sql);
-    executeQuery(activeConnectionId, activeTab.id);
+    updateSql(tab.id, sql);
+    executeQuery(activeConnectionId, tab.id);
 
     // Re-fetch count if pageSize changed (filter might affect it)
     if (whereClause) {
@@ -208,7 +211,13 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
         })
         .catch(() => {});
     }
-  }, [activeConnectionId, activeTab, dbType, currentSql, updateSql, executeQuery]);
+  }, [activeConnectionId, activeTabId, dbType, updateSql, executeQuery]);
+
+  const activeTabIdForHighlight = activeTab?.id;
+  const handleHighlightDone = useMemo(() => {
+    if (!activeTabIdForHighlight) return undefined;
+    return () => useQueryStore.getState().setHighlightedColumn(activeTabIdForHighlight, null);
+  }, [activeTabIdForHighlight]);
 
   // Re-query active table tab when page size preference changes (or on remount after settings close)
   useEffect(() => {
@@ -377,7 +386,7 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
                       />
                     )}
                     <div className="flex-1 overflow-hidden">
-                      {renderResult(activeTab, tabResult, handleServerSort, handleServerPageChange, serverTotalRows, serverPage)}
+                      {renderResult(activeTab, tabResult, handleServerSort, handleServerPageChange, serverTotalRows, serverPage, handleHighlightDone)}
                     </div>
                   </>
                 </SplitEditorResults>
@@ -442,7 +451,7 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
                       />
                     )}
                     <div className="flex-1 overflow-hidden">
-                      {renderResult(activeTab, tabResult, handleServerSort, handleServerPageChange, serverTotalRows, serverPage)}
+                      {renderResult(activeTab, tabResult, handleServerSort, handleServerPageChange, serverTotalRows, serverPage, handleHighlightDone)}
                     </div>
                   </>
                 )}
@@ -466,6 +475,7 @@ function renderResult(
   onServerPageChange?: (page: number, pageSize: number) => void,
   serverTotalRows?: number,
   serverPage?: number,
+  onHighlightDone?: () => void,
 ) {
   if (tabResult?.error) {
     return (
@@ -489,7 +499,7 @@ function renderResult(
             serverTotalRows={tab.table ? serverTotalRows : undefined}
             serverPage={tab.table ? serverPage : undefined}
             highlightedColumnName={tab.highlightedColumn}
-            onHighlightDone={() => useQueryStore.getState().setHighlightedColumn(tab.id, null)}
+            onHighlightDone={onHighlightDone}
           />
           {isReloading && (
             <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/40">
