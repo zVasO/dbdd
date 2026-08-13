@@ -72,6 +72,8 @@ const DEFAULT_COL_WIDTH = 180;
 const MIN_COL_WIDTH = 80;
 /** Width of the row-number gutter that precedes every column (matches w-[50px]) */
 const ROW_NUM_WIDTH = 50;
+/** How far outside the rendered range a focused column still holds itself mounted */
+const FOCUS_PIN_SLACK = 5;
 
 const TYPE_LABELS: Record<string, string> = {
   SmallInt: 'int', Integer: 'int', BigInt: 'bigint', Float: 'float', Double: 'double',
@@ -1467,15 +1469,23 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
   // Derived once per render and handed to every column loop as four numbers, so
   // a horizontal scroll that does not move the window re-renders nothing.
   const columnItems = columnVirtualizer.getVirtualItems();
+  const rangeStart = columnItems.length > 0 ? columnItems[0].index : 0;
+  const rangeEnd = columnItems.length > 0 ? columnItems[columnItems.length - 1].index + 1 : 0;
   const editingVisIdx = editingPosition ? visibleColIndexMap.indexOf(editingPosition.colIndex) : -1;
   const focusedVisIdx = focusedCell ? visibleColIndexMap.indexOf(focusedCell.col) : -1;
+  // The editing pin is unconditional — unmounting the editor would destroy the
+  // edit session. The focus pin is not: focus survives in state, so unmounting
+  // its cell costs only an off-screen ring, and pinning it unconditionally would
+  // let a focus left far behind hold the window open across every column between.
+  const focusPin = focusedVisIdx >= 0
+    && focusedVisIdx >= rangeStart - FOCUS_PIN_SLACK
+    && focusedVisIdx < rangeEnd + FOCUS_PIN_SLACK
+    ? focusedVisIdx
+    : null;
   const { colStart, colEnd, leftSpacerWidth, rightSpacerWidth } = computeColumnWindow({
-    rangeStart: columnItems.length > 0 ? columnItems[0].index : 0,
-    rangeEnd: columnItems.length > 0 ? columnItems[columnItems.length - 1].index + 1 : 0,
-    pinnedVisIdxs: [
-      editingVisIdx >= 0 ? editingVisIdx : null,
-      focusedVisIdx >= 0 ? focusedVisIdx : null,
-    ],
+    rangeStart,
+    rangeEnd,
+    pinnedVisIdxs: [editingVisIdx >= 0 ? editingVisIdx : null, focusPin],
     widths: columnWidthsByVisIdx,
   });
   const windowedColumns = visibleColumns.slice(colStart, colEnd);
