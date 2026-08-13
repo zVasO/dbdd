@@ -4,6 +4,8 @@ Vague livrée sur `master` (`13445d5..515654c`), revue finale : prêt à merger.
 
 ## Priorité haute (petits fixes, direction « SQL invalide » ou annulation)
 
+> **Traité le 2026-08-13** (commits `b78b5e5` + `17110f3`) : repli conservateur quand le scan finit déséquilibré, annulation driver avant réveil du waiter, bornée à 2 s (`DRIVER_CANCEL_TIMEOUT`) pour ne pas bloquer l'onglet sur pool saturé. Le point 3 (doc-comments contradictoires) est corrigé au passage.
+
 1. **Garde-fou LIMIT : repli quand le scan est incertain.** `depth_tagged_tokens` (`apps/desktop/src-tauri/src/commands/query.rs:141-214`) ne connaît ni les échappements backslash MySQL (`'a\'( b'`) ni le dollar-quoting Postgres (`$$…$$`) : une parenthèse *déséquilibrée* dans un littéral mal parsé peut pousser un LIMIT top-level réel à profondeur > 0 → double LIMIT → erreur de syntaxe sur une requête valide. Containment recommandé par la re-revue (~4 lignes) : si le scan se termine avec `depth != 0` ou `quote.is_some()`, considérer le parse comme non fiable et retomber sur l'ancien comportement « tout token LIMIT/FETCH compte » (faux négatif sûr, jamais de SQL invalide). Les tests existants restent inchangés (tous se terminent équilibrés).
 2. **Race étroite annulation non-streaming : lire le pid avant de signaler.** `commands/query.rs:496-499` × `purrql-postgres/connection.rs:110` : `signal_cancel` peut réveiller la tâche de requête, dont le drop exécute `forget_pid` avant le `lookup_pid` de la tâche d'annulation → aucun `pg_cancel_backend` envoyé (la requête serveur continue). Fenêtre de quelques centaines de ns ; perdre la course reste meilleur que l'ancien comportement. Fix : lire le pid avant d'émettre le signal. Le streaming n'est pas concerné.
 
