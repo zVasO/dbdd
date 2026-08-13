@@ -49,6 +49,12 @@ fn signal_cancel(cancellers: &Cancellers, query_id: &Uuid) -> bool {
     }
 }
 
+/// Longest the local cancel signal may wait on the driver-side cancel. The
+/// Postgres driver acquires from the same pool the query saturates, where an
+/// acquire can stall for its full 10s timeout; past this bound, freeing the
+/// tab wins over confirming the server-side cancel.
+const DRIVER_CANCEL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Cancel a registered query: driver-side first, local waiter second.
 ///
 /// The order matters. Waking the waiter drops the query future, and with it
@@ -57,6 +63,11 @@ fn signal_cancel(cancellers: &Cancellers, query_id: &Uuid) -> bool {
 /// `driver_cancel` needs, leaving the statement running server-side.
 /// Returns whether a live query was registered; without one nothing of ours
 /// is still running, so the driver is never consulted.
+///
+/// The registration check and the signal are deliberately not atomic: a
+/// concurrent cancel or a natural completion in between only makes
+/// `driver_cancel` target a backend that is idle or already gone, a server-
+/// side no-op, and `signal_cancel` is idempotent.
 async fn cancel_tracked_query<F, Fut>(
     cancellers: &Cancellers,
     query_id: &Uuid,
@@ -69,8 +80,10 @@ where
     if !cancellers.contains_key(query_id) {
         return false;
     }
-    if let Err(e) = driver_cancel().await {
-        tracing::debug!(error = %e, "Driver-level cancellation unavailable");
+    match tokio::time::timeout(DRIVER_CANCEL_TIMEOUT, driver_cancel()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => tracing::debug!(error = %e, "Driver-level cancellation unavailable"),
+        Err(_) => tracing::debug!("Driver-level cancellation timed out"),
     }
     signal_cancel(cancellers, query_id)
 }
@@ -275,7 +288,9 @@ fn depth_tagged_tokens(sql: &str) -> TokenScan<'_> {
 /// - Any query whose scan ends unbalanced (unmodeled escapes like MySQL
 ///   `\'` or Postgres dollar-quoting): the depth tags can't be trusted, so
 ///   every `LIMIT`/`FETCH` token counts regardless of depth rather than
-///   risking a second LIMIT on a query whose real one was mis-tagged.
+///   risking a second LIMIT on a query whose real one was mis-tagged. This
+///   widens the window: a LIMIT that only bounds a subquery then also skips
+///   the safety cap for a genuinely unbounded outer query.
 fn has_limit_keyword(sql: &str) -> bool {
     let stripped = strip_comments(sql);
     let scan = depth_tagged_tokens(&stripped);
@@ -931,6 +946,27 @@ mod tests {
 
         assert!(!live);
         assert!(!driver_called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_driver_cancel_does_not_stall_the_local_cancel() {
+        // A saturated Postgres pool can make the driver cancel wait up to its
+        // 10s acquire timeout. The local waiter (what frees the tab) must be
+        // woken after the bounded driver window, not after the full stall.
+        let cancellers = Cancellers::new();
+        let query_id = Uuid::new_v4();
+        let rx = register_canceller(&cancellers, query_id);
+
+        let start = tokio::time::Instant::now();
+        let live = cancel_tracked_query(&cancellers, &query_id, || async {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            Ok(())
+        })
+        .await;
+
+        assert!(live);
+        assert!(*rx.borrow());
+        assert!(start.elapsed() < std::time::Duration::from_secs(3));
     }
 
     #[tokio::test]

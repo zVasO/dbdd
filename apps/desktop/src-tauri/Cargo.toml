@@ -29,3 +29,6 @@ tauri-plugin-notification = "2"
 
 [features]
 devtools = ["tauri/devtools"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
