@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect, useMemo, useDeferredValue, memo } from 'react';
+import { useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo, useDeferredValue, memo } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
@@ -13,12 +13,16 @@ import { useSchemaStore } from '@/stores/schemaStore';
 import { useQueryStore } from '@/stores/queryStore';
 import { useResultStore, formatColumnarCell } from '@/stores/resultStore';
 import { useConnectionStore } from '@/stores/connectionStore';
-import { buildPendingIndex, editKey } from './gridPendingChanges';
+import { buildPendingIndex } from './gridPendingChanges';
 import {
   EMPTY_SELECTION, selectSingle, extendTo, toggleCell,
   isCellSelected as isCellInSelection, selectionSize, materializeCells, isEmpty as isSelectionEmpty,
   type CellSelection,
 } from './gridSelection';
+import {
+  GridRow, GridEditorContext, columnarCellValue, formatCell,
+  type GridBodyHandlers, type GridEditorContextValue,
+} from './GridRow';
 import { Button } from '@/components/ui/button';
 import { QuickLook } from './QuickLook';
 import { resolveColumnarSource } from './gridDataSource';
@@ -197,21 +201,6 @@ function useGridWorker(
 }
 
 export type { SortRequest };
-
-/** Build a CellValue from columnar data at a specific position */
-function columnarCellValue(data: ColumnData[], colIdx: number, rowIdx: number): CellValue {
-  const col = data[colIdx];
-  if (!col) return { type: 'Null' };
-  const val = col.values[rowIdx];
-  if (val == null) return { type: 'Null' };
-  switch (col.kind) {
-    case 'Integers': return { type: 'Integer', value: val as number };
-    case 'Floats': return { type: 'Float', value: val as number };
-    case 'Booleans': return { type: 'Boolean', value: val as boolean };
-    case 'Strings': return { type: 'Text', value: val as string };
-    case 'Json': return { type: 'Json', value: val };
-  }
-}
 
 /** Build Row objects on-demand from columnar data for a specific set of actual row indices */
 function buildRowsOnDemand(
@@ -761,49 +750,6 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
 
   // ─── Row interaction ───────────────────────────────────────────────────────
 
-  // Row gutter click → row selection only (left click)
-  const handleRowGutterMouseDown = useCallback(
-    (e: React.MouseEvent, rowIndex: number) => {
-      if (editingCell) return;
-      if (e.button === 2) return;
-      e.stopPropagation();
-      setCellSelection(EMPTY_SELECTION);
-      if (e.shiftKey && lastSelectedRow !== null) {
-        const start = Math.min(lastSelectedRow, rowIndex);
-        const end = Math.max(lastSelectedRow, rowIndex);
-        const next = new Set<number>();
-        for (let i = start; i <= end; i++) next.add(i);
-        setSelectedRows(next);
-      } else if (e.ctrlKey || e.metaKey) {
-        setSelectedRows((prev) => {
-          const next = new Set(prev);
-          if (next.has(rowIndex)) next.delete(rowIndex);
-          else next.add(rowIndex);
-          return next;
-        });
-      } else {
-        isDraggingRef.current = true;
-        setDragStartRow(rowIndex);
-        setSelectedRows(new Set([rowIndex]));
-      }
-      setLastSelectedRow(rowIndex);
-    },
-    [lastSelectedRow, editingCell],
-  );
-
-  const handleRowMouseEnter = useCallback(
-    (rowIndex: number) => {
-      if (!isDraggingRef.current || dragStartRow === null) return;
-      const start = Math.min(dragStartRow, rowIndex);
-      const end = Math.max(dragStartRow, rowIndex);
-      const next = new Set<number>();
-      for (let i = start; i <= end; i++) next.add(i);
-      setSelectedRows(next);
-      setCellSelection(EMPTY_SELECTION);
-    },
-    [dragStartRow],
-  );
-
   // Start editing a cell — shared by click, double-click, and keyboard triggers
   const startEditingCell = useCallback(
     (rowIndex: number, colIndex: number, initialValue?: string) => {
@@ -822,56 +768,172 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
     [paginatedIndexMap, columnarData],
   );
 
+  // Everything the body handlers below read at call time. They must never take
+  // a dependency on these values directly: their identities feed the one
+  // `handlers` object each GridRow/GridCell memo compares against.
+  const bodyState = {
+    editingCell, focusedCell, cellSelection, selectedRows, lastSelectedRow, dragStartRow,
+    pendingIndex, columnarData, columns: result.columns, fkMap, database, table,
+    startEditingCell, handleFkNavigate,
+  };
+  const bodyStateRef = useRef(bodyState);
+  // Published after commit rather than during render, so a concurrent render
+  // that never commits (the deferred filter pass) cannot make the handlers
+  // disagree with the rows the user is actually clicking.
+  useLayoutEffect(() => {
+    bodyStateRef.current = bodyState;
+  });
+
+  // Row gutter click → row selection only (left click)
+  const handleRowGutterMouseDown = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    const { editingCell, lastSelectedRow } = bodyStateRef.current;
+    if (editingCell) return;
+    if (e.button === 2) return;
+    e.stopPropagation();
+    const rowIndex = Number(e.currentTarget.dataset.vrow);
+    setCellSelection(EMPTY_SELECTION);
+    if (e.shiftKey && lastSelectedRow !== null) {
+      const start = Math.min(lastSelectedRow, rowIndex);
+      const end = Math.max(lastSelectedRow, rowIndex);
+      const next = new Set<number>();
+      for (let i = start; i <= end; i++) next.add(i);
+      setSelectedRows(next);
+    } else if (e.ctrlKey || e.metaKey) {
+      setSelectedRows((prev) => {
+        const next = new Set(prev);
+        if (next.has(rowIndex)) next.delete(rowIndex);
+        else next.add(rowIndex);
+        return next;
+      });
+    } else {
+      isDraggingRef.current = true;
+      setDragStartRow(rowIndex);
+      setSelectedRows(new Set([rowIndex]));
+    }
+    setLastSelectedRow(rowIndex);
+  }, []);
+
+  const handleRowMouseEnter = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    const { dragStartRow } = bodyStateRef.current;
+    if (!isDraggingRef.current || dragStartRow === null) return;
+    const rowIndex = Number(e.currentTarget.dataset.vrow);
+    const start = Math.min(dragStartRow, rowIndex);
+    const end = Math.max(dragStartRow, rowIndex);
+    const next = new Set<number>();
+    for (let i = start; i <= end; i++) next.add(i);
+    setSelectedRows(next);
+    setCellSelection(EMPTY_SELECTION);
+  }, []);
+
+  // Row-level context (gutter area) — only if no cell selection
+  const handleRowContextMenu = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    e.preventDefault();
+    const { cellSelection, selectedRows } = bodyStateRef.current;
+    const rowIndex = Number(e.currentTarget.dataset.vrow);
+    if (isSelectionEmpty(cellSelection) && !selectedRows.has(rowIndex)) {
+      setSelectedRows(new Set([rowIndex]));
+      setLastSelectedRow(rowIndex);
+    }
+    setContextMenu({ x: e.clientX, y: e.clientY, rowIndex, colIndex: 0 });
+  }, []);
+
   // Cell click → cell selection + start drag (left click only)
-  const handleCellMouseDown = useCallback(
-    (e: React.MouseEvent, rowIndex: number, colIndex: number) => {
-      if (editingCell) return;
-      if (e.button === 2) return; // right-click handled by onContextMenu
-      e.stopPropagation();
-      // Single click on already-focused cell → start editing (spreadsheet UX)
-      if (
-        focusedCell?.row === rowIndex &&
-        focusedCell?.col === colIndex &&
-        !e.shiftKey &&
-        !e.ctrlKey &&
-        !e.metaKey &&
-        database &&
-        table
-      ) {
-        startEditingCell(rowIndex, colIndex);
-        return;
-      }
-      setSelectedRows(new Set());
-      if (e.shiftKey) {
-        // Range select: pure rectangle extension from the anchor
-        setCellSelection((sel) => extendTo(sel, rowIndex, colIndex));
-      } else if (e.ctrlKey || e.metaKey) {
-        setCellSelection((sel) => toggleCell(sel, rowIndex, colIndex));
-      } else {
-        isCellDraggingRef.current = true;
-        setCellSelection(selectSingle(rowIndex, colIndex));
-      }
-      setFocusedColIndex(colIndex);
-      setFocusedCell({ row: rowIndex, col: colIndex });
-    },
-    [editingCell, focusedCell, database, table, startEditingCell],
-  );
+  const handleCellMouseDown = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    const { editingCell, focusedCell, database, table, startEditingCell } = bodyStateRef.current;
+    if (editingCell) return;
+    if (e.button === 2) return; // right-click handled by onContextMenu
+    e.stopPropagation();
+    const rowIndex = Number(e.currentTarget.dataset.vrow);
+    const colIndex = Number(e.currentTarget.dataset.col);
+    // Single click on already-focused cell → start editing (spreadsheet UX)
+    if (
+      focusedCell?.row === rowIndex &&
+      focusedCell?.col === colIndex &&
+      !e.shiftKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      database &&
+      table
+    ) {
+      startEditingCell(rowIndex, colIndex);
+      return;
+    }
+    setSelectedRows(new Set());
+    if (e.shiftKey) {
+      // Range select: pure rectangle extension from the anchor
+      setCellSelection((sel) => extendTo(sel, rowIndex, colIndex));
+    } else if (e.ctrlKey || e.metaKey) {
+      setCellSelection((sel) => toggleCell(sel, rowIndex, colIndex));
+    } else {
+      isCellDraggingRef.current = true;
+      setCellSelection(selectSingle(rowIndex, colIndex));
+    }
+    setFocusedColIndex(colIndex);
+    setFocusedCell({ row: rowIndex, col: colIndex });
+  }, []);
 
   // Cell drag → rectangular selection (O(1): moves focus, keeps anchor)
-  const handleCellMouseEnter = useCallback(
-    (rowIndex: number, colIndex: number) => {
-      if (!isCellDraggingRef.current) return;
-      setCellSelection((sel) => extendTo(sel, rowIndex, colIndex));
-    },
-    [],
-  );
+  const handleCellMouseEnter = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    if (!isCellDraggingRef.current) return;
+    const rowIndex = Number(e.currentTarget.dataset.vrow);
+    const colIndex = Number(e.currentTarget.dataset.col);
+    setCellSelection((sel) => extendTo(sel, rowIndex, colIndex));
+  }, []);
 
-  const handleCellDoubleClick = useCallback(
-    (rowIndex: number, colIndex: number) => {
-      startEditingCell(rowIndex, colIndex);
-    },
-    [startEditingCell],
-  );
+  const handleCellContextMenu = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const { cellSelection, selectedRows } = bodyStateRef.current;
+    const rowIndex = Number(e.currentTarget.dataset.vrow);
+    const colIndex = Number(e.currentTarget.dataset.col);
+    if (!isSelectionEmpty(cellSelection)) {
+      // If right-clicking outside current cell selection, select just this cell
+      if (!isCellInSelection(cellSelection, rowIndex, colIndex)) {
+        setCellSelection(selectSingle(rowIndex, colIndex));
+        setSelectedRows(new Set());
+      }
+      // Otherwise keep current cell selection
+    } else {
+      // No cell selection — fallback to row selection
+      if (!selectedRows.has(rowIndex)) {
+        setSelectedRows(new Set([rowIndex]));
+        setLastSelectedRow(rowIndex);
+      }
+    }
+    setContextMenu({ x: e.clientX, y: e.clientY, rowIndex, colIndex });
+  }, []);
+
+  const handleCellDoubleClick = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    e.stopPropagation();
+    const { pendingIndex, startEditingCell } = bodyStateRef.current;
+    const actualRowIndex = Number(e.currentTarget.dataset.arow);
+    if (pendingIndex.deletedRows.has(actualRowIndex)) return;
+    startEditingCell(Number(e.currentTarget.dataset.vrow), Number(e.currentTarget.dataset.col));
+  }, []);
+
+  const handleCellValueClick = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    const { columns, fkMap, columnarData, handleFkNavigate } = bodyStateRef.current;
+    const colIndex = Number(e.currentTarget.dataset.col);
+    const col = columns[colIndex];
+    if (!col || !fkMap[col.name]) return;
+    e.stopPropagation();
+    const actualRowIndex = Number(e.currentTarget.dataset.arow);
+    handleFkNavigate(col.name, formatCell(columnarCellValue(columnarData, colIndex, actualRowIndex)));
+  }, []);
+
+  const handlers = useMemo<GridBodyHandlers>(() => ({
+    onCellMouseDown: handleCellMouseDown,
+    onCellMouseEnter: handleCellMouseEnter,
+    onCellContextMenu: handleCellContextMenu,
+    onCellDoubleClick: handleCellDoubleClick,
+    onCellValueClick: handleCellValueClick,
+    onRowMouseEnter: handleRowMouseEnter,
+    onRowContextMenu: handleRowContextMenu,
+    onRowGutterMouseDown: handleRowGutterMouseDown,
+  }), [
+    handleCellMouseDown, handleCellMouseEnter, handleCellContextMenu, handleCellDoubleClick,
+    handleCellValueClick, handleRowMouseEnter, handleRowContextMenu, handleRowGutterMouseDown,
+  ]);
 
   const commitEdit = useCallback(() => {
     if (!editingCell) {
@@ -952,6 +1014,49 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
       setEditingCell(null);
     }
   }, [editingCell, paginatedIndexMap, columnarData, result.columns, database, table, addChange, visibleColumns, visibleColIndexMap, schemaPrimaryKeys]);
+
+  const handleEditorChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setEditingCell((prev) => (prev ? { ...prev, value: e.target.value, isNull: false } : null));
+  }, []);
+
+  const handleEditorToggleNull = useCallback(() => {
+    setEditingCell((prev) => (prev ? { ...prev, isNull: !prev.isNull, value: '' } : null));
+  }, []);
+
+  const handleEditorKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Tab') { e.preventDefault(); commitAndMove(e.shiftKey ? 'left' : 'right'); return; }
+    if (e.key === 'Enter') { commitAndMove('down'); return; }
+    if (e.key === 'Escape') cancelEdit();
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault();
+      commitEdit();
+      window.dispatchEvent(new CustomEvent('vasodb:commit'));
+      return;
+    }
+    e.stopPropagation();
+  }, [commitAndMove, cancelEdit, commitEdit]);
+
+  const editorContext = useMemo<GridEditorContextValue | null>(
+    () => (editingCell
+      ? {
+          value: editingCell.value,
+          isNull: Boolean(editingCell.isNull),
+          inputRef: editInputRef,
+          onChange: handleEditorChange,
+          onKeyDown: handleEditorKeyDown,
+          onBlur: commitEdit,
+          onToggleNull: handleEditorToggleNull,
+        }
+      : null),
+    [editingCell, handleEditorChange, handleEditorKeyDown, commitEdit, handleEditorToggleNull],
+  );
+
+  // Position only — the live editor value travels by context, so a keystroke
+  // never changes any GridRow prop.
+  const editingPosition = useMemo(
+    () => (editingCell ? { rowIndex: editingCell.rowIndex, colIndex: editingCell.colIndex } : null),
+    [editingCell?.rowIndex, editingCell?.colIndex],
+  );
 
   const handleDeleteRow = useCallback((paginatedIdx: number) => {
     if (!database || !table) return;
@@ -1427,194 +1532,40 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
       {/* Virtualized body */}
       <div
         className="relative"
-        style={{ height: `${rowVirtualizer.getTotalSize()}px`, minWidth: totalWidthStyle }}
+        style={{ height: `${rowVirtualizer.getTotalSize()}px`, minWidth: totalWidthStyle, contain: 'layout paint' }}
       >
-        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-          const actualRowIndex = paginatedIndexMap[virtualRow.index];
-          const displayIndex = pageStart + virtualRow.index;
-          const isOdd = virtualRow.index % 2 === 1;
-          const isSelected = selectedRows.has(virtualRow.index);
-          const rowDeleted = pendingIndex.deletedRows.has(actualRowIndex);
+        <GridEditorContext.Provider value={editorContext}>
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const actualRowIndex = paginatedIndexMap[virtualRow.index];
 
-          return (
-            <div
-              key={virtualRow.index}
-              role="row"
-              aria-rowindex={displayIndex + 2}
-              className={cn(
-                'absolute left-0 top-0 flex cursor-pointer border-b border-border/30',
-                rowDeleted
-                  ? 'opacity-40'
-                  : isSelected
-                    ? 'bg-primary/15 hover:bg-primary/20'
-                    : isOdd && alternatingRowColors
-                      ? 'bg-muted/30 hover:bg-muted/40'
-                      : 'hover:bg-muted/30',
-              )}
-              style={{
-                height: `${virtualRow.size}px`,
-                transform: `translateY(${virtualRow.start}px)`,
-                minWidth: totalWidthStyle,
-              }}
-              onMouseEnter={() => handleRowMouseEnter(virtualRow.index)}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                // Row-level context (gutter area) — only if no cell selection
-                if (isSelectionEmpty(cellSelection) && !selectedRows.has(virtualRow.index)) {
-                  setSelectedRows(new Set([virtualRow.index]));
-                  setLastSelectedRow(virtualRow.index);
-                }
-                setContextMenu({ x: e.clientX, y: e.clientY, rowIndex: virtualRow.index, colIndex: 0 });
-              }}
-            >
-              {/* Row number (click to select row) */}
-              <div
-                className={cn(
-                  'flex w-[50px] shrink-0 items-center justify-center border-r border-border/30 text-[10px] cursor-pointer',
-                  isSelected ? 'font-semibold text-primary' : 'text-muted-foreground',
-                  rowDeleted && 'line-through',
-                )}
-                onMouseDown={(e) => handleRowGutterMouseDown(e, virtualRow.index)}
-              >
-                {displayIndex + 1}
-              </div>
-
-              {/* Cells */}
-              {visibleColumns.map((col, visIdx) => {
-                const colIdx = visibleColIndexMap[visIdx];
-                const cell = columnarCellValue(columnarData, colIdx, actualRowIndex);
-                const isEditing =
-                  editingCell?.rowIndex === virtualRow.index &&
-                  editingCell?.colIndex === colIdx;
-                const pendingEdit = pendingIndex.edits.get(editKey(actualRowIndex, col.name));
-
-                const cellIsSelected = isCellInSelection(cellSelection, virtualRow.index, colIdx);
-                const isFocused = focusedCell?.row === virtualRow.index && focusedCell?.col === colIdx;
-
-                return (
-                  <div
-                    key={colIdx}
-                    role="gridcell"
-                    aria-colindex={visIdx + 1}
-                    className={cn(
-                      'flex shrink-0 items-center border-r border-border/30 transition-colors duration-300',
-                      isEditing && 'ring-2 ring-inset ring-primary',
-                      !isEditing && isFocused && 'ring-2 ring-primary ring-inset',
-                      !isEditing && !isFocused && cellIsSelected && 'ring-2 ring-inset ring-primary/60 bg-primary/10',
-                      pendingEdit && !isEditing && 'bg-yellow-500/15',
-                      !isEditing && !isFocused && !cellIsSelected && !pendingEdit && highlightedColIndex === colIdx && 'bg-primary/8',
-                    )}
-                    style={{ width: getColWidthStyle(colIdx) }}
-                    onMouseDown={(e) => handleCellMouseDown(e, virtualRow.index, colIdx)}
-                    onMouseEnter={() => handleCellMouseEnter(virtualRow.index, colIdx)}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      if (!isSelectionEmpty(cellSelection)) {
-                        // If right-clicking outside current cell selection, select just this cell
-                        if (!isCellInSelection(cellSelection, virtualRow.index, colIdx)) {
-                          setCellSelection(selectSingle(virtualRow.index, colIdx));
-                          setSelectedRows(new Set());
-                        }
-                        // Otherwise keep current cell selection
-                      } else {
-                        // No cell selection — fallback to row selection
-                        if (!selectedRows.has(virtualRow.index)) {
-                          setSelectedRows(new Set([virtualRow.index]));
-                          setLastSelectedRow(virtualRow.index);
-                        }
-                      }
-                      setContextMenu({ x: e.clientX, y: e.clientY, rowIndex: virtualRow.index, colIndex: colIdx });
-                    }}
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      if (!rowDeleted) handleCellDoubleClick(virtualRow.index, colIdx);
-                    }}
-                  >
-                    {isEditing ? (
-                      <div className="flex h-full w-full items-center bg-background">
-                        <input
-                          ref={editInputRef}
-                          className={cn(
-                            "h-full min-w-0 flex-1 border-none bg-transparent px-2 py-1 outline-none",
-                            editingCell.isNull ? 'italic text-muted-foreground' : 'text-foreground'
-                          )}
-                          style={{ fontFamily: 'inherit', fontSize: 'inherit' }}
-                          value={editingCell.isNull ? '' : editingCell.value}
-                          placeholder={editingCell.isNull ? 'NULL' : ''}
-                          onChange={(e) =>
-                            setEditingCell((prev) =>
-                              prev ? { ...prev, value: e.target.value, isNull: false } : null,
-                            )
-                          }
-                          onKeyDown={(e) => {
-                            if (e.key === 'Tab') { e.preventDefault(); commitAndMove(e.shiftKey ? 'left' : 'right'); return; }
-                            if (e.key === 'Enter') { commitAndMove('down'); return; }
-                            if (e.key === 'Escape') cancelEdit();
-                            if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-                              e.preventDefault();
-                              commitEdit();
-                              window.dispatchEvent(new CustomEvent('vasodb:commit'));
-                              return;
-                            }
-                            e.stopPropagation();
-                          }}
-                          onBlur={commitEdit}
-                        />
-                        {col.nullable && (
-                          <button
-                            className={cn(
-                              'shrink-0 px-1 text-[10px] font-mono rounded mr-0.5',
-                              editingCell.isNull
-                                ? 'text-primary font-bold bg-primary/10'
-                                : 'text-muted-foreground/40 hover:text-muted-foreground'
-                            )}
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => {
-                              setEditingCell((prev) =>
-                                prev ? { ...prev, isNull: !prev.isNull, value: '' } : null,
-                              );
-                            }}
-                            title="Toggle NULL (Ctrl+Shift+N)"
-                          >
-                            NULL
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      <span
-                        className={cn(
-                          'truncate px-2 py-1',
-                          rowDeleted
-                            ? 'line-through text-muted-foreground'
-                            : pendingEdit
-                              ? 'text-yellow-600 dark:text-yellow-400'
-                              : cell.type === 'Null'
-                                ? 'italic text-muted-foreground/50'
-                                : cell.type === 'Integer' || cell.type === 'Float'
-                                  ? 'tabular-nums text-foreground'
-                                  : cell.type === 'Boolean'
-                                    ? 'font-medium text-accent-foreground'
-                                    : fkMap[col.name]
-                                      ? 'text-blue-600 dark:text-blue-400 underline decoration-dotted cursor-pointer hover:text-blue-700'
-                                      : 'text-foreground',
-                        )}
-                        onClick={(e) => {
-                          if (fkMap[col.name]) {
-                            e.stopPropagation();
-                            handleFkNavigate(col.name, formatCell(cell));
-                          }
-                        }}
-                      >
-                        {pendingEdit && pendingEdit.type === 'edit' ? String(pendingEdit.newValue) : formatCell(cell)}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })}
+            return (
+              <GridRow
+                key={virtualRow.key}
+                virtualIndex={virtualRow.index}
+                actualRowIndex={actualRowIndex}
+                displayIndex={pageStart + virtualRow.index}
+                start={virtualRow.start}
+                size={virtualRow.size}
+                isOdd={virtualRow.index % 2 === 1}
+                isSelected={selectedRows.has(virtualRow.index)}
+                rowDeleted={pendingIndex.deletedRows.has(actualRowIndex)}
+                alternatingRowColors={alternatingRowColors}
+                totalWidthStyle={totalWidthStyle}
+                visibleColumns={visibleColumns}
+                visibleColIndexMap={visibleColIndexMap}
+                columnarData={columnarData}
+                cellSelection={cellSelection}
+                pendingIndex={pendingIndex}
+                editingCell={editingPosition}
+                focusedCell={focusedCell}
+                highlightedColIndex={highlightedColIndex}
+                fkMap={fkMap}
+                getColWidthStyle={getColWidthStyle}
+                handlers={handlers}
+              />
+            );
+          })}
+        </GridEditorContext.Provider>
       </div>
 
       {/* Pending inserted rows */}
@@ -1981,29 +1932,3 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
     </div>
   );
 });
-
-function formatCell(cell: CellValue): string {
-  switch (cell.type) {
-    case 'Null':
-      return 'NULL';
-    case 'Integer':
-    case 'Float':
-      return String(cell.value);
-    case 'Boolean':
-      return cell.value ? 'true' : 'false';
-    case 'Text':
-    case 'DateTime':
-    case 'Date':
-    case 'Time':
-    case 'Uuid':
-      return cell.value;
-    case 'Json':
-      return JSON.stringify(cell.value);
-    case 'Bytes':
-      return `[${cell.value.size} bytes]`;
-    case 'Array':
-      return JSON.stringify(cell.value);
-    default:
-      return '';
-  }
-}
