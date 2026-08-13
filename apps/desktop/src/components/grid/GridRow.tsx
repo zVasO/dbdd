@@ -209,6 +209,14 @@ interface GridRowProps {
   totalWidthStyle: string;
   visibleColumns: ColumnMeta[];
   visibleColIndexMap: number[];
+  /**
+   * Horizontal window into `visibleColumns`, as four numbers. Primitives on
+   * purpose: virtual-item arrays would break the memo on every scroll pixel.
+   */
+  colStart: number;
+  colEnd: number;
+  leftSpacerWidth: number;
+  rightSpacerWidth: number;
   columnarData: ColumnData[];
   cellSelection: CellSelection;
   pendingIndex: PendingIndex;
@@ -222,7 +230,8 @@ interface GridRowProps {
 
 export const GridRow = memo(function GridRow({
   virtualIndex, actualRowIndex, displayIndex, start, size, isOdd, isSelected, rowDeleted,
-  alternatingRowColors, totalWidthStyle, visibleColumns, visibleColIndexMap, columnarData,
+  alternatingRowColors, totalWidthStyle, visibleColumns, visibleColIndexMap,
+  colStart, colEnd, leftSpacerWidth, rightSpacerWidth, columnarData,
   cellSelection, pendingIndex, editingCell, focusedCell, highlightedColIndex, fkMap,
   getColWidthStyle, handlers,
 }: GridRowProps) {
@@ -264,7 +273,9 @@ export const GridRow = memo(function GridRow({
       </div>
 
       {/* Cells */}
-      {visibleColumns.map((col, visIdx) => {
+      <div aria-hidden style={{ width: leftSpacerWidth, flexShrink: 0 }} />
+      {visibleColumns.slice(colStart, colEnd).map((col, i) => {
+        const visIdx = colStart + i;
         const colIdx = visibleColIndexMap[visIdx];
         return (
           <GridCell
@@ -287,6 +298,7 @@ export const GridRow = memo(function GridRow({
           />
         );
       })}
+      <div aria-hidden style={{ width: rightSpacerWidth, flexShrink: 0 }} />
     </div>
   );
 });

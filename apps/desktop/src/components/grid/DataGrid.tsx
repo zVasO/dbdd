@@ -26,6 +26,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { QuickLook } from './QuickLook';
 import { resolveColumnarSource } from './gridDataSource';
+import { computeColumnWindow } from './gridColumnWindow';
 import { usePreferencesStore } from '@/stores/preferencesStore';
 import { useShortcutStore, matchesBinding } from '@/stores/shortcutStore';
 import { quoteIdentifier, escapeStringLiteral } from '@/lib/sql-utils';
@@ -69,6 +70,8 @@ interface EditingCell {
 const PAGE_SIZES = [50, 100, 300, 500, 1000] as const;
 const DEFAULT_COL_WIDTH = 180;
 const MIN_COL_WIDTH = 80;
+/** Width of the row-number gutter that precedes every column (matches w-[50px]) */
+const ROW_NUM_WIDTH = 50;
 
 const TYPE_LABELS: Record<string, string> = {
   SmallInt: 'int', Integer: 'int', BigInt: 'bigint', Float: 'float', Double: 'double',
@@ -307,6 +310,33 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
     [visibleColumns, result.columns],
   );
 
+  // Per-visIdx pixel widths — the basis for both the horizontal virtualizer's
+  // size estimates and the spacer sums.
+  const columnWidthsByVisIdx = useMemo(
+    () => visibleColIndexMap.map((colIdx) => columnWidths[colIdx] ?? DEFAULT_COL_WIDTH),
+    [visibleColIndexMap, columnWidths],
+  );
+
+  // Horizontal virtualizer: computes the visible column window and owns
+  // horizontal scroll-into-view. Rendering does not use its offsets — the
+  // columns stay in flex flow behind numeric spacers — so the CSS-variable
+  // resize scheme is untouched. `paddingStart` models the row-number gutter,
+  // which precedes column 0 in the same scroll container.
+  const columnVirtualizer = useVirtualizer({
+    horizontal: true,
+    count: visibleColumns.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: (visIdx) => columnWidths[visibleColIndexMap[visIdx]] ?? DEFAULT_COL_WIDTH,
+    overscan: 3,
+    paddingStart: ROW_NUM_WIDTH,
+  });
+
+  // Widths are never measured from the DOM, so a committed resize has to
+  // invalidate the size cache by hand.
+  useEffect(() => {
+    columnVirtualizer.measure();
+  }, [columnWidths, visibleColumns.length, columnVirtualizer]);
+
   // Scroll to and highlight a column when highlightedColumnName changes (sidebar double-click)
   useEffect(() => {
     if (!highlightedColumnName) return;
@@ -316,16 +346,8 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
     const visIdx = visibleColumns.findIndex((col) => col.name === highlightedColumnName);
     if (visIdx < 0) return;
 
-    const colIdx = visibleColIndexMap[visIdx];
-    setHighlightedColIndex(colIdx);
-
-    // Scroll the grid horizontally so the column is visible
-    const rowNumWidth = 50;
-    let offsetX = rowNumWidth;
-    for (let i = 0; i < visIdx; i++) {
-      offsetX += columnWidths[visibleColIndexMap[i]] ?? DEFAULT_COL_WIDTH;
-    }
-    parentRef.current?.scrollTo({ left: Math.max(0, offsetX - 80), behavior: 'smooth' });
+    setHighlightedColIndex(visibleColIndexMap[visIdx]);
+    columnVirtualizer.scrollToIndex(visIdx, { align: 'start' });
 
     // Clear highlight after 2.5s and notify parent
     const timer = setTimeout(() => {
@@ -333,7 +355,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
       onHighlightDone?.();
     }, 2500);
     return () => clearTimeout(timer);
-  }, [highlightedColumnName, visibleColumns, visibleColIndexMap, columnWidths, onHighlightDone]);
+  }, [highlightedColumnName, visibleColumns, visibleColIndexMap, columnVirtualizer, onHighlightDone]);
 
   // Worker-based filter/sort for large datasets
   const activeTabId = useQueryStore((s) => s.activeTabId);
@@ -590,6 +612,15 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
     }
   }, [focusedCell?.row, rowVirtualizer]);
 
+  // Horizontal counterpart — mandatory now that off-window columns unmount:
+  // keyboard nav would otherwise move focus onto a cell that does not exist.
+  useEffect(() => {
+    if (!focusedCell) return;
+    const visIdx = visibleColIndexMap.indexOf(focusedCell.col);
+    if (visIdx < 0) return;
+    columnVirtualizer.scrollToIndex(visIdx, { align: 'auto' });
+  }, [focusedCell?.col, visibleColIndexMap, columnVirtualizer]);
+
   // Focus input on edit — deps scoped to cell identity only, not value,
   // to avoid re-selecting text on every keystroke.
   useEffect(() => {
@@ -652,8 +683,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
             container.style.setProperty(`--col-${resizingRef.current.colIndex}-w`, `${newWidth}px`);
             // Also update total content width CSS variable for scroll container
             const snap = resizeSnapshotRef.current;
-            const rowNumWidth = 50;
-            let total = rowNumWidth;
+            let total = ROW_NUM_WIDTH;
             const colCount = snap.visibleColumns.length;
             for (let i = 0; i < colCount; i++) {
               const idx = snap.visibleColIndexMap[i];
@@ -696,8 +726,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
   // Total content width for horizontal scroll: row-number col + all visible column widths.
   // During resize, the CSS variable --total-content-width overrides this via style binding.
   const totalContentWidth = useMemo(() => {
-    const rowNumWidth = 50; // matches w-[50px]
-    return rowNumWidth + visibleColumns.reduce((sum, _, visIdx) => {
+    return ROW_NUM_WIDTH + visibleColumns.reduce((sum, _, visIdx) => {
       const colIdx = visibleColIndexMap[visIdx];
       return sum + (columnWidths[colIdx] ?? DEFAULT_COL_WIDTH);
     }, 0);
@@ -1434,6 +1463,23 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
     : (pageSize === Infinity ? totalSortedRows : Math.min(pageStart + pageSize, totalSortedRows));
   const displayTotalRows = isServerPagination ? (serverTotalRows ?? totalSortedRows) : totalSortedRows;
 
+  // ─── Column window ─────────────────────────────────────────────────────────
+  // Derived once per render and handed to every column loop as four numbers, so
+  // a horizontal scroll that does not move the window re-renders nothing.
+  const columnItems = columnVirtualizer.getVirtualItems();
+  const editingVisIdx = editingPosition ? visibleColIndexMap.indexOf(editingPosition.colIndex) : -1;
+  const focusedVisIdx = focusedCell ? visibleColIndexMap.indexOf(focusedCell.col) : -1;
+  const { colStart, colEnd, leftSpacerWidth, rightSpacerWidth } = computeColumnWindow({
+    rangeStart: columnItems.length > 0 ? columnItems[0].index : 0,
+    rangeEnd: columnItems.length > 0 ? columnItems[columnItems.length - 1].index + 1 : 0,
+    pinnedVisIdxs: [
+      editingVisIdx >= 0 ? editingVisIdx : null,
+      focusedVisIdx >= 0 ? focusedVisIdx : null,
+    ],
+    widths: columnWidthsByVisIdx,
+  });
+  const windowedColumns = visibleColumns.slice(colStart, colEnd);
+
   // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -1457,7 +1503,9 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
         <div role="columnheader" className="flex w-[50px] shrink-0 items-center justify-center border-r border-border px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
           #
         </div>
-        {visibleColumns.map((col, visIdx) => {
+        <div aria-hidden style={{ width: leftSpacerWidth, flexShrink: 0 }} />
+        {windowedColumns.map((col, i) => {
+          const visIdx = colStart + i;
           const colIdx = visibleColIndexMap[visIdx];
           const sortDir = getSortDirection(colIdx);
 
@@ -1508,6 +1556,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
             </div>
           );
         })}
+        <div aria-hidden style={{ width: rightSpacerWidth, flexShrink: 0 }} />
       </div>
 
       {/* Filter bar */}
@@ -1553,6 +1602,10 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
                 totalWidthStyle={totalWidthStyle}
                 visibleColumns={visibleColumns}
                 visibleColIndexMap={visibleColIndexMap}
+                colStart={colStart}
+                colEnd={colEnd}
+                leftSpacerWidth={leftSpacerWidth}
+                rightSpacerWidth={rightSpacerWidth}
                 columnarData={columnarData}
                 cellSelection={cellSelection}
                 pendingIndex={pendingIndex}
@@ -1578,8 +1631,9 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
           <div className="flex w-[50px] shrink-0 items-center justify-center border-r border-border bg-green-500/10 text-[10px] text-green-600">
             +{idx + 1}
           </div>
-          {visibleColumns.map((col, visIdx) => {
-            const colIdx = visibleColIndexMap[visIdx];
+          <div aria-hidden style={{ width: leftSpacerWidth, flexShrink: 0 }} />
+          {windowedColumns.map((col, i) => {
+            const colIdx = visibleColIndexMap[colStart + i];
             return (
               <div
                 key={col.name}
@@ -1594,6 +1648,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
               </div>
             );
           })}
+          <div aria-hidden style={{ width: rightSpacerWidth, flexShrink: 0 }} />
         </div>
       ))}
 
