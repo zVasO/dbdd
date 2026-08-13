@@ -40,6 +40,7 @@ export interface TabResult {
   /** Legacy: row-based view built lazily on first access */
   _rowsCache: QueryResult['rows'] | null;
   _allResultsCache: QueryResult[] | null;
+  _activeResultCache: QueryResult | null;
 }
 
 /** Build a single cell from columnar data */
@@ -300,6 +301,7 @@ function trackAndEvict(
           isStale: true,
           _rowsCache: null,
           _allResultsCache: null,
+          _activeResultCache: null,
         },
       };
     }
@@ -361,6 +363,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
               _streamWarnings: [],
               _rowsCache: null,
               _allResultsCache: null,
+              _activeResultCache: null,
             }),
             isExecuting: true,
             error: null,
@@ -391,6 +394,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
         _streamWarnings: [],
         _rowsCache: result.rows,
         _allResultsCache: [result],
+        _activeResultCache: null,
       };
       const updatedResults = { ...s.results, [tabId]: newTabResult };
       return { results: trackAndEvict(tabId, columnar.data, updatedResults) };
@@ -420,6 +424,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
         _streamWarnings: [],
         _rowsCache: first?.rows ?? [],
         _allResultsCache: results,
+        _activeResultCache: null,
       };
       const updatedResults = { ...s.results, [tabId]: newTabResult };
       return { results: trackAndEvict(tabId, firstColumnar?.data ?? [], updatedResults) };
@@ -447,6 +452,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
         _streamWarnings: [],
         _rowsCache: null,
         _allResultsCache: null,
+        _activeResultCache: null,
       };
       const updatedResults = { ...s.results, [tabId]: newTabResult };
       return { results: trackAndEvict(tabId, result.data, updatedResults) };
@@ -474,6 +480,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
         _streamWarnings: [],
         _rowsCache: null,
         _allResultsCache: null,
+        _activeResultCache: null,
       };
       const updatedResults = { ...s.results, [tabId]: newTabResult };
       return { results: trackAndEvict(tabId, first?.data ?? [], updatedResults) };
@@ -498,6 +505,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
             _streamWarnings: [],
             _rowsCache: null,
             _allResultsCache: null,
+            _activeResultCache: null,
           }),
           isExecuting: false,
           isStreaming: false,
@@ -545,6 +553,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
             executionTimeMs: columnarResult.execution_time_ms,
             _rowsCache: null,
             _allResultsCache: null,
+            _activeResultCache: null,
           },
         },
       };
@@ -582,6 +591,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
           _streamWarnings: [...meta.warnings],
           _rowsCache: null,
           _allResultsCache: null,
+          _activeResultCache: null,
         },
       },
     }));
@@ -622,6 +632,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
               streamProgress: newRowCount,
               _rowsCache: null,
               _allResultsCache: null,
+              _activeResultCache: null,
             },
           },
         };
@@ -671,6 +682,7 @@ export const useResultStore = create<ResultState>((set, get) => ({
           _streamWarnings: [],
           _rowsCache: null,
           _allResultsCache: null,
+          _activeResultCache: null,
         },
       };
 
@@ -723,9 +735,10 @@ export const useResultStore = create<ResultState>((set, get) => ({
   getActiveResult: (tabId) => {
     const current = get().results[tabId];
     if (!current) return null;
+    if (current._activeResultCache) return current._activeResultCache;
     const columnar = current.allColumnarResults[current.activeResultIndex];
     if (!columnar) return null;
-    return {
+    const built: QueryResult = {
       query_id: columnar.query_id,
       columns: columnar.columns,
       rows: [],
@@ -735,6 +748,12 @@ export const useResultStore = create<ResultState>((set, get) => ({
       warnings: columnar.warnings,
       result_type: columnar.result_type,
     };
+    set((s) => {
+      const existing = s.results[tabId];
+      if (!existing) return s;
+      return { results: { ...s.results, [tabId]: { ...existing, _activeResultCache: built } } };
+    });
+    return built;
   },
 
   getRowsPreview: (tabId, limit) => {
