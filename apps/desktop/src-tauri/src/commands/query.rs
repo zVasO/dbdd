@@ -49,6 +49,32 @@ fn signal_cancel(cancellers: &Cancellers, query_id: &Uuid) -> bool {
     }
 }
 
+/// Cancel a registered query: driver-side first, local waiter second.
+///
+/// The order matters. Waking the waiter drops the query future, and with it
+/// the driver's record of which backend runs the query (e.g. the Postgres
+/// pid registration) — signalling first can erase the very record
+/// `driver_cancel` needs, leaving the statement running server-side.
+/// Returns whether a live query was registered; without one nothing of ours
+/// is still running, so the driver is never consulted.
+async fn cancel_tracked_query<F, Fut>(
+    cancellers: &Cancellers,
+    query_id: &Uuid,
+    driver_cancel: F,
+) -> bool
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = purrql_core::error::Result<()>>,
+{
+    if !cancellers.contains_key(query_id) {
+        return false;
+    }
+    if let Err(e) = driver_cancel().await {
+        tracing::debug!(error = %e, "Driver-level cancellation unavailable");
+    }
+    signal_cancel(cancellers, query_id)
+}
+
 /// Strip leading SQL comments (line and block) to find the first real keyword.
 fn strip_leading_comments(sql: &str) -> &str {
     let mut s = sql.trim_start();
@@ -129,16 +155,27 @@ struct Token<'a> {
     adjacent: bool,
 }
 
+/// Result of scanning a SQL string into depth-tagged word tokens.
+struct TokenScan<'a> {
+    tokens: Vec<Token<'a>>,
+    /// Whether the scan ended with every parenthesis closed and every quote
+    /// terminated. Syntaxes the tokenizer doesn't model — MySQL `\'`
+    /// backslash escapes, Postgres `$$...$$` dollar-quoting — can leave it
+    /// unbalanced, and then every depth tag is suspect: a caller must not
+    /// use depth to dismiss a token it would otherwise act on.
+    reliable: bool,
+}
+
 /// Split `sql` (already comment-stripped) into word tokens tagged with their
 /// parenthesis depth.
 ///
 /// Only the depth tracking is quote-aware: a `(` or `)` inside a `'...'`
 /// literal or a `"..."` identifier is literal text and must not shift the
 /// depth of the real SQL around it. Words *inside* quotes are still emitted
-/// as tokens, which keeps `SELECT 'LIMIT'` a false positive for the caller —
+/// as tokens, which keeps `SELECT 'LIMIT'` wrongly reported as bounded —
 /// deliberately, since suppressing the safety limit is the safe failure mode
 /// and never produces a second, invalid LIMIT clause.
-fn depth_tagged_tokens(sql: &str) -> Vec<Token<'_>> {
+fn depth_tagged_tokens(sql: &str) -> TokenScan<'_> {
     let mut tokens: Vec<Token<'_>> = Vec::new();
     let mut depth: u32 = 0;
     let mut quote: Option<char> = None;
@@ -210,7 +247,10 @@ fn depth_tagged_tokens(sql: &str) -> Vec<Token<'_>> {
         });
     }
 
-    tokens
+    TokenScan {
+        tokens,
+        reliable: depth == 0 && quote.is_none(),
+    }
 }
 
 /// Whether `sql` already bounds its own top-level result set with a
@@ -232,12 +272,18 @@ fn depth_tagged_tokens(sql: &str) -> Vec<Token<'_>> {
 ///   indistinguishable from the keyword without a real SQL parser.
 /// - A top-level SELECT wrapped in its own parentheses
 ///   (`(SELECT ... LIMIT 10)`), whose keyword never reaches depth 0.
+/// - Any query whose scan ends unbalanced (unmodeled escapes like MySQL
+///   `\'` or Postgres dollar-quoting): the depth tags can't be trusted, so
+///   every `LIMIT`/`FETCH` token counts regardless of depth rather than
+///   risking a second LIMIT on a query whose real one was mis-tagged.
 fn has_limit_keyword(sql: &str) -> bool {
     let stripped = strip_comments(sql);
-    let tokens = depth_tagged_tokens(&stripped);
+    let scan = depth_tagged_tokens(&stripped);
+    let tokens = &scan.tokens;
+    let top_level = |depth: u32| !scan.reliable || depth == 0;
 
     tokens.iter().enumerate().any(|(i, tok)| {
-        if tok.depth != 0 {
+        if !top_level(tok.depth) {
             return false;
         }
         if tok.word.eq_ignore_ascii_case("LIMIT") {
@@ -245,7 +291,7 @@ fn has_limit_keyword(sql: &str) -> bool {
         }
         if tok.word.eq_ignore_ascii_case("FETCH") {
             return tokens.get(i + 1).is_some_and(|next| {
-                next.depth == 0
+                top_level(next.depth)
                     && next.adjacent
                     && (next.word.eq_ignore_ascii_case("FIRST")
                         || next.word.eq_ignore_ascii_case("NEXT"))
@@ -489,15 +535,13 @@ pub async fn cancel_query(
             .ok_or(IpcError::from("Connection not found"))?;
         Arc::clone(&active.connection)
     };
-    // Without a registered canceller nothing of ours is still running, so
-    // there's nothing to ask the driver to stop. Abandoning the wait is what
-    // frees the tab; the driver call additionally stops the query server-side
-    // for drivers that can target it by id, and is a no-op for the rest.
-    if signal_cancel(&state.stream_cancellers, &query_id) {
-        if let Err(e) = conn.cancel_query(&query_id).await {
-            tracing::debug!(error = %e, "Driver-level cancellation unavailable");
-        }
-    }
+    // Abandoning the wait is what frees the tab; the driver call additionally
+    // stops the query server-side for drivers that can target it by id, and
+    // is a no-op for the rest.
+    cancel_tracked_query(&state.stream_cancellers, &query_id, || async {
+        conn.cancel_query(&query_id).await
+    })
+    .await;
     state
         .event_bus
         .emit(AppEvent::QueryCancelled { query_id });
@@ -818,9 +862,11 @@ pub async fn execute_query_stream(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_safety_limit, needs_safety_limit, register_canceller, signal_cancel, Cancellers,
-        SAFETY_ROW_LIMIT,
+        apply_safety_limit, cancel_tracked_query, needs_safety_limit, register_canceller,
+        signal_cancel, Cancellers, SAFETY_ROW_LIMIT,
     };
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use uuid::Uuid;
 
     #[test]
@@ -845,6 +891,63 @@ mod tests {
         register_canceller(&cancellers, query_id);
         assert!(signal_cancel(&cancellers, &query_id));
         assert!(!signal_cancel(&cancellers, &query_id));
+    }
+
+    #[tokio::test]
+    async fn driver_cancel_runs_before_the_local_waiter_is_woken() {
+        // Waking the waiter first drops the query future — and with it the
+        // driver's pid registration — so the driver must be asked to cancel
+        // while the local signal is still unsent.
+        let cancellers = Cancellers::new();
+        let query_id = Uuid::new_v4();
+        let rx = register_canceller(&cancellers, query_id);
+
+        let signalled_during_driver_cancel = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&signalled_during_driver_cancel);
+        let observed_rx = rx.clone();
+        let live = cancel_tracked_query(&cancellers, &query_id, || async move {
+            observed.store(*observed_rx.borrow(), Ordering::SeqCst);
+            Ok(())
+        })
+        .await;
+
+        assert!(live);
+        assert!(!signalled_during_driver_cancel.load(Ordering::SeqCst));
+        assert!(*rx.borrow());
+        assert!(cancellers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancel_without_registration_never_reaches_the_driver() {
+        let cancellers = Cancellers::new();
+        let driver_called = Arc::new(AtomicBool::new(false));
+        let called = Arc::clone(&driver_called);
+
+        let live = cancel_tracked_query(&cancellers, &Uuid::new_v4(), || async move {
+            called.store(true, Ordering::SeqCst);
+            Ok(())
+        })
+        .await;
+
+        assert!(!live);
+        assert!(!driver_called.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn driver_cancel_failure_still_wakes_the_local_waiter() {
+        let cancellers = Cancellers::new();
+        let query_id = Uuid::new_v4();
+        let rx = register_canceller(&cancellers, query_id);
+
+        let live = cancel_tracked_query(&cancellers, &query_id, || async {
+            Err(purrql_core::error::PurrqlError::QueryExecution(
+                "not supported".into(),
+            ))
+        })
+        .await;
+
+        assert!(live);
+        assert!(*rx.borrow());
     }
 
     #[test]
@@ -1021,5 +1124,25 @@ mod tests {
         assert!(!needs_safety_limit(
             r#"SELECT "weird)(name" FROM t LIMIT 10"#
         ));
+    }
+
+    #[test]
+    fn backslash_escaped_quote_falls_back_to_conservative_detection() {
+        // MySQL's `\'` escape isn't modeled by the tokenizer: it closes the
+        // literal at the `\'`, reads the literal `(` as a real paren, and tags
+        // the genuine top-level LIMIT at depth 1. The scan ends unbalanced,
+        // which must disable depth filtering — skipping the safety limit is
+        // safe, appending a second LIMIT to valid SQL is not.
+        assert!(!needs_safety_limit(
+            r"SELECT * FROM t WHERE label = 'a\'( b' LIMIT 5"
+        ));
+    }
+
+    #[test]
+    fn dollar_quoted_parens_fall_back_to_conservative_detection() {
+        // Postgres dollar-quoting isn't modeled either: the `(` inside
+        // `$$)($$` counts as a real paren and the scan ends at depth 1,
+        // hiding the genuine top-level LIMIT.
+        assert!(!needs_safety_limit("SELECT $$)($$ AS v FROM t LIMIT 3"));
     }
 }
