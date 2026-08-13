@@ -53,14 +53,15 @@ export function DataGeneratorDialog() {
   } = useDataGenStore();
 
   const { activeConnectionId } = useConnectionStore();
-  const { databases, tables, structures } = useSchemaStore();
+  const databases = useSchemaStore((s) => s.databases);
+  const tables = useSchemaStore((s) => s.tables);
 
   const [previewKey, setPreviewKey] = useState(0);
 
   const structureKey = selectedDatabase && selectedTable
     ? `${selectedDatabase}.${selectedTable}`
     : null;
-  const structure = structureKey ? structures[structureKey] : null;
+  const structure = useSchemaStore((s) => (structureKey ? s.structures[structureKey] : null));
   const columns = structure?.columns ?? [];
 
   const databaseList = databases;

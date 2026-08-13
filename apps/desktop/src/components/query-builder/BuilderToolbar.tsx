@@ -25,7 +25,6 @@ export function BuilderToolbar() {
   const [copied, setCopied] = useState(false);
 
   const tables = useSchemaStore((s) => s.tables);
-  const structures = useSchemaStore((s) => s.structures);
   const databases = useSchemaStore((s) => s.databases);
 
   const addTable = useQueryBuilderStore((s) => s.addTable);
@@ -48,7 +47,7 @@ export function BuilderToolbar() {
     (database: string, tableName: string) => {
       // Get columns from structure cache
       const key = `${database}.${tableName}`;
-      const structure = structures[key];
+      const structure = useSchemaStore.getState().structures[key];
 
       const columns = (structure?.columns ?? []).map((col) => ({
         name: col.name,
@@ -59,7 +58,7 @@ export function BuilderToolbar() {
 
       addTable(database, tableName, columns);
     },
-    [structures, addTable]
+    [addTable]
   );
 
   const handleCopySQL = useCallback(async () => {

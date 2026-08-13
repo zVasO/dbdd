@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { useShallow } from 'zustand/shallow';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useQueryStore } from '@/stores/queryStore';
@@ -54,8 +55,66 @@ import { SearchableTree } from './sidebar/SchemaTree';
 import { ConfirmDestructiveDialog } from './sidebar/ConfirmDestructiveDialog';
 import { flattenSidebarTree, type FlatNode } from './sidebar/sidebarTree';
 import { SidebarRow, ROW_HEIGHT, type SidebarRowHandlers } from './sidebar/SidebarRow';
+import type { TableStructure } from '@/lib/types';
+import type { VirtualItem } from '@tanstack/react-virtual';
 
 const EMPTY_NODES: FlatNode[] = [];
+const EMPTY_STRUCTURES: Record<string, TableStructure> = {};
+
+interface SidebarVirtualRowsProps {
+  virtualItems: VirtualItem[];
+  flatNodes: FlatNode[];
+  selectedColumn: ColumnInfo | null;
+  favoriteSet: Set<string>;
+  handlers: Omit<SidebarRowHandlers, 'onRowMouseEnter'>;
+}
+
+// Owns hoveredKey so a hover change only re-renders this subtree, not the
+// whole Sidebar (which also holds search, favorites, and the db selector).
+const SidebarVirtualRows = React.memo(function SidebarVirtualRows({
+  virtualItems, flatNodes, selectedColumn, favoriteSet, handlers,
+}: SidebarVirtualRowsProps) {
+  const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+
+  const handleRowMouseEnter = useCallback((e: React.MouseEvent<HTMLElement>) => {
+    const key = (e.currentTarget as HTMLElement).dataset.key;
+    if (key) setHoveredKey(key);
+  }, []);
+
+  const handleMouseLeave = useCallback(() => setHoveredKey(null), []);
+
+  const rowHandlers = useMemo<SidebarRowHandlers>(
+    () => ({ ...handlers, onRowMouseEnter: handleRowMouseEnter }),
+    [handlers, handleRowMouseEnter],
+  );
+
+  return (
+    <div onMouseLeave={handleMouseLeave}>
+      {virtualItems.map((item) => {
+        const node = flatNodes[item.index];
+        return (
+          <div
+            key={node.key}
+            className="absolute left-0 top-0 w-full"
+            style={{ height: item.size, transform: `translateY(${item.start}px)` }}
+          >
+            <SidebarRow
+              node={node}
+              isActive={
+                node.kind === 'column' &&
+                selectedColumn?.name === node.name &&
+                selectedColumn?.ordinal_position === node.ordinalPosition
+              }
+              isFavorite={node.kind === 'table' && favoriteSet.has(node.table)}
+              isHovered={node.key === hoveredKey}
+              handlers={rowHandlers}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+});
 
 interface SidebarProps {
   onOpenConnectionDialog?: () => void;
@@ -65,8 +124,6 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const databases = useSchemaStore((s) => s.databases);
   const tables = useSchemaStore((s) => s.tables);
-  const structures = useSchemaStore((s) => s.structures);
-  const structureLoading = useSchemaStore((s) => s.structureLoading);
   const activeDatabase = useSchemaStore((s) => s.activeDatabase);
   const { loadTables, loadTableStructure, setActiveDatabase } = useSchemaStore.getState();
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
@@ -106,6 +163,33 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dbSelectorRef = useRef<HTMLDivElement>(null);
   const treeScrollRef = useRef<HTMLDivElement>(null);
+
+  // The flatten only needs the EXPANDED tables' structures — subscribing to
+  // the whole `structures`/`structureLoading` records would re-render the
+  // sidebar on every structure load, even for collapsed tables.
+  const expandedKeys = useMemo(() => [...expandedTables], [expandedTables]);
+  const expandedStructuresList = useSchemaStore(
+    useShallow((s) => expandedKeys.map((k) => s.structures[k])),
+  );
+  const expandedLoadingList = useSchemaStore(
+    useShallow((s) => expandedKeys.map((k) => !!s.structureLoading[k])),
+  );
+  const structures = useMemo(() => {
+    const rec: Record<string, TableStructure | undefined> = {};
+    expandedKeys.forEach((key, i) => { rec[key] = expandedStructuresList[i]; });
+    return rec;
+  }, [expandedKeys, expandedStructuresList]);
+  const structureLoading = useMemo(() => {
+    const rec: Record<string, boolean | undefined> = {};
+    expandedKeys.forEach((key, i) => { rec[key] = expandedLoadingList[i]; });
+    return rec;
+  }, [expandedKeys, expandedLoadingList]);
+
+  // SearchableTree matches columns across every cached table, not just the
+  // expanded ones, so it needs the full record — but only while a search is
+  // actually active; otherwise this stays a stable empty object so structure
+  // loads elsewhere don't re-render the sidebar.
+  const searchStructures = useSchemaStore((s) => (searchQuery ? s.structures : EMPTY_STRUCTURES));
 
   // Close DB selector on outside click
   useEffect(() => {
@@ -241,14 +325,17 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   }, [loadTables]);
 
   const toggleTable = useCallback((dbName: string, tableName: string) => {
-    const { activeConnectionId, expandedTables, structures } = rowStateRef.current;
+    const { activeConnectionId, expandedTables } = rowStateRef.current;
     const key = `${dbName}.${tableName}`;
     const next = new Set(expandedTables);
     if (next.has(key)) {
       next.delete(key);
     } else {
       next.add(key);
-      if (activeConnectionId && !structures[key]) {
+      // Read the full store here, not the expanded-only slice above: this key
+      // isn't in `expandedTables` yet on a re-expand, so the slice wouldn't
+      // see a structure that's still cached from before it was collapsed.
+      if (activeConnectionId && !useSchemaStore.getState().structures[key]) {
         loadTableStructure(activeConnectionId, {
           database: dbName,
           schema: null,
@@ -307,7 +394,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
     if (kind === 'table' && db && table) toggleTable(db, table);
   }, [toggleTable]);
 
-  const rowHandlers = useMemo<SidebarRowHandlers>(() => ({
+  const rowHandlers = useMemo<Omit<SidebarRowHandlers, 'onRowMouseEnter'>>(() => ({
     onRowClick: handleRowClick,
     onRowDoubleClick: handleRowDoubleClick,
     onRowContextMenu: handleRowContextMenu,
@@ -342,8 +429,9 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   });
 
   // Row heights come from the node kinds, never from the DOM, so a reshaped
-  // tree of the same length has to invalidate the size cache by hand.
-  useEffect(() => {
+  // tree of the same length has to invalidate the size cache by hand. Runs
+  // before paint so the virtualizer never flashes stale offsets.
+  useLayoutEffect(() => {
     rowVirtualizer.measure();
   }, [flatNodes, rowVirtualizer]);
 
@@ -381,7 +469,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
   return (
     <TooltipProvider delayDuration={400}>
       <div
-        className="flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar/80 backdrop-blur-xl text-sidebar-foreground"
+        className="flex shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar/80 backdrop-blur-sm text-sidebar-foreground"
         style={{ width: 'var(--sidebar-width)' }}
       >
         {/* Database selector — pl-[78px] reserves space for macOS traffic lights.
@@ -570,7 +658,7 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
                   <SearchableTree
                     databases={visibleDatabases}
                     tables={tables}
-                    structures={structures}
+                    structures={searchStructures}
                     searchQuery={searchQuery}
                     selectedColumn={selectedColumn}
                     onTableClick={handleTableClick}
@@ -583,27 +671,13 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
                   </p>
                 ) : (
                   <div className="relative w-full" style={{ height: rowVirtualizer.getTotalSize() }}>
-                    {rowVirtualizer.getVirtualItems().map((item) => {
-                      const node = flatNodes[item.index];
-                      return (
-                        <div
-                          key={node.key}
-                          className="absolute left-0 top-0 w-full"
-                          style={{ height: item.size, transform: `translateY(${item.start}px)` }}
-                        >
-                          <SidebarRow
-                            node={node}
-                            isActive={
-                              node.kind === 'column' &&
-                              selectedColumn?.name === node.name &&
-                              selectedColumn?.ordinal_position === node.ordinalPosition
-                            }
-                            isFavorite={node.kind === 'table' && favoriteSet.has(node.table)}
-                            handlers={rowHandlers}
-                          />
-                        </div>
-                      );
-                    })}
+                    <SidebarVirtualRows
+                      virtualItems={rowVirtualizer.getVirtualItems()}
+                      flatNodes={flatNodes}
+                      selectedColumn={selectedColumn}
+                      favoriteSet={favoriteSet}
+                      handlers={rowHandlers}
+                    />
                   </div>
                 )}
               </div>

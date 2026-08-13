@@ -1,5 +1,6 @@
 import React from 'react';
 import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip';
 import {
   ChevronRight,
   Columns3,
@@ -19,6 +20,7 @@ export interface SidebarRowHandlers {
   onRowDoubleClick: (e: React.MouseEvent<HTMLElement>) => void;
   onRowContextMenu: (e: React.MouseEvent<HTMLElement>) => void;
   onCaretClick: (e: React.MouseEvent<HTMLElement>) => void;
+  onRowMouseEnter: (e: React.MouseEvent<HTMLElement>) => void;
 }
 
 export const ROW_HEIGHT: Record<FlatNode['kind'], number> = {
@@ -31,19 +33,20 @@ export interface SidebarRowProps {
   node: FlatNode;
   isActive: boolean;
   isFavorite: boolean;
+  isHovered: boolean;
   handlers: SidebarRowHandlers;
 }
 
-function tableTitle(node: Extract<FlatNode, { kind: 'table' }>): string {
+function tableTooltipLines(node: Extract<FlatNode, { kind: 'table' }>): string[] {
   const facts = [node.isView ? 'View' : 'Table'];
   if (node.rowCountEstimate != null) facts.push(`~${node.rowCountEstimate.toLocaleString()} rows`);
   if (node.sizeBytes != null) facts.push(formatBytes(node.sizeBytes));
   const lines = [node.table, facts.join(' · ')];
   if (node.comment) lines.push(node.comment);
-  return lines.join('\n');
+  return lines;
 }
 
-function columnTitle(node: Extract<FlatNode, { kind: 'column' }>): string {
+function columnTooltipLines(node: Extract<FlatNode, { kind: 'column' }>): string[] {
   const facts = [node.nullable ? 'Nullable' : 'Not null'];
   if (node.isPk) facts.push('Primary key');
   if (node.isFk) facts.push('Foreign key');
@@ -51,16 +54,70 @@ function columnTitle(node: Extract<FlatNode, { kind: 'column' }>): string {
   const lines = [`${node.name} ${node.dataType}`, facts.join(' · ')];
   if (node.comment) lines.push(node.comment);
   lines.push('Double-click to open table');
-  return lines.join('\n');
+  return lines;
+}
+
+function TooltipLines({ lines }: { lines: string[] }) {
+  return (
+    <>
+      {lines.map((line, i) => (
+        <div key={i}>{line}</div>
+      ))}
+    </>
+  );
+}
+
+// Shallow, field-by-field comparison so a rebuilt (but unchanged) FlatNode from
+// flattenSidebarTree doesn't defeat memo on identity alone — only the rows
+// whose actual facts changed re-render.
+function nodesEqual(a: FlatNode, b: FlatNode): boolean {
+  if (a === b) return true;
+  if (a.kind !== b.kind) return false;
+  const keysA = Object.keys(a) as (keyof typeof a)[];
+  for (const key of keysA) {
+    if ((a as Record<string, unknown>)[key] !== (b as Record<string, unknown>)[key]) return false;
+  }
+  return true;
+}
+
+function sidebarRowPropsEqual(prev: SidebarRowProps, next: SidebarRowProps): boolean {
+  return (
+    prev.isActive === next.isActive &&
+    prev.isFavorite === next.isFavorite &&
+    prev.isHovered === next.isHovered &&
+    prev.handlers === next.handlers &&
+    nodesEqual(prev.node, next.node)
+  );
 }
 
 export const SidebarRow = React.memo(function SidebarRow({
   node,
   isActive,
   isFavorite,
+  isHovered,
   handlers,
 }: SidebarRowProps) {
   if (node.kind === 'db') {
+    const dbButton = (
+      <button className="flex h-full w-full items-center gap-1.5 rounded-sm px-2 text-left text-sm hover:bg-sidebar-accent">
+        <ChevronRight
+          className={cn(
+            'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
+            node.expanded && 'rotate-90',
+          )}
+        />
+        <Database className="h-3.5 w-3.5 shrink-0 text-primary" />
+        <span className="truncate font-medium text-sidebar-foreground">{node.db}</span>
+        {node.expanded && node.tableCount === 0 && (
+          <span className="shrink-0 text-[11px] text-muted-foreground">No tables</span>
+        )}
+        {node.sizeBytes != null && (
+          <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
+            {formatBytes(node.sizeBytes)}
+          </span>
+        )}
+      </button>
+    );
     return (
       <div
         data-kind="db"
@@ -68,35 +125,37 @@ export const SidebarRow = React.memo(function SidebarRow({
         data-db={node.db}
         onClick={handlers.onRowClick}
         onContextMenu={handlers.onRowContextMenu}
+        onMouseEnter={handlers.onRowMouseEnter}
         className="flex h-full items-center"
       >
-        <button
-          className="flex h-full w-full items-center gap-1.5 rounded-sm px-2 text-left text-sm hover:bg-sidebar-accent"
-          title={node.db}
-        >
-          <ChevronRight
-            className={cn(
-              'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200',
-              node.expanded && 'rotate-90',
-            )}
-          />
-          <Database className="h-3.5 w-3.5 shrink-0 text-primary" />
-          <span className="truncate font-medium text-sidebar-foreground">{node.db}</span>
-          {node.expanded && node.tableCount === 0 && (
-            <span className="shrink-0 text-[11px] text-muted-foreground">No tables</span>
-          )}
-          {node.sizeBytes != null && (
-            <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-              {formatBytes(node.sizeBytes)}
-            </span>
-          )}
-        </button>
+        {isHovered ? (
+          <Tooltip>
+            <TooltipTrigger asChild>{dbButton}</TooltipTrigger>
+            <TooltipContent side="right"><TooltipLines lines={[node.db]} /></TooltipContent>
+          </Tooltip>
+        ) : dbButton}
       </div>
     );
   }
 
   if (node.kind === 'table') {
     const TableIcon = node.isView ? Eye : Table2;
+    const tableButton = (
+      <button className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 py-0.5 text-left text-xs hover:bg-sidebar-accent">
+        <TableIcon
+          className={cn(
+            'h-3.5 w-3.5 shrink-0',
+            node.isView ? 'text-accent-foreground' : 'text-muted-foreground',
+          )}
+        />
+        <span className="truncate text-sidebar-foreground">{node.table}</span>
+        {node.rowCountEstimate != null && (
+          <Badge variant="secondary" className="ml-auto h-4 px-1 text-[10px]">
+            ~{node.rowCountEstimate.toLocaleString()}
+          </Badge>
+        )}
+      </button>
+    );
     return (
       <div
         data-kind="table"
@@ -105,6 +164,7 @@ export const SidebarRow = React.memo(function SidebarRow({
         data-table={node.table}
         onClick={handlers.onRowClick}
         onContextMenu={handlers.onRowContextMenu}
+        onMouseEnter={handlers.onRowMouseEnter}
         className={cn('group flex h-full items-center', node.depth === 1 ? 'pl-5' : 'pl-2')}
       >
         <button
@@ -124,23 +184,12 @@ export const SidebarRow = React.memo(function SidebarRow({
           )}
         </button>
 
-        <button
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-sm px-1 py-0.5 text-left text-xs hover:bg-sidebar-accent"
-          title={tableTitle(node)}
-        >
-          <TableIcon
-            className={cn(
-              'h-3.5 w-3.5 shrink-0',
-              node.isView ? 'text-accent-foreground' : 'text-muted-foreground',
-            )}
-          />
-          <span className="truncate text-sidebar-foreground">{node.table}</span>
-          {node.rowCountEstimate != null && (
-            <Badge variant="secondary" className="ml-auto h-4 px-1 text-[10px]">
-              ~{node.rowCountEstimate.toLocaleString()}
-            </Badge>
-          )}
-        </button>
+        {isHovered ? (
+          <Tooltip>
+            <TooltipTrigger asChild>{tableButton}</TooltipTrigger>
+            <TooltipContent side="right"><TooltipLines lines={tableTooltipLines(node)} /></TooltipContent>
+          </Tooltip>
+        ) : tableButton}
 
         <button
           data-act="fav"
@@ -163,6 +212,30 @@ export const SidebarRow = React.memo(function SidebarRow({
     );
   }
 
+  const columnButton = (
+    <button
+      className={cn(
+        'flex min-w-0 flex-1 items-center gap-1.5 px-2 text-left text-[11px] hover:bg-sidebar-accent',
+        isActive && 'bg-sidebar-accent',
+      )}
+    >
+      {node.isPk ? (
+        <Key className="h-3 w-3 shrink-0 text-primary" />
+      ) : (
+        <Columns3 className="h-3 w-3 shrink-0 text-muted-foreground" />
+      )}
+      <span
+        className={cn(
+          'truncate',
+          node.isPk ? 'font-medium text-sidebar-foreground' : 'text-muted-foreground',
+        )}
+      >
+        {node.name}
+      </span>
+      <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{node.dataType}</span>
+      {node.nullable && <span className="shrink-0 text-[10px] text-muted-foreground/60">?</span>}
+    </button>
+  );
   return (
     <div
       data-kind="column"
@@ -174,35 +247,19 @@ export const SidebarRow = React.memo(function SidebarRow({
       onClick={handlers.onRowClick}
       onDoubleClick={handlers.onRowDoubleClick}
       onContextMenu={handlers.onRowContextMenu}
+      onMouseEnter={handlers.onRowMouseEnter}
       className="flex h-full items-stretch"
     >
       <div
         className="shrink-0 border-r border-sidebar-border"
         style={{ width: node.depth === 2 ? 40 : 28 }}
       />
-      <button
-        title={columnTitle(node)}
-        className={cn(
-          'flex min-w-0 flex-1 items-center gap-1.5 px-2 text-left text-[11px] hover:bg-sidebar-accent',
-          isActive && 'bg-sidebar-accent',
-        )}
-      >
-        {node.isPk ? (
-          <Key className="h-3 w-3 shrink-0 text-primary" />
-        ) : (
-          <Columns3 className="h-3 w-3 shrink-0 text-muted-foreground" />
-        )}
-        <span
-          className={cn(
-            'truncate',
-            node.isPk ? 'font-medium text-sidebar-foreground' : 'text-muted-foreground',
-          )}
-        >
-          {node.name}
-        </span>
-        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{node.dataType}</span>
-        {node.nullable && <span className="shrink-0 text-[10px] text-muted-foreground/60">?</span>}
-      </button>
+      {isHovered ? (
+        <Tooltip>
+          <TooltipTrigger asChild>{columnButton}</TooltipTrigger>
+          <TooltipContent side="right"><TooltipLines lines={columnTooltipLines(node)} /></TooltipContent>
+        </Tooltip>
+      ) : columnButton}
     </div>
   );
-});
+}, sidebarRowPropsEqual);

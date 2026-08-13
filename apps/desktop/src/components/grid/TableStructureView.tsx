@@ -124,13 +124,10 @@ const tabs: { key: StructureTab; label: string; icon: React.ReactNode }[] = [
 export function TableStructureView({ database, table }: Props) {
   const [activeTab, setActiveTab] = useState<StructureTab>('columns');
   const connectionId = useConnectionStore((s) => s.activeConnectionId);
-  const structures = useSchemaStore((s) => s.structures);
-  const structureLoading = useSchemaStore((s) => s.structureLoading);
-  const loadTableStructure = useSchemaStore((s) => s.loadTableStructure);
-
   const key = `${database}.${table}`;
-  const structure = structures[key] ?? null;
-  const loading = structureLoading[key] ?? false;
+  const structure = useSchemaStore((s) => s.structures[key]) ?? null;
+  const loading = useSchemaStore((s) => s.structureLoading[key]) ?? false;
+  const loadTableStructure = useSchemaStore((s) => s.loadTableStructure);
 
   useEffect(() => {
     if (connectionId && !structure && !loading) {
