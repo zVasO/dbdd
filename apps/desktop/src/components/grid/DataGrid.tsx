@@ -13,7 +13,7 @@ import { useSchemaStore } from '@/stores/schemaStore';
 import { useQueryStore } from '@/stores/queryStore';
 import { useResultStore, formatColumnarCell } from '@/stores/resultStore';
 import { useConnectionStore } from '@/stores/connectionStore';
-import type { RowInsert } from '@/stores/changeStore';
+import { buildPendingIndex, editKey } from './gridPendingChanges';
 import { Button } from '@/components/ui/button';
 import { QuickLook } from './QuickLook';
 import { resolveColumnarSource } from './gridDataSource';
@@ -412,15 +412,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
     addFilter(colName, value);
   }, []);
 
-  const getCellPendingEdit = useCallback((rowIndex: number, colName: string) => {
-    return pendingChanges.find(
-      (c) => c.type === 'edit' && c.rowIndex === rowIndex && c.column === colName
-    );
-  }, [pendingChanges]);
-
-  const isRowDeleted = useCallback((rowIndex: number) => {
-    return pendingChanges.some((c) => c.type === 'delete' && c.rowIndex === rowIndex);
-  }, [pendingChanges]);
+  const pendingIndex = useMemo(() => buildPendingIndex(pendingChanges), [pendingChanges]);
 
   const handleInsertRow = useCallback(() => {
     if (!database || !table) return;
@@ -438,7 +430,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
     });
   }, [database, table, result.columns, addChange]);
 
-  const insertedRows = pendingChanges.filter((c): c is RowInsert => c.type === 'insert');
+  const insertedRows = pendingIndex.inserts;
 
   // ─── Data pipeline: filter → sort → paginate ──────────────────────────────
 
@@ -1485,7 +1477,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
           const displayIndex = pageStart + virtualRow.index;
           const isOdd = virtualRow.index % 2 === 1;
           const isSelected = selectedRows.has(virtualRow.index);
-          const rowDeleted = isRowDeleted(actualRowIndex);
+          const rowDeleted = pendingIndex.deletedRows.has(actualRowIndex);
 
           return (
             <div
@@ -1537,7 +1529,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
                 const isEditing =
                   editingCell?.rowIndex === virtualRow.index &&
                   editingCell?.colIndex === colIdx;
-                const pendingEdit = getCellPendingEdit(actualRowIndex, col.name);
+                const pendingEdit = pendingIndex.edits.get(editKey(actualRowIndex, col.name));
 
                 const isCellSelected = selectedCells.has(cellKey(virtualRow.index, colIdx));
                 const isFocused = focusedCell?.row === virtualRow.index && focusedCell?.col === colIdx;
