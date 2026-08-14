@@ -111,6 +111,11 @@ impl DatabaseConnection for MySqlConnection {
             .await
             .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
 
+        // Read from the OK packet that terminated the statement just run, so
+        // it must be taken before `conn` is reused or returned to the pool.
+        // Zero for a SELECT, which MySQL reports no affected count for.
+        let affected_rows = conn.affected_rows();
+
         let (columns, rows) = extract_mysql_result(&result);
         let row_count = rows.len() as u64;
 
@@ -119,7 +124,7 @@ impl DatabaseConnection for MySqlConnection {
             columns,
             rows,
             total_rows: Some(row_count),
-            affected_rows: None,
+            affected_rows: Some(affected_rows),
             execution_time_ms: start.elapsed().as_millis() as u64,
             warnings: vec![],
             result_type: ResultType::Select,

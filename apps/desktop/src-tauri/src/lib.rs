@@ -355,6 +355,7 @@ pub fn run() {
             commands::query::cancel_query,
             commands::query::get_query_history,
             commands::query::execute_batch,
+            commands::query::execute_batch_summary,
             commands::query::execute_query_stream,
             commands::schema::list_databases,
             commands::schema::list_schemas,

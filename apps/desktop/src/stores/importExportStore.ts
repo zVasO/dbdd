@@ -348,14 +348,20 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
         );
       }
 
-      const results = await ipc.executeBatch(connectionId, statements);
-      const errors = results
-        .filter((r) => r.Err)
-        .map((r) => r.Err!.message ?? String(r.Err!));
+      // Summary rather than executeBatch: the import only ever needs the
+      // counts, and a large file is thousands of statements whose full result
+      // envelopes would cross IPC for nothing.
+      const summary = await ipc.executeBatchSummary(connectionId, statements);
 
-      if (errors.length > 0) {
+      if (summary.failed > 0) {
+        const errors = summary.outcomes
+          .map((o) => o.error)
+          .filter((e): e is string => e !== null);
         showErrorToast(errors[0]);
-        set({ importError: errors.join('\n'), importLoading: false });
+        set({
+          importError: `${summary.failed} of ${statements.length} statements failed (${summary.total_affected} rows imported):\n${errors.join('\n')}`,
+          importLoading: false,
+        });
       } else {
         set({ importLoading: false, importDialogOpen: false });
       }

@@ -61,6 +61,19 @@ export interface QueryResult {
   result_type: ResultType;
 }
 
+/** What one statement in a batch did. Exactly one field is set. */
+export interface StatementOutcome {
+  affected_rows: number | null;
+  error: string | null;
+}
+
+/** A batch's counts without any of its rows; `outcomes` is statement-aligned. */
+export interface BatchSummary {
+  outcomes: StatementOutcome[];
+  total_affected: number;
+  failed: number;
+}
+
 export interface ColumnMeta {
   name: string;
   data_type: string | Record<string, unknown>;

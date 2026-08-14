@@ -632,6 +632,113 @@ pub async fn execute_batch(
     Ok(results)
 }
 
+/// What one statement in a batch did: the rows it affected, or why it failed.
+/// Exactly one of the two is set.
+#[derive(Serialize)]
+pub struct StatementOutcome {
+    pub affected_rows: Option<u64>,
+    pub error: Option<String>,
+}
+
+/// A whole batch's result without any of its rows. `outcomes` stays aligned
+/// with the statements that produced it, index for index.
+#[derive(Serialize)]
+pub struct BatchSummary {
+    pub outcomes: Vec<StatementOutcome>,
+    pub total_affected: u64,
+    pub failed: u32,
+}
+
+/// Roll per-statement outcomes into the batch totals.
+///
+/// A failed statement doesn't discount the ones that succeeded — the rows
+/// those wrote are really in the table — so `total_affected` sums what landed
+/// while `failed` counts what didn't. An outcome with neither an error nor a
+/// count is a driver saying it can't know the count, which contributes
+/// nothing to either total.
+fn summarize(outcomes: Vec<StatementOutcome>) -> BatchSummary {
+    let total_affected = outcomes.iter().filter_map(|o| o.affected_rows).sum();
+    let failed = outcomes.iter().filter(|o| o.error.is_some()).count() as u32;
+    BatchSummary {
+        outcomes,
+        total_affected,
+        failed,
+    }
+}
+
+/// Statements per progress window when the caller doesn't pick one.
+const DEFAULT_BATCH_WINDOW: usize = 200;
+
+/// Run `statements` and return only their counts, reporting progress as it goes.
+///
+/// The counts-only reply is the point: `execute_batch` returns a full
+/// `QueryResult` envelope per statement, so a 20k-row CSV import serializes
+/// 400 of them across IPC to display a single success number.
+///
+/// Deliberately sequential, with no concurrency at all. The callers are
+/// imports, whose statements are ordered — the `CREATE TABLE` must land before
+/// the `INSERT`s, and rows arrive in file order — so overlapping them would
+/// trade correctness for throughput. `window` only sets how often progress is
+/// reported, never how much runs at once.
+///
+/// A failing statement doesn't stop the batch: its error is recorded in place
+/// and the rest still run, matching `execute_batch` and letting the caller
+/// report how many of the import's statements got through.
+#[tauri::command]
+pub async fn execute_batch_summary(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    statements: Vec<String>,
+    window: Option<usize>,
+) -> Result<BatchSummary, IpcError> {
+    let conn = {
+        let active = state
+            .connection_manager
+            .get(&connection_id)
+            .ok_or(IpcError::from("Connection not found"))?;
+        Arc::clone(&active.connection)
+    };
+
+    let has_ddl = statements.iter().any(|sql| schema_cache::is_ddl(sql));
+    let window = window.unwrap_or(DEFAULT_BATCH_WINDOW).max(1);
+    let batch_id = Uuid::new_v4();
+    let start = std::time::Instant::now();
+
+    let mut outcomes = Vec::with_capacity(statements.len());
+    for chunk in statements.chunks(window) {
+        for sql in chunk {
+            // A SELECT inside a batch keeps the same cap it gets on its own,
+            // so one unbounded read can't drag the whole batch down.
+            let effective_sql = if needs_safety_limit(sql) {
+                apply_safety_limit(sql)
+            } else {
+                sql.clone()
+            };
+            outcomes.push(match conn.execute(&effective_sql).await {
+                Ok(result) => StatementOutcome {
+                    affected_rows: result.affected_rows,
+                    error: None,
+                },
+                Err(e) => StatementOutcome {
+                    affected_rows: None,
+                    error: Some(IpcError::from(e).message),
+                },
+            });
+        }
+        state.event_bus.emit(AppEvent::QueryProgress {
+            query_id: batch_id,
+            rows_fetched: outcomes.len() as u64,
+            elapsed_ms: start.elapsed().as_millis() as u64,
+        });
+    }
+
+    if has_ddl {
+        state.schema_cache.invalidate_connection(&connection_id);
+    }
+
+    Ok(summarize(outcomes))
+}
+
 #[tauri::command]
 #[instrument(skip(state, app, connection_id, sql))]
 pub async fn execute_query_stream(
@@ -870,11 +977,86 @@ pub async fn execute_query_stream(
 mod tests {
     use super::{
         apply_safety_limit, cancel_tracked_query, needs_safety_limit, register_canceller,
-        signal_cancel, Cancellers, SAFETY_ROW_LIMIT,
+        signal_cancel, summarize, Cancellers, StatementOutcome, SAFETY_ROW_LIMIT,
     };
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use uuid::Uuid;
+
+    fn ok(affected: u64) -> StatementOutcome {
+        StatementOutcome {
+            affected_rows: Some(affected),
+            error: None,
+        }
+    }
+
+    fn failed(message: &str) -> StatementOutcome {
+        StatementOutcome {
+            affected_rows: None,
+            error: Some(message.to_string()),
+        }
+    }
+
+    #[test]
+    fn an_empty_batch_summarizes_to_zero() {
+        let summary = summarize(vec![]);
+
+        assert!(summary.outcomes.is_empty());
+        assert_eq!(summary.total_affected, 0);
+        assert_eq!(summary.failed, 0);
+    }
+
+    #[test]
+    fn totals_the_affected_rows_of_every_successful_statement() {
+        let summary = summarize(vec![ok(50), ok(50), ok(37)]);
+
+        assert_eq!(summary.total_affected, 137);
+        assert_eq!(summary.failed, 0);
+        assert_eq!(summary.outcomes.len(), 3);
+    }
+
+    #[test]
+    fn counts_failures_and_still_totals_the_statements_that_landed() {
+        // A failed statement must not zero the import counter: the rows the
+        // surviving INSERTs wrote are really in the table.
+        let summary = summarize(vec![ok(50), failed("duplicate key"), ok(20)]);
+
+        assert_eq!(summary.total_affected, 70);
+        assert_eq!(summary.failed, 1);
+    }
+
+    #[test]
+    fn a_statement_whose_affected_count_is_unknown_contributes_nothing_but_is_not_a_failure() {
+        // Drivers report None where the count is genuinely unknowable; that is
+        // silence about the count, not an error.
+        let summary = summarize(vec![
+            ok(10),
+            StatementOutcome {
+                affected_rows: None,
+                error: None,
+            },
+        ]);
+
+        assert_eq!(summary.total_affected, 10);
+        assert_eq!(summary.failed, 0);
+    }
+
+    #[test]
+    fn preserves_outcome_order_so_each_entry_maps_back_to_its_statement() {
+        let summary = summarize(vec![ok(1), failed("boom"), ok(3)]);
+
+        assert_eq!(summary.outcomes[0].affected_rows, Some(1));
+        assert_eq!(summary.outcomes[1].error.as_deref(), Some("boom"));
+        assert_eq!(summary.outcomes[2].affected_rows, Some(3));
+    }
+
+    #[test]
+    fn a_wholly_failed_batch_reports_every_statement_as_failed() {
+        let summary = summarize(vec![failed("a"), failed("b")]);
+
+        assert_eq!(summary.total_affected, 0);
+        assert_eq!(summary.failed, 2);
+    }
 
     #[test]
     fn cancelling_signals_the_receiver_and_purges_the_registration() {

@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import type {
   ConnectionConfig, SavedConnection, QueryResult, ColumnarResult,
   DatabaseInfo, SchemaInfo, TableInfo, TableStructure, TableRef, ColumnRef,
-  QueryHistoryEntry, IpcError,
+  QueryHistoryEntry, IpcError, BatchSummary,
   StreamMeta, StreamChunk, StreamDone, StreamError, StreamCancelled,
 } from './types';
 
@@ -89,6 +89,19 @@ export const ipc = {
     invoke<Array<{ Ok?: QueryResult; Err?: IpcError }>>('execute_batch', {
       connectionId,
       statements,
+    }),
+
+  /**
+   * Counts-only batch execution: returns per-statement affected rows and
+   * errors instead of a full result envelope each, and reports progress over
+   * the app event bus. Statements run strictly in order; `window` sets only
+   * how often progress is emitted.
+   */
+  executeBatchSummary: (connectionId: string, statements: string[], window?: number) =>
+    invoke<BatchSummary>('execute_batch_summary', {
+      connectionId,
+      statements,
+      window,
     }),
 
   listDatabases: (connectionId: string) =>

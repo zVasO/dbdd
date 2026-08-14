@@ -108,17 +108,54 @@ impl PostgresConnection {
         Ok(conn)
     }
 
+    /// Run `sql` on a tracked connection and return both its rows and the row
+    /// count Postgres reported in the statement's command tag.
+    ///
+    /// `fetch_all` can only ever yield the rows: it drops the command-completion
+    /// frame, which is the only place the count lives, so every DML result used
+    /// to report `affected_rows: None`. `fetch_many` exposes both from the same
+    /// single execution — the stream interleaves `Either::Right(row)` for each
+    /// result row with an `Either::Left(PgQueryResult)` per completed command —
+    /// so folding it here costs one pass and never re-runs the statement.
+    ///
+    /// The count is `None` only when the server sent no completion frame at
+    /// all. Otherwise it is the tag's number verbatim: rows written for
+    /// `INSERT`/`UPDATE`/`DELETE`, rows returned for `SELECT`, zero for DDL.
+    ///
+    /// Called through `Executor` rather than `Query::fetch_many`, whose
+    /// deprecation is about running several statements in one prepared
+    /// statement — something this never does — and which merely forwards here.
+    async fn fetch_rows_and_affected(
+        &self,
+        sql: &str,
+        query_id: Option<&Uuid>,
+    ) -> Result<(Vec<PgRow>, Option<u64>)> {
+        use futures::StreamExt;
+
+        with_retry(is_retryable_statement(sql), move || async move {
+            let mut conn = self.acquire_tracked(query_id).await?;
+            let mut stream = sqlx::Executor::fetch_many(&mut *conn, sqlx::query(sql));
+            let mut rows: Vec<PgRow> = vec![];
+            let mut affected: Option<u64> = None;
+            while let Some(step) = stream.next().await {
+                match step? {
+                    sqlx::Either::Left(done) => {
+                        *affected.get_or_insert(0) += done.rows_affected();
+                    }
+                    sqlx::Either::Right(row) => rows.push(row),
+                }
+            }
+            Ok((rows, affected))
+        })
+        .await
+        .map_err(|e| PurrqlError::QueryExecution(e.to_string()))
+    }
+
     async fn run_query(&self, sql: &str, query_id: Option<&Uuid>) -> Result<QueryResult> {
         let start = std::time::Instant::now();
         let _registration = PidRegistration::new(&self.query_pids, query_id);
 
-        let outcome = with_retry(is_retryable_statement(sql), move || async move {
-            let mut conn = self.acquire_tracked(query_id).await?;
-            sqlx::query(sql).fetch_all(&mut *conn).await
-        })
-        .await;
-
-        let rows: Vec<PgRow> = outcome.map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
+        let (rows, affected_rows) = self.fetch_rows_and_affected(sql, query_id).await?;
         let (columns, result_rows) = extract_pg_result(&rows);
         let row_count = result_rows.len() as u64;
 
@@ -127,7 +164,7 @@ impl PostgresConnection {
             columns,
             rows: result_rows,
             total_rows: Some(row_count),
-            affected_rows: None,
+            affected_rows,
             execution_time_ms: start.elapsed().as_millis() as u64,
             warnings: vec![],
             result_type: ResultType::Select,
@@ -140,13 +177,7 @@ impl PostgresConnection {
         let start = std::time::Instant::now();
         let _registration = PidRegistration::new(&self.query_pids, Some(query_id));
 
-        let outcome = with_retry(is_retryable_statement(sql), move || async move {
-            let mut conn = self.acquire_tracked(Some(query_id)).await?;
-            sqlx::query(sql).fetch_all(&mut *conn).await
-        })
-        .await;
-
-        let rows: Vec<PgRow> = outcome.map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
+        let (rows, affected_rows) = self.fetch_rows_and_affected(sql, Some(query_id)).await?;
         let row_count = rows.len();
         let (columns, data) = extract_pg_columnar(&rows);
 
@@ -155,7 +186,7 @@ impl PostgresConnection {
             columns,
             data,
             row_count,
-            affected_rows: None,
+            affected_rows,
             execution_time_ms: start.elapsed().as_millis() as u64,
             warnings: vec![],
             result_type: ResultType::Select,
