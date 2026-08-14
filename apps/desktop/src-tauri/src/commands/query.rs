@@ -434,18 +434,12 @@ pub async fn execute_query(
 
 /// Columnar variant of `execute_query`.
 ///
-/// Instead of delegating to `execute_query` (which builds a row-based `QueryResult`)
-/// and then converting via `ColumnarResult::from`, this command inlines the same
-/// safety-limit / history / event logic and converts directly using
-/// `ColumnarResult::from_query_result_consuming`. The consuming path moves
-/// heap-allocated values (String, serde_json::Value) out of cells via
-/// `std::mem::take` rather than cloning them, saving one allocation per
-/// string/JSON cell.
-///
-/// The row-to-columnar transpose itself is unavoidable at the current driver
-/// level because all drivers return `QueryResult { rows: Vec<Row> }`.
-/// A native columnar return path in the driver trait would eliminate this
-/// transpose entirely, but that is a larger refactor tracked separately.
+/// Instead of delegating to `execute_query` (which builds a row-based
+/// `QueryResult`) and transposing it afterwards, this command inlines the same
+/// safety-limit / history / event logic and asks the driver for columnar
+/// results directly. Drivers that can decode into columns (Postgres) never
+/// materialize `Vec<Row>` at all; the rest fall back to the trait default,
+/// which transposes for them.
 #[tauri::command]
 #[instrument(skip(state, connection_id, sql, query_id), fields(query_id, row_count))]
 pub async fn execute_query_columnar(
@@ -480,7 +474,7 @@ pub async fn execute_query_columnar(
     let outcome = tokio::select! {
         biased;
         _ = cancel_rx.changed() => return Err(IpcError::from(PurrqlError::QueryCancelled)),
-        result = conn.execute_tracked(&effective_sql, &query_id) => result,
+        result = conn.execute_columnar_tracked(&effective_sql, &query_id) => result,
     };
     state.stream_cancellers.remove(&query_id);
 
@@ -489,7 +483,7 @@ pub async fn execute_query_columnar(
             result.query_id = query_id;
             result.execution_time_ms = start.elapsed().as_millis() as u64;
 
-            let row_count = result.rows.len() as u64;
+            let row_count = result.row_count as u64;
             tracing::Span::current().record("row_count", row_count);
 
             let is_ddl = schema_cache::is_ddl(&sql);
@@ -523,9 +517,7 @@ pub async fn execute_query_columnar(
                 state.schema_cache.invalidate_connection(&connection_id);
             }
 
-            // Convert directly via consuming path — moves strings/JSON out of
-            // cells instead of cloning, saving one heap allocation per cell.
-            Ok(purrql_core::models::columnar::ColumnarResult::from_query_result_consuming(result))
+            Ok(result)
         }
         Err(e) => {
             state.event_bus.emit(AppEvent::QueryError {

@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use uuid::Uuid;
 
 use crate::error::Result;
+use crate::models::columnar::ColumnarResult;
 use crate::models::query::{CellValue, ColumnMeta, QueryResult, Row};
 
 #[async_trait]
@@ -20,6 +21,21 @@ pub trait DatabaseConnection: Send + Sync {
     async fn execute_tracked(&self, sql: &str, query_id: &Uuid) -> Result<QueryResult> {
         let _ = query_id;
         self.execute(sql).await
+    }
+
+    /// Execute `sql` under `query_id` and return its results already laid out
+    /// by column, the shape the UI consumes.
+    ///
+    /// The default transposes `execute_tracked`'s rows, so a driver that
+    /// can't do better keeps working unchanged. A driver that can decode
+    /// straight into columns overrides this and skips the intermediate
+    /// `Vec<Row>` and its per-cell `CellValue` entirely.
+    ///
+    /// Tracked only: every caller runs under a query id, so an untracked
+    /// variant would be unreachable.
+    async fn execute_columnar_tracked(&self, sql: &str, query_id: &Uuid) -> Result<ColumnarResult> {
+        let result = self.execute_tracked(sql, query_id).await?;
+        Ok(ColumnarResult::from_query_result_consuming(result))
     }
 
     /// Cancel the query previously started under `query_id`.

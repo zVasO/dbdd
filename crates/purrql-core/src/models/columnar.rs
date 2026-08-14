@@ -170,29 +170,62 @@ pub fn column_kind_for_data_type(data_type: &DataType) -> ColumnKind {
     }
 }
 
-fn extract_integer(cells: &[CellValue], col_idx: usize) -> Option<i64> {
-    match cells.get(col_idx) {
-        Some(CellValue::Integer(v)) => Some(*v),
-        Some(CellValue::Null) | None => None,
+fn integer_from_cell(cell: &CellValue) -> Option<i64> {
+    match cell {
+        CellValue::Integer(v) => Some(*v),
         _ => None,
     }
+}
+
+fn float_from_cell(cell: &CellValue) -> Option<f64> {
+    match cell {
+        CellValue::Float(v) => Some(*v),
+        CellValue::Integer(v) => Some(*v as f64),
+        _ => None,
+    }
+}
+
+fn boolean_from_cell(cell: &CellValue) -> Option<bool> {
+    match cell {
+        CellValue::Boolean(v) => Some(*v),
+        _ => None,
+    }
+}
+
+fn json_from_cell(cell: CellValue) -> Option<serde_json::Value> {
+    match cell {
+        CellValue::Json(v) => Some(v),
+        _ => None,
+    }
+}
+
+fn string_from_cell(cell: CellValue) -> Option<String> {
+    match cell {
+        CellValue::Text(v) => Some(v),
+        CellValue::DateTime(v) => Some(v),
+        CellValue::Date(v) => Some(v),
+        CellValue::Time(v) => Some(v),
+        CellValue::Uuid(v) => Some(v),
+        CellValue::Bytes { preview, .. } => Some(preview),
+        CellValue::Array(items) => Some(serde_json::to_string(&items).unwrap_or_default()),
+        CellValue::Integer(v) => Some(v.to_string()),
+        CellValue::Float(v) => Some(v.to_string()),
+        CellValue::Boolean(v) => Some(v.to_string()),
+        CellValue::Json(v) => Some(v.to_string()),
+        CellValue::Null => None,
+    }
+}
+
+fn extract_integer(cells: &[CellValue], col_idx: usize) -> Option<i64> {
+    cells.get(col_idx).and_then(integer_from_cell)
 }
 
 fn extract_float(cells: &[CellValue], col_idx: usize) -> Option<f64> {
-    match cells.get(col_idx) {
-        Some(CellValue::Float(v)) => Some(*v),
-        Some(CellValue::Integer(v)) => Some(*v as f64),
-        Some(CellValue::Null) | None => None,
-        _ => None,
-    }
+    cells.get(col_idx).and_then(float_from_cell)
 }
 
 fn extract_boolean(cells: &[CellValue], col_idx: usize) -> Option<bool> {
-    match cells.get(col_idx) {
-        Some(CellValue::Boolean(v)) => Some(*v),
-        Some(CellValue::Null) | None => None,
-        _ => None,
-    }
+    cells.get(col_idx).and_then(boolean_from_cell)
 }
 
 fn extract_json(cells: &[CellValue], col_idx: usize) -> Option<serde_json::Value> {
@@ -310,22 +343,7 @@ fn build_column_consuming(
 /// Avoids cloning heap-allocated strings.
 fn take_string(cells: &mut [CellValue], col_idx: usize) -> Option<String> {
     match cells.get_mut(col_idx) {
-        Some(cell) => match std::mem::replace(cell, CellValue::Null) {
-            CellValue::Text(v) => Some(v),
-            CellValue::DateTime(v) => Some(v),
-            CellValue::Date(v) => Some(v),
-            CellValue::Time(v) => Some(v),
-            CellValue::Uuid(v) => Some(v),
-            CellValue::Bytes { preview, .. } => Some(preview),
-            CellValue::Array(items) => {
-                Some(serde_json::to_string(&items).unwrap_or_default())
-            }
-            CellValue::Integer(v) => Some(v.to_string()),
-            CellValue::Float(v) => Some(v.to_string()),
-            CellValue::Boolean(v) => Some(v.to_string()),
-            CellValue::Json(v) => Some(v.to_string()),
-            CellValue::Null => None,
-        },
+        Some(cell) => string_from_cell(std::mem::replace(cell, CellValue::Null)),
         None => None,
     }
 }
@@ -343,6 +361,66 @@ fn take_json(cells: &mut [CellValue], col_idx: usize) -> Option<serde_json::Valu
             }
         },
         None => None,
+    }
+}
+
+/// Accumulates cells straight into the per-column arrays that go on the wire,
+/// so a driver that can decode a cell at a time never builds the intermediate
+/// `Vec<Row>` (nor its ~40-byte `CellValue` per cell) at all.
+///
+/// The kinds are fixed at construction from the column metadata — the same
+/// `column_kind_for_data_type` the stream path uses — so a cell that
+/// disagrees with its column's kind is coerced rather than allowed to change
+/// the layout mid-result. Coercion goes through the same helpers
+/// `rows_to_columnar_chunk` uses, so a driver-built result and a streamed one
+/// are identical on the wire.
+pub struct ColumnarBuilder {
+    columns: Vec<ColumnData>,
+}
+
+impl ColumnarBuilder {
+    pub fn new(kinds: &[ColumnKind], row_capacity: usize) -> Self {
+        let columns = kinds
+            .iter()
+            .map(|kind| match kind {
+                ColumnKind::Integer => ColumnData::Integers {
+                    values: Vec::with_capacity(row_capacity),
+                },
+                ColumnKind::Float => ColumnData::Floats {
+                    values: Vec::with_capacity(row_capacity),
+                },
+                ColumnKind::Boolean => ColumnData::Booleans {
+                    values: Vec::with_capacity(row_capacity),
+                },
+                ColumnKind::String => ColumnData::Strings {
+                    values: Vec::with_capacity(row_capacity),
+                },
+                ColumnKind::Json => ColumnData::Json {
+                    values: Vec::with_capacity(row_capacity),
+                },
+            })
+            .collect();
+
+        Self { columns }
+    }
+
+    /// Append `cell` to column `col_idx`. An index past the declared columns
+    /// is dropped, mirroring how the row path reads a missing cell as null.
+    pub fn push_cell(&mut self, col_idx: usize, cell: CellValue) {
+        let Some(column) = self.columns.get_mut(col_idx) else {
+            return;
+        };
+        match column {
+            ColumnData::Integers { values } => values.push(integer_from_cell(&cell)),
+            ColumnData::Floats { values } => values.push(float_from_cell(&cell)),
+            ColumnData::Booleans { values } => values.push(boolean_from_cell(&cell)),
+            ColumnData::Json { values } => values.push(json_from_cell(cell)),
+            ColumnData::Strings { values } => values.push(string_from_cell(cell)),
+        }
+    }
+
+    pub fn finish(self) -> Vec<ColumnData> {
+        self.columns
     }
 }
 
@@ -513,6 +591,122 @@ mod tests {
                 Some("-0.10".to_string()),
             ]
         ));
+    }
+
+    fn all_kinds() -> Vec<ColumnKind> {
+        vec![
+            ColumnKind::Integer,
+            ColumnKind::Float,
+            ColumnKind::Boolean,
+            ColumnKind::String,
+            ColumnKind::Json,
+        ]
+    }
+
+    fn build_from_rows(kinds: &[ColumnKind], rows: &[Row]) -> Vec<ColumnData> {
+        let mut builder = ColumnarBuilder::new(kinds, rows.len());
+        for row in rows {
+            for (col_idx, cell) in row.cells.iter().enumerate() {
+                builder.push_cell(col_idx, cell.clone());
+            }
+        }
+        builder.finish()
+    }
+
+    #[test]
+    fn builder_lays_out_one_tagged_array_per_kind_and_keeps_nulls() {
+        let kinds = all_kinds();
+        let rows = vec![
+            row(vec![
+                CellValue::Integer(5),
+                CellValue::Float(1.5),
+                CellValue::Boolean(true),
+                CellValue::Text("a".to_string()),
+                CellValue::Json(serde_json::json!({"k": 1})),
+            ]),
+            row(vec![
+                CellValue::Null,
+                CellValue::Null,
+                CellValue::Null,
+                CellValue::Null,
+                CellValue::Null,
+            ]),
+        ];
+
+        let data = build_from_rows(&kinds, &rows);
+
+        assert_eq!(data.len(), 5);
+        assert!(matches!(
+            &data[0],
+            ColumnData::Integers { values } if values == &vec![Some(5), None]
+        ));
+        assert!(matches!(
+            &data[1],
+            ColumnData::Floats { values } if values == &vec![Some(1.5), None]
+        ));
+        assert!(matches!(
+            &data[2],
+            ColumnData::Booleans { values } if values == &vec![Some(true), None]
+        ));
+        assert!(matches!(
+            &data[3],
+            ColumnData::Strings { values } if values == &vec![Some("a".to_string()), None]
+        ));
+        assert!(matches!(
+            &data[4],
+            ColumnData::Json { values } if values == &vec![Some(serde_json::json!({"k": 1})), None]
+        ));
+    }
+
+    #[test]
+    fn builder_with_no_rows_still_emits_one_empty_array_per_column() {
+        let data = build_from_rows(&all_kinds(), &[]);
+
+        assert_eq!(data.len(), 5);
+        assert!(matches!(&data[0], ColumnData::Integers { values } if values.is_empty()));
+        assert!(matches!(&data[4], ColumnData::Json { values } if values.is_empty()));
+    }
+
+    #[test]
+    fn builder_coerces_mismatched_cells_exactly_like_a_streamed_chunk() {
+        // A driver-built column and a streamed chunk of the same rows must be
+        // byte-identical on the wire, including where a cell disagrees with
+        // its column's declared kind.
+        let kinds = all_kinds();
+        let rows = vec![
+            row(vec![
+                CellValue::Text("not an int".to_string()),
+                CellValue::Integer(3),
+                CellValue::Text("true".to_string()),
+                CellValue::Integer(7),
+                CellValue::Text("not json".to_string()),
+            ]),
+            row(vec![
+                CellValue::Boolean(false),
+                CellValue::Text("1.25".to_string()),
+                CellValue::Integer(1),
+                CellValue::Bytes {
+                    size: 2,
+                    preview: "\\x0102".to_string(),
+                },
+                CellValue::Json(serde_json::json!([1, 2])),
+            ]),
+            row(vec![
+                CellValue::Integer(9),
+                CellValue::Float(2.5),
+                CellValue::Boolean(true),
+                CellValue::Array(vec![CellValue::Integer(1), CellValue::Null]),
+                CellValue::Null,
+            ]),
+        ];
+
+        let streamed = rows_to_columnar_chunk(&rows, kinds.len(), &kinds);
+        let built = build_from_rows(&kinds, &rows);
+
+        assert_eq!(
+            serde_json::to_value(&built).unwrap(),
+            serde_json::to_value(&streamed).unwrap()
+        );
     }
 
     #[test]

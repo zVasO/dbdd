@@ -4,6 +4,9 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use purrql_core::error::{PurrqlError, Result};
+use purrql_core::models::columnar::{
+    column_kind_for_data_type, ColumnData, ColumnKind, ColumnarBuilder, ColumnarResult,
+};
 use purrql_core::models::connection::{ConnectionConfig, SslMode};
 use purrql_core::models::query::{CellValue, ColumnMeta, QueryResult, ResultType, Row};
 use purrql_core::ports::connection::DatabaseConnection;
@@ -124,6 +127,34 @@ impl PostgresConnection {
             columns,
             rows: result_rows,
             total_rows: Some(row_count),
+            affected_rows: None,
+            execution_time_ms: start.elapsed().as_millis() as u64,
+            warnings: vec![],
+            result_type: ResultType::Select,
+        })
+    }
+
+    /// `run_query`'s acquire/retry/pid discipline, folding the fetched rows
+    /// straight into columnar arrays instead of into `Vec<Row>` first.
+    async fn run_query_columnar(&self, sql: &str, query_id: &Uuid) -> Result<ColumnarResult> {
+        let start = std::time::Instant::now();
+        let _registration = PidRegistration::new(&self.query_pids, Some(query_id));
+
+        let outcome = with_retry(is_retryable_statement(sql), move || async move {
+            let mut conn = self.acquire_tracked(Some(query_id)).await?;
+            sqlx::query(sql).fetch_all(&mut *conn).await
+        })
+        .await;
+
+        let rows: Vec<PgRow> = outcome.map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
+        let row_count = rows.len();
+        let (columns, data) = extract_pg_columnar(&rows);
+
+        Ok(ColumnarResult {
+            query_id: *query_id,
+            columns,
+            data,
+            row_count,
             affected_rows: None,
             execution_time_ms: start.elapsed().as_millis() as u64,
             warnings: vec![],
@@ -512,34 +543,60 @@ fn convert_pg_row(row: &PgRow, col_types: &[String], col_decoders: &[PgDecoder])
     Row { cells }
 }
 
+/// Column metadata, Postgres type names, and the decoder each column takes,
+/// all read once from the first row's descriptors.
+fn pg_column_layout(first_row: &PgRow) -> (Vec<ColumnMeta>, Vec<String>, Vec<PgDecoder>) {
+    let cols: Vec<ColumnMeta> = first_row
+        .columns()
+        .iter()
+        .map(|col| {
+            let (data_type, native_type) = map_pg_column_meta(col);
+            ColumnMeta {
+                name: col.name().to_string(),
+                data_type,
+                native_type,
+                nullable: true,
+                is_primary_key: false,
+                max_length: None,
+            }
+        })
+        .collect();
+    let types: Vec<String> = first_row
+        .columns()
+        .iter()
+        .map(|c| c.type_info().name().to_string())
+        .collect();
+    let decoders: Vec<PgDecoder> = types.iter().map(|t| decoder_for_type(t)).collect();
+    (cols, types, decoders)
+}
+
+/// How a column's values are laid out columnar-side, decided by its declared
+/// Postgres type rather than by its first non-null cell — an all-NULL result
+/// would otherwise get a different layout than the same query streamed.
+fn column_kind_for_pg_type(pg_type: &str) -> ColumnKind {
+    column_kind_for_data_type(&crate::type_mapping::map_postgres_type(pg_type))
+}
+
+fn extract_pg_columnar(rows: &[PgRow]) -> (Vec<ColumnMeta>, Vec<ColumnData>) {
+    let Some(first_row) = rows.first() else {
+        return (vec![], vec![]);
+    };
+    let (columns, col_types, col_decoders) = pg_column_layout(first_row);
+    let kinds: Vec<ColumnKind> = col_types.iter().map(|t| column_kind_for_pg_type(t)).collect();
+
+    let mut builder = ColumnarBuilder::new(&kinds, rows.len());
+    for row in rows {
+        for (i, (pg_type, decoder)) in col_types.iter().zip(col_decoders.iter()).enumerate() {
+            builder.push_cell(i, decode_cell(row, i, pg_type, *decoder));
+        }
+    }
+
+    (columns, builder.finish())
+}
+
 fn extract_pg_result(rows: &[PgRow]) -> (Vec<ColumnMeta>, Vec<Row>) {
     let (columns, col_types, col_decoders): (Vec<ColumnMeta>, Vec<String>, Vec<PgDecoder>) =
-        if let Some(first_row) = rows.first() {
-            let cols: Vec<ColumnMeta> = first_row
-                .columns()
-                .iter()
-                .map(|col| {
-                    let (data_type, native_type) = map_pg_column_meta(col);
-                    ColumnMeta {
-                        name: col.name().to_string(),
-                        data_type,
-                        native_type,
-                        nullable: true,
-                        is_primary_key: false,
-                        max_length: None,
-                    }
-                })
-                .collect();
-            let types: Vec<String> = first_row
-                .columns()
-                .iter()
-                .map(|c| c.type_info().name().to_string())
-                .collect();
-            let decoders: Vec<PgDecoder> = types.iter().map(|t| decoder_for_type(t)).collect();
-            (cols, types, decoders)
-        } else {
-            (vec![], vec![], vec![])
-        };
+        rows.first().map(pg_column_layout).unwrap_or_default();
 
     let mut result_rows: Vec<Row> = Vec::with_capacity(rows.len());
     for row in rows {
@@ -561,6 +618,10 @@ impl DatabaseConnection for PostgresConnection {
 
     async fn execute_tracked(&self, sql: &str, query_id: &Uuid) -> Result<QueryResult> {
         self.run_query(sql, Some(query_id)).await
+    }
+
+    async fn execute_columnar_tracked(&self, sql: &str, query_id: &Uuid) -> Result<ColumnarResult> {
+        self.run_query_columnar(sql, query_id).await
     }
 
     /// Deliberately untracked: every caller is a schema inspector, none of
@@ -690,8 +751,9 @@ impl DatabaseConnection for PostgresConnection {
 #[cfg(test)]
 mod tests {
     use super::{
-        decoder_for_type, forget_pid, is_closed_connection_error, is_retryable_statement,
-        lookup_pid, record_pid, with_retry, PgDecoder, PidRegistration, QueryPids,
+        column_kind_for_pg_type, decoder_for_type, forget_pid, is_closed_connection_error,
+        is_retryable_statement, lookup_pid, record_pid, with_retry, PgDecoder, PidRegistration,
+        QueryPids,
     };
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
@@ -995,6 +1057,43 @@ mod tests {
                 decoder_for_type(pg_type),
                 expected,
                 "{pg_type} should map to {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn derives_each_column_kind_from_the_declared_pg_type() {
+        // NUMERIC lands on Strings, not Floats: the decoder renders it via
+        // BigDecimal::to_string to keep exact precision, and a Floats column
+        // would null every one of those cells.
+        let cases = [
+            ("INT2", "Integers"),
+            ("INT4", "Integers"),
+            ("INT8", "Integers"),
+            ("FLOAT4", "Floats"),
+            ("FLOAT8", "Floats"),
+            ("NUMERIC", "Strings"),
+            ("BOOL", "Booleans"),
+            ("JSON", "Json"),
+            ("JSONB", "Json"),
+            ("TEXT", "Strings"),
+            ("VARCHAR", "Strings"),
+            ("BPCHAR", "Strings"),
+            ("UUID", "Strings"),
+            ("DATE", "Strings"),
+            ("TIME", "Strings"),
+            ("TIMESTAMP", "Strings"),
+            ("TIMESTAMPTZ", "Strings"),
+            ("BYTEA", "Strings"),
+            ("MONEY", "Strings"),
+            ("INT4[]", "Strings"),
+        ];
+
+        for (pg_type, expected) in cases {
+            assert_eq!(
+                column_kind_for_pg_type(pg_type).as_column_data_tag(),
+                expected,
+                "{pg_type} should lay out as {expected}"
             );
         }
     }
