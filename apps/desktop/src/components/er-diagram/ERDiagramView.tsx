@@ -124,9 +124,10 @@ function ERDiagramInner() {
   // loadTables() call exits early, the diagram rebuilds once structures actually arrive.
   useEffect(() => {
     if (!selectedDatabase) return;
-    generateDiagram(selectedDatabase);
+    const t = setTimeout(() => generateDiagram(selectedDatabase), 300);
+    return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [structures]);
+  }, [structures, selectedDatabase]);
 
   // Apply dagre layout when the database changes (not on every structure batch update,
   // since generateDiagram now preserves existing node positions).

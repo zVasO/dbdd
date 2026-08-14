@@ -36,6 +36,12 @@ const LazyFallback = () => <div className="flex flex-1 items-center justify-cent
 
 const MIN_PANEL_PX = 100;
 
+// Keyed `${connectionId}:${database}.${table}` so same-name tables in different
+// databases (or connections) never collide. Entries go stale after COUNT_CACHE_TTL_MS
+// since we don't invalidate on writes to the table.
+const countCache = new Map<string, { count: number; at: number }>();
+const COUNT_CACHE_TTL_MS = 60_000;
+
 interface SplitEditorResultsProps {
   readonly children: [React.ReactNode, React.ReactNode];
 }
@@ -158,26 +164,33 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
   // ─── Server-side pagination for table browse ─────────────────────────────
   const [serverPage, setServerPage] = useState(0);
   const [serverTotalRows, setServerTotalRows] = useState<number | undefined>(undefined);
-  const prevTableRef = useRef<string | undefined>(undefined);
 
-  // Fetch COUNT(*) once when a table is first opened
+  // Fetch COUNT(*) when a table is first opened, reusing a cached total (per
+  // connection+database+table) so alternating between recently-viewed tabs
+  // doesn't re-run the query.
   useEffect(() => {
     if (!activeConnectionId || !activeTab?.table || !activeTab?.database) {
       setServerTotalRows(undefined);
       setServerPage(0);
       return;
     }
-    // Only re-count when the table changes
-    if (prevTableRef.current === activeTab.table) return;
-    prevTableRef.current = activeTab.table;
     setServerPage(0);
+
+    const cacheKey = `${activeConnectionId}:${activeTab.database}.${activeTab.table}`;
+    const cached = countCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < COUNT_CACHE_TTL_MS) {
+      setServerTotalRows(cached.count);
+      return;
+    }
 
     const qt = quoteIdentifier(activeTab.table, dbType);
     ipc.executeQueryColumnar(activeConnectionId, `SELECT COUNT(*) AS cnt FROM ${qt}`)
       .then((res) => {
         const raw = res.data[0]?.values[0];
         const count = Number(raw);
-        setServerTotalRows(Number.isFinite(count) ? count : 0);
+        const total = Number.isFinite(count) ? count : 0;
+        countCache.set(cacheKey, { count: total, at: Date.now() });
+        setServerTotalRows(total);
       })
       .catch(() => setServerTotalRows(undefined));
   }, [activeConnectionId, activeTab?.table, activeTab?.database, dbType]);

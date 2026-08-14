@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useShallow } from 'zustand/shallow';
 import { Button } from '@/components/ui/button';
 import { X, Plus, ChevronDown, GitBranch, LayoutDashboard, Activity, Search, Code2, Workflow, ArrowLeftRight, Bell, RefreshCw, FileCode } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -35,7 +36,9 @@ interface Props {
 }
 
 export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTab }: Props) {
-  const tabResults = useResultStore((s) => s.results);
+  const staleByTab = useResultStore(
+    useShallow((s) => tabs.map((t) => !!s.results[t.id]?.isStale))
+  );
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 
@@ -106,7 +109,7 @@ export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTa
             {tab.isExecuting && (
               <span className="ml-1 inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
             )}
-            {tabResults[tab.id]?.isStale && (
+            {staleByTab[index] && (
               <RefreshCw className="h-3 w-3 text-muted-foreground" />
             )}
             <Button

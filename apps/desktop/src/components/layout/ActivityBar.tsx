@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, memo } from 'react';
 import { useActivityStore, type ActivityEntry } from '@/stores/activityStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { Button } from '@/components/ui/button';
@@ -28,8 +28,11 @@ import { cn } from '@/lib/utils';
 
 type FilterType = 'all' | 'success' | 'error' | 'running';
 
-export function ActivityBar() {
-  const { entries: allEntries, expanded, toggleExpanded, clear } = useActivityStore();
+export const ActivityBar = memo(function ActivityBar() {
+  const allEntries = useActivityStore((s) => s.entries);
+  const expanded = useActivityStore((s) => s.expanded);
+  const toggleExpanded = useActivityStore((s) => s.toggleExpanded);
+  const clear = useActivityStore((s) => s.clear);
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
   const [filter, setFilter] = useState<FilterType>('all');
 
@@ -40,13 +43,17 @@ export function ActivityBar() {
   }, [allEntries, activeConnectionId]);
 
   const lastEntry = entries[0];
-  const runningCount = entries.filter((e) => e.status === 'running').length;
-  const errorCount = entries.filter((e) => e.status === 'error').length;
 
-  const filteredEntries =
-    filter === 'all'
-      ? entries
-      : entries.filter((e) => e.status === filter);
+  const { runningCount, errorCount, filteredEntries } = useMemo(() => {
+    let runningCount = 0;
+    let errorCount = 0;
+    for (const e of entries) {
+      if (e.status === 'running') runningCount++;
+      else if (e.status === 'error') errorCount++;
+    }
+    const filteredEntries = filter === 'all' ? entries : entries.filter((e) => e.status === filter);
+    return { runningCount, errorCount, filteredEntries };
+  }, [entries, filter]);
 
   return (
     <Collapsible open={expanded} onOpenChange={toggleExpanded}>
@@ -174,7 +181,7 @@ export function ActivityBar() {
       </CollapsibleContent>
     </Collapsible>
   );
-}
+});
 
 function FilterButton({
   label,

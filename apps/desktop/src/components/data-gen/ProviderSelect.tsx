@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { cn } from '@/lib/utils';
-import { providers, getProvidersByCategory } from '@/lib/dataGenProviders';
+import { providerMeta as providers, getProviderMetaByCategory as getProvidersByCategory } from '@/lib/dataGenProviderMeta';
 import { ChevronDown, Search } from 'lucide-react';
 
 interface ProviderSelectProps {
