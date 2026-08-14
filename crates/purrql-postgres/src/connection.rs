@@ -160,6 +160,7 @@ impl PostgresConnection {
             let _registration = registration;
             {
                 let mut stream = sqlx::query(&sql).fetch(&mut *conn);
+                let mut col_types: Vec<String> = vec![];
                 let mut col_decoders: Vec<PgDecoder> = vec![];
                 let mut meta_tx = Some(meta_tx);
                 let mut chunk: Vec<Row> = Vec::with_capacity(chunk_size);
@@ -183,14 +184,16 @@ impl PostgresConnection {
                                         }
                                     })
                                     .collect();
-                                col_decoders = row
+                                col_types = row
                                     .columns()
                                     .iter()
-                                    .map(|c| decoder_for_type(c.type_info().name()))
+                                    .map(|c| c.type_info().name().to_string())
                                     .collect();
+                                col_decoders =
+                                    col_types.iter().map(|t| decoder_for_type(t)).collect();
                                 let _ = sender.send(Ok(cols));
                             }
-                            chunk.push(convert_pg_row(&row, &col_decoders));
+                            chunk.push(convert_pg_row(&row, &col_types, &col_decoders));
                             if chunk.len() >= chunk_size {
                                 let full =
                                     std::mem::replace(&mut chunk, Vec::with_capacity(chunk_size));
@@ -352,7 +355,7 @@ fn hex_preview(bytes: &[u8], max_bytes: usize) -> String {
 /// [`decoder_for_type`] instead of re-matching the Postgres type name for
 /// every cell in that column.
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum PgDecoder {
+pub(crate) enum PgDecoder {
     Bool,
     Int2,
     Int4,
@@ -373,7 +376,7 @@ enum PgDecoder {
 
 /// The one place the Postgres type-name string is matched. Called once per
 /// column, not once per cell.
-fn decoder_for_type(pg_type: &str) -> PgDecoder {
+pub(crate) fn decoder_for_type(pg_type: &str) -> PgDecoder {
     match pg_type {
         "BOOL" => PgDecoder::Bool,
         "INT2" => PgDecoder::Int2,
@@ -394,7 +397,12 @@ fn decoder_for_type(pg_type: &str) -> PgDecoder {
     }
 }
 
-fn decode_cell(row: &PgRow, index: usize, decoder: PgDecoder) -> CellValue {
+pub(crate) fn decode_cell(
+    row: &PgRow,
+    index: usize,
+    pg_type: &str,
+    decoder: PgDecoder,
+) -> CellValue {
     match decoder {
         PgDecoder::Bool => match row.try_get::<Option<bool>, _>(index) {
             Ok(Some(b)) => CellValue::Boolean(b),
@@ -483,7 +491,7 @@ fn decode_cell(row: &PgRow, index: usize, decoder: PgDecoder) -> CellValue {
             Ok(Some(s)) => CellValue::Text(s),
             Ok(None) => CellValue::Null,
             Err(e) => {
-                tracing::warn!(decoder = ?decoder, error = %e, "unhandled Postgres type, value dropped");
+                tracing::warn!(pg_type, error = %e, "unhandled Postgres type, value dropped");
                 CellValue::Null
             }
         },
@@ -496,16 +504,16 @@ fn map_pg_column_meta(col: &sqlx::postgres::PgColumn) -> (purrql_core::models::t
     (mapped, native)
 }
 
-fn convert_pg_row(row: &PgRow, col_decoders: &[PgDecoder]) -> Row {
+fn convert_pg_row(row: &PgRow, col_types: &[String], col_decoders: &[PgDecoder]) -> Row {
     let mut cells = Vec::with_capacity(col_decoders.len());
-    for (i, decoder) in col_decoders.iter().enumerate() {
-        cells.push(decode_cell(row, i, *decoder));
+    for (i, (pg_type, decoder)) in col_types.iter().zip(col_decoders.iter()).enumerate() {
+        cells.push(decode_cell(row, i, pg_type, *decoder));
     }
     Row { cells }
 }
 
 fn extract_pg_result(rows: &[PgRow]) -> (Vec<ColumnMeta>, Vec<Row>) {
-    let (columns, col_decoders): (Vec<ColumnMeta>, Vec<PgDecoder>) =
+    let (columns, col_types, col_decoders): (Vec<ColumnMeta>, Vec<String>, Vec<PgDecoder>) =
         if let Some(first_row) = rows.first() {
             let cols: Vec<ColumnMeta> = first_row
                 .columns()
@@ -522,21 +530,22 @@ fn extract_pg_result(rows: &[PgRow]) -> (Vec<ColumnMeta>, Vec<Row>) {
                     }
                 })
                 .collect();
-            let decoders: Vec<PgDecoder> = first_row
+            let types: Vec<String> = first_row
                 .columns()
                 .iter()
-                .map(|c| decoder_for_type(c.type_info().name()))
+                .map(|c| c.type_info().name().to_string())
                 .collect();
-            (cols, decoders)
+            let decoders: Vec<PgDecoder> = types.iter().map(|t| decoder_for_type(t)).collect();
+            (cols, types, decoders)
         } else {
-            (vec![], vec![])
+            (vec![], vec![], vec![])
         };
 
     let mut result_rows: Vec<Row> = Vec::with_capacity(rows.len());
     for row in rows {
         let mut cells: Vec<CellValue> = Vec::with_capacity(col_decoders.len());
-        for (i, decoder) in col_decoders.iter().enumerate() {
-            cells.push(decode_cell(row, i, *decoder));
+        for (i, (pg_type, decoder)) in col_types.iter().zip(col_decoders.iter()).enumerate() {
+            cells.push(decode_cell(row, i, pg_type, *decoder));
         }
         result_rows.push(Row { cells });
     }
