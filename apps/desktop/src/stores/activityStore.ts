@@ -79,7 +79,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   logSuccess: (id: string, durationMs: number, rowCount: number | null) => {
     set((state) => {
       const idx = state.entries.findIndex((e) => e.id === id);
-      if (idx === -1) return state;
+      if (idx === -1 || state.entries[idx].status === 'cancelled') return state;
       const entries = [...state.entries];
       entries[idx] = { ...entries[idx], status: 'success' as const, durationMs, rowCount };
       return { entries };
@@ -89,7 +89,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   logError: (id: string, durationMs: number, error: string) => {
     set((state) => {
       const idx = state.entries.findIndex((e) => e.id === id);
-      if (idx === -1) return state;
+      if (idx === -1 || state.entries[idx].status === 'cancelled') return state;
       const entries = [...state.entries];
       entries[idx] = { ...entries[idx], status: 'error' as const, durationMs, error };
       return { entries };

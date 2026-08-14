@@ -78,4 +78,30 @@ describe('activityStore applyAppEvent', () => {
     expect(entry.status).toBe('cancelled');
     expect(entry.status).not.toBe('error');
   });
+
+  it('a cancelled entry is not downgraded by a racing genuine error', () => {
+    const store = useActivityStore.getState();
+    const id = store.logStart('SELECT * FROM t', 'conn-1');
+    store.attachQueryId(id, 'q-5');
+
+    applyAppEvent(queryCancelled('q-5'));
+    store.logError(id, 900, 'connection reset');
+
+    const entry = useActivityStore.getState().entries[0];
+    expect(entry.status).toBe('cancelled');
+    expect(entry.error).toBeNull();
+  });
+
+  it('a cancelled entry is not downgraded by a racing late success', () => {
+    const store = useActivityStore.getState();
+    const id = store.logStart('SELECT * FROM t', 'conn-1');
+    store.attachQueryId(id, 'q-6');
+
+    applyAppEvent(queryCancelled('q-6'));
+    store.logSuccess(id, 900, 42);
+
+    const entry = useActivityStore.getState().entries[0];
+    expect(entry.status).toBe('cancelled');
+    expect(entry.rowCount).toBeNull();
+  });
 });
