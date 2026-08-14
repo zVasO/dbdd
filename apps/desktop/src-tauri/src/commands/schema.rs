@@ -106,6 +106,32 @@ pub async fn get_table_structure(
     connection_id: Uuid,
     table_ref: TableRef,
 ) -> Result<TableStructure, IpcError> {
+    let (cached, needs_refresh) = state.schema_cache.get_structure(&connection_id, &table_ref);
+
+    if let Some(structure) = cached {
+        if !needs_refresh {
+            return Ok(structure);
+        }
+        // Return stale data immediately but spawn a background refresh
+        let cache = state.schema_cache.clone();
+        let conn_id = connection_id;
+        let tbl = table_ref.clone();
+        let result = structure.clone();
+        // Clone the inspector out of the DashMap guard so it can be sent to the task
+        let inspector = state
+            .connection_manager
+            .get(&conn_id)
+            .map(|active| Arc::clone(&active.schema_inspector));
+        if let Some(inspector) = inspector {
+            tokio::spawn(async move {
+                if let Ok(fresh) = inspector.get_table_structure(&tbl).await {
+                    cache.set_structure(conn_id, tbl, fresh);
+                }
+            });
+        }
+        return Ok(result);
+    }
+
     let inspector = {
         let active = state
             .connection_manager
@@ -113,10 +139,16 @@ pub async fn get_table_structure(
             .ok_or(IpcError::from("Not connected"))?;
         Arc::clone(&active.schema_inspector)
     };
-    inspector
+    let structure = inspector
         .get_table_structure(&table_ref)
         .await
-        .map_err(IpcError::from)
+        .map_err(IpcError::from)?;
+
+    state
+        .schema_cache
+        .set_structure(connection_id, table_ref, structure.clone());
+
+    Ok(structure)
 }
 
 #[tauri::command]

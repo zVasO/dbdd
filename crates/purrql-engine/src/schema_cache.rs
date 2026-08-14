@@ -32,6 +32,15 @@ impl SchemaCache {
         }
     }
 
+    #[cfg(test)]
+    fn with_ttl(ttl: Duration) -> Self {
+        Self {
+            tables: DashMap::new(),
+            structures: DashMap::new(),
+            ttl,
+        }
+    }
+
     /// Returns `(cached_value, needs_refresh)`.
     ///
     /// The caller receives stale-but-valid data while `needs_refresh` is `true`,
@@ -73,6 +82,40 @@ impl SchemaCache {
         self.evict_oldest_for_connection(&key.0);
     }
 
+    /// Returns `(cached_value, needs_refresh)`.
+    ///
+    /// The caller receives stale-but-valid data while `needs_refresh` is `true`,
+    /// allowing a background task to repopulate the cache before the TTL expires.
+    pub fn get_structure(
+        &self,
+        conn_id: &Uuid,
+        table: &TableRef,
+    ) -> (Option<TableStructure>, bool) {
+        let key = (*conn_id, table.clone());
+        match self.structures.get(&key) {
+            Some(entry) => {
+                let elapsed = entry.1.elapsed();
+                if elapsed < self.ttl {
+                    // Signal refresh when 80% of TTL has elapsed
+                    let needs_refresh = elapsed > (self.ttl * 4 / 5);
+                    (Some(entry.0.clone()), needs_refresh)
+                } else {
+                    drop(entry);
+                    self.structures.remove(&key);
+                    (None, true)
+                }
+            }
+            None => (None, true),
+        }
+    }
+
+    pub fn set_structure(&self, conn_id: Uuid, table: TableRef, structure: TableStructure) {
+        let key = (conn_id, table);
+        self.structures
+            .insert(key.clone(), (structure, Instant::now()));
+        self.evict_oldest_structures_for_connection(&key.0);
+    }
+
     pub fn invalidate_connection(&self, conn_id: &Uuid) {
         self.tables.retain(|k, _| &k.0 != conn_id);
         self.structures.retain(|k, _| &k.0 != conn_id);
@@ -105,6 +148,163 @@ impl SchemaCache {
                 self.tables.remove(old_key);
             }
         }
+    }
+
+    /// Evict the oldest structure entries when a single connection exceeds the cap.
+    fn evict_oldest_structures_for_connection(&self, connection_id: &Uuid) {
+        let conn_entries: Vec<_> = self
+            .structures
+            .iter()
+            .filter(|e| &e.key().0 == connection_id)
+            .map(|e| (e.key().clone(), e.value().1))
+            .collect();
+
+        if conn_entries.len() > MAX_ENTRIES_PER_CONNECTION {
+            let mut sorted = conn_entries;
+            sorted.sort_by_key(|(_, instant)| *instant);
+            for (old_key, _) in sorted
+                .iter()
+                .take(sorted.len() - MAX_ENTRIES_PER_CONNECTION)
+            {
+                self.structures.remove(old_key);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use purrql_core::models::schema::{ColumnInfo, TableRef, TableStructure};
+    use purrql_core::models::types::DataType;
+    use std::thread::sleep;
+
+    fn table_ref(name: &str) -> TableRef {
+        TableRef {
+            database: Some("db".to_string()),
+            schema: Some("public".to_string()),
+            table: name.to_string(),
+        }
+    }
+
+    fn structure(name: &str) -> TableStructure {
+        TableStructure {
+            table_ref: table_ref(name),
+            columns: vec![ColumnInfo {
+                name: "id".to_string(),
+                data_type: "int4".to_string(),
+                mapped_type: DataType::Integer,
+                nullable: false,
+                default_value: None,
+                is_primary_key: true,
+                ordinal_position: 1,
+                comment: None,
+            }],
+            primary_key: None,
+            indexes: vec![],
+            foreign_keys: vec![],
+            constraints: vec![],
+            comment: None,
+        }
+    }
+
+    #[test]
+    fn fresh_structure_hit_returns_some_and_no_refresh() {
+        let cache = SchemaCache::with_ttl(Duration::from_secs(300));
+        let conn_id = Uuid::new_v4();
+        let tbl = table_ref("users");
+        cache.set_structure(conn_id, tbl.clone(), structure("users"));
+
+        let (result, needs_refresh) = cache.get_structure(&conn_id, &tbl);
+        assert!(result.is_some());
+        assert!(!needs_refresh);
+    }
+
+    #[test]
+    fn stale_but_alive_structure_returns_some_and_needs_refresh() {
+        // ttl long enough that sleeping past 4/5 of it triggers the stale window
+        // while staying comfortably under the full ttl, even under scheduler jitter.
+        let ttl = Duration::from_millis(300);
+        let cache = SchemaCache::with_ttl(ttl);
+        let conn_id = Uuid::new_v4();
+        let tbl = table_ref("users");
+        cache.set_structure(conn_id, tbl.clone(), structure("users"));
+
+        sleep(Duration::from_millis(260));
+
+        let (result, needs_refresh) = cache.get_structure(&conn_id, &tbl);
+        assert!(result.is_some());
+        assert!(needs_refresh);
+    }
+
+    #[test]
+    fn expired_structure_returns_none_and_is_removed() {
+        let ttl = Duration::from_millis(20);
+        let cache = SchemaCache::with_ttl(ttl);
+        let conn_id = Uuid::new_v4();
+        let tbl = table_ref("users");
+        cache.set_structure(conn_id, tbl.clone(), structure("users"));
+
+        sleep(Duration::from_millis(80));
+
+        let (result, needs_refresh) = cache.get_structure(&conn_id, &tbl);
+        assert!(result.is_none());
+        assert!(needs_refresh);
+        assert!(cache.structures.is_empty());
+    }
+
+    #[test]
+    fn invalidate_connection_clears_structures() {
+        let cache = SchemaCache::with_ttl(Duration::from_secs(300));
+        let conn_id = Uuid::new_v4();
+        let tbl = table_ref("users");
+        cache.set_structure(conn_id, tbl.clone(), structure("users"));
+
+        cache.invalidate_connection(&conn_id);
+
+        let (result, needs_refresh) = cache.get_structure(&conn_id, &tbl);
+        assert!(result.is_none());
+        assert!(needs_refresh);
+    }
+
+    #[test]
+    fn miss_returns_none_and_needs_refresh() {
+        let cache = SchemaCache::with_ttl(Duration::from_secs(300));
+        let conn_id = Uuid::new_v4();
+        let tbl = table_ref("users");
+
+        let (result, needs_refresh) = cache.get_structure(&conn_id, &tbl);
+        assert!(result.is_none());
+        assert!(needs_refresh);
+    }
+
+    #[test]
+    fn per_connection_cap_evicts_oldest_structures() {
+        let cache = SchemaCache::with_ttl(Duration::from_secs(300));
+        let conn_id = Uuid::new_v4();
+
+        for i in 0..(MAX_ENTRIES_PER_CONNECTION + 5) {
+            let name = format!("table_{i}");
+            cache.set_structure(conn_id, table_ref(&name), structure(&name));
+            // Ensure distinct Instant ordering across inserts.
+            sleep(Duration::from_micros(50));
+        }
+
+        let remaining = cache
+            .structures
+            .iter()
+            .filter(|e| e.key().0 == conn_id)
+            .count();
+        assert_eq!(remaining, MAX_ENTRIES_PER_CONNECTION);
+
+        // The oldest entry should have been evicted.
+        let (oldest, _) = cache.get_structure(&conn_id, &table_ref("table_0"));
+        assert!(oldest.is_none());
+
+        // The newest entry should still be present.
+        let last_name = format!("table_{}", MAX_ENTRIES_PER_CONNECTION + 4);
+        let (newest, _) = cache.get_structure(&conn_id, &table_ref(&last_name));
+        assert!(newest.is_some());
     }
 }
 
