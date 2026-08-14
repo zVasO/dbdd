@@ -33,7 +33,7 @@ interface ActivityState {
   logCancelled: (id: string, durationMs: number) => void;
   /** Links a locally-created entry to the backend's query_id, so bus events can find it. */
   attachQueryId: (id: string, queryId: string) => void;
-  /** Bus-driven: QueryCancelled → 'cancelled' status, matched by query_id. */
+  /** Bus-driven: QueryCancelled → 'cancelled' status, matched by query_id. Only acts on a still-running entry — a settled success/error is never flipped by a late cancellation. */
   updateCancelled: (queryId: string) => void;
   /** Bus-driven: QueryProgress → progress text, matched by query_id. */
   updateProgress: (queryId: string, rowsFetched: number) => void;
@@ -119,7 +119,7 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
   updateCancelled: (queryId: string) => {
     set((state) => {
       const idx = state.entries.findIndex((e) => e.queryId === queryId);
-      if (idx === -1) return state;
+      if (idx === -1 || state.entries[idx].status !== 'running') return state;
       const entries = [...state.entries];
       const durationMs = Math.round(Date.now() - entries[idx].timestamp.getTime());
       entries[idx] = { ...entries[idx], status: 'cancelled' as const, error: null, durationMs };

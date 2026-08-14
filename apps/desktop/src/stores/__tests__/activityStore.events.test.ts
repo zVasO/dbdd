@@ -19,11 +19,10 @@ describe('activityStore applyAppEvent', () => {
     useActivityStore.setState({ entries: [], expanded: false, recentTables: [] });
   });
 
-  it('QueryCancelled transitions a linked entry to cancelled and clears any error text', () => {
+  it('QueryCancelled transitions a still-running linked entry to cancelled with no error text', () => {
     const store = useActivityStore.getState();
     const id = store.logStart('SELECT * FROM big_table', 'conn-1');
     store.attachQueryId(id, 'q-1');
-    store.logError(id, 500, 'Cancelled');
 
     applyAppEvent(queryCancelled('q-1'));
 
@@ -103,5 +102,33 @@ describe('activityStore applyAppEvent', () => {
     const entry = useActivityStore.getState().entries[0];
     expect(entry.status).toBe('cancelled');
     expect(entry.rowCount).toBeNull();
+  });
+
+  it('a settled success entry is not flipped by a late cancellation event', () => {
+    const store = useActivityStore.getState();
+    const id = store.logStart('SELECT * FROM t', 'conn-1');
+    store.attachQueryId(id, 'q-7');
+    store.logSuccess(id, 120, 7);
+
+    applyAppEvent(queryCancelled('q-7'));
+
+    const entry = useActivityStore.getState().entries[0];
+    expect(entry.status).toBe('success');
+    expect(entry.rowCount).toBe(7);
+    expect(entry.durationMs).toBe(120);
+  });
+
+  it('a settled error entry is not flipped by a late cancellation event', () => {
+    const store = useActivityStore.getState();
+    const id = store.logStart('SELECT * FROM t', 'conn-1');
+    store.attachQueryId(id, 'q-8');
+    store.logError(id, 340, 'syntax error');
+
+    applyAppEvent(queryCancelled('q-8'));
+
+    const entry = useActivityStore.getState().entries[0];
+    expect(entry.status).toBe('error');
+    expect(entry.error).toBe('syntax error');
+    expect(entry.durationMs).toBe(340);
   });
 });
