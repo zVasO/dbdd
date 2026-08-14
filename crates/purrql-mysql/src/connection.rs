@@ -107,7 +107,7 @@ impl DatabaseConnection for MySqlConnection {
             .map_err(|e| PurrqlError::Connection(e.to_string()))?;
 
         let result: Vec<mysql_async::Row> = conn
-            .query(sql)
+            .exec(sql, ())
             .await
             .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
 
@@ -253,7 +253,7 @@ impl DatabaseConnection for MySqlConnection {
             };
 
             // Execute query and get an iterator-style result set
-            let query_result = match conn.query_iter(&sql).await {
+            let query_result = match conn.exec_iter(&sql, ()).await {
                 Ok(r) => r,
                 Err(e) => {
                     let _ = meta_tx.send(Err(PurrqlError::QueryExecution(e.to_string())));
