@@ -3,7 +3,9 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Key, Plus, Search, Trash2, X, Filter, Eye, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight as ChevronRightIcon, ChevronsLeft, ChevronsRight, Copy, CopyPlus, ClipboardPaste, FileJson, Table2, FileCode, FileText } from 'lucide-react';
-import { copyAsJson, copyAsInsert, copyAsCsv, copyAsMarkdown, copyAsTsv, copyCellAsJson, copyCellAsText, copyToClipboard } from '@/lib/copyFormats';
+import { copyCellAsJson, copyCellAsText, copyToClipboard } from '@/lib/copyFormats';
+import { runExport } from '@/lib/exportRunner';
+import type { ColumnarSlice, CopyFormat } from '@/lib/columnarFormat';
 import type { QueryResult, CellValue, ColumnData } from '@/lib/types';
 import { ipc } from '@/lib/ipc';
 import { useChangeStore, type Change } from '@/stores/changeStore';
@@ -206,17 +208,6 @@ function useGridWorker(
 }
 
 export type { SortRequest };
-
-/** Build Row objects on-demand from columnar data for a specific set of actual row indices */
-function buildRowsOnDemand(
-  data: ColumnData[],
-  columns: { name: string }[],
-  rowIndices: number[],
-): { cells: CellValue[] }[] {
-  return rowIndices.map((rowIdx) => ({
-    cells: columns.map((_, colIdx) => columnarCellValue(data, colIdx, rowIdx)),
-  }));
-}
 
 export const DataGrid = memo(function DataGrid({ result, database, table, data: explicitData, rowCount: explicitRowCount, onServerSort, onServerPageChange, serverTotalRows, serverPage, highlightedColumnName, onHighlightDone }: Props) {
   const parentRef = useRef<HTMLDivElement>(null);
@@ -1105,18 +1096,30 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
     setContextMenu(null);
   }, [database, table, result.columns, columnarData, addChange, paginatedIndexMap, schemaPrimaryKeys]);
 
-  const formatRowsForCopy = useCallback((columns: typeof result.columns, rows: { cells: CellValue[] }[]) => {
-    switch (defaultCopyFormat) {
-      case 'json': return copyAsJson(columns, rows);
-      case 'csv': return copyAsCsv(columns, rows);
-      case 'tsv': return copyAsTsv(columns, rows);
-      case 'markdown': return copyAsMarkdown(columns, rows);
-      case 'insert': return copyAsInsert(columns, rows, table || 'table');
-      default: return copyAsJson(columns, rows);
-    }
-  }, [defaultCopyFormat, table]);
+  const allColIndexes = useMemo(() => result.columns.map((_, i) => i), [result.columns]);
 
-  const copySelection = useCallback(() => {
+  /** Slice of the columnar data for paginated row indexes (translated to actual indexes) and column indexes. */
+  const buildSlice = useCallback((rowIdxs: number[], colIdxs: number[]): ColumnarSlice => ({
+    columns: colIdxs.map((i) => result.columns[i]),
+    colIndexes: colIdxs,
+    data: columnarData,
+    rowIndexes: rowIdxs.map((ri) => paginatedIndexMap[ri]),
+  }), [result.columns, columnarData, paginatedIndexMap]);
+
+  /** What a context-menu copy acts on: the cell selection, else the row selection, else the clicked row. */
+  const buildContextSlice = useCallback((contextRowIndex: number): ColumnarSlice => {
+    if (!isSelectionEmpty(cellSelection)) {
+      const parsed = materializeCells(cellSelection);
+      const colIdxs = [...new Set(parsed.map((p) => p.col))].sort((a, b) => a - b);
+      const rowIdxs = [...new Set(parsed.map((p) => p.row))].sort((a, b) => a - b);
+      return buildSlice(rowIdxs, colIdxs);
+    }
+    const rowIdxs = selectedRows.size > 0 ? [...selectedRows].sort((a, b) => a - b) : [contextRowIndex];
+    return buildSlice(rowIdxs, allColIndexes);
+  }, [cellSelection, selectedRows, allColIndexes, buildSlice]);
+
+  const copySelection = useCallback(async () => {
+    const tableName = table || 'table';
     // Cell selection
     if (!isSelectionEmpty(cellSelection)) {
       const parsed = materializeCells(cellSelection);
@@ -1132,51 +1135,25 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
         } else {
           copyToClipboard(copyCellAsText(cell));
         }
-      } else {
-        // Multi-cell: gather unique rows/cols, build partial rows for copy
-        const colIndices = [...new Set(parsed.map((p) => p.col))].sort((a, b) => a - b);
-        const rowIndices = [...new Set(parsed.map((p) => p.row))].sort((a, b) => a - b);
-        const cols = colIndices.map((i) => result.columns[i]);
-        const rows = rowIndices.map((ri) => {
-          const actualRow = paginatedIndexMap[ri];
-          return { cells: colIndices.map((ci) => columnarCellValue(columnarData, ci, actualRow)) };
-        });
-        copyToClipboard(formatRowsForCopy(cols, rows as any));
+        return;
       }
+      const colIdxs = [...new Set(parsed.map((p) => p.col))].sort((a, b) => a - b);
+      const rowIdxs = [...new Set(parsed.map((p) => p.row))].sort((a, b) => a - b);
+      const content = await runExport(buildSlice(rowIdxs, colIdxs), defaultCopyFormat, { tableName });
+      await copyToClipboard(content);
       return;
     }
     // Row selection
     if (selectedRows.size === 0) return;
-    const sortedIndices = [...selectedRows].sort((a, b) => a - b);
-    const actualRows = sortedIndices.map((idx) => paginatedIndexMap[idx]);
-    const rows = buildRowsOnDemand(columnarData, result.columns, actualRows);
-    copyToClipboard(formatRowsForCopy(result.columns, rows));
-  }, [cellSelection, selectedRows, result.columns, columnarData, paginatedIndexMap, defaultCopyFormat, formatRowsForCopy]);
+    const rowIdxs = [...selectedRows].sort((a, b) => a - b);
+    const content = await runExport(buildSlice(rowIdxs, allColIndexes), defaultCopyFormat, { tableName });
+    await copyToClipboard(content);
+  }, [cellSelection, selectedRows, result.columns, columnarData, paginatedIndexMap, defaultCopyFormat, buildSlice, allColIndexes, table]);
 
-  const getSelectedOrContextRows = useCallback((contextRowIndex: number) => {
-    const indices = selectedRows.size > 0
-      ? [...selectedRows].sort((a, b) => a - b)
-      : [contextRowIndex];
-    const actualRows = indices.map((idx) => paginatedIndexMap[idx]);
-    return buildRowsOnDemand(columnarData, result.columns, actualRows);
-  }, [selectedRows, paginatedIndexMap, columnarData, result.columns]);
-
-  // Build columns + rows from cell selection (for copy actions)
-  const getContextColumnsFromCells = useCallback(() => {
-    const parsed = materializeCells(cellSelection);
-    const colIndices = [...new Set(parsed.map((p) => p.col))].sort((a, b) => a - b);
-    return colIndices.map((i) => result.columns[i]);
-  }, [cellSelection, result.columns]);
-
-  const getContextRowsFromCells = useCallback(() => {
-    const parsed = materializeCells(cellSelection);
-    const colIndices = [...new Set(parsed.map((p) => p.col))].sort((a, b) => a - b);
-    const rowIndices = [...new Set(parsed.map((p) => p.row))].sort((a, b) => a - b);
-    return rowIndices.map((ri) => {
-      const actualRow = paginatedIndexMap[ri];
-      return { cells: colIndices.map((ci) => columnarCellValue(columnarData, ci, actualRow)) };
-    }) as { cells: CellValue[] }[];
-  }, [cellSelection, paginatedIndexMap, columnarData]);
+  const copyContextAs = useCallback(async (contextRowIndex: number, format: CopyFormat) => {
+    const content = await runExport(buildContextSlice(contextRowIndex), format, { tableName: table || 'table' });
+    await copyToClipboard(content);
+  }, [buildContextSlice, table]);
 
   // ─── Grid keyboard navigation ──────────────────────────────────────────────
 
@@ -1389,52 +1366,18 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
   // ─── Export ────────────────────────────────────────────────────────────────
 
   const exportData = useCallback(async (format: 'csv' | 'json' | 'sql') => {
-    const selectedIndices = selectedRows.size > 0
+    const rowIndexes = selectedRows.size > 0
       ? [...selectedRows].sort((a, b) => a - b).map((i) => paginatedIndexMap[i])
       : paginatedIndexMap;
-    const cols = result.columns;
-    let content: string;
-    let filename: string;
-
-    if (format === 'csv') {
-      const header = cols.map((c) => `"${c.name}"`).join(',');
-      const rows = selectedIndices.map((actualRow) =>
-        cols.map((_, colIdx) => {
-          const val = formatColumnarCell(columnarData, colIdx, actualRow);
-          return `"${val.replace(/"/g, '""')}"`;
-        }).join(',')
-      );
-      content = [header, ...rows].join('\n');
-      filename = `${table ?? 'export'}.csv`;
-    } else if (format === 'json') {
-      const data = selectedIndices.map((actualRow) => {
-        const obj: Record<string, string> = {};
-        cols.forEach((col, colIdx) => {
-          obj[col.name] = formatColumnarCell(columnarData, colIdx, actualRow);
-        });
-        return obj;
-      });
-      content = JSON.stringify(data, null, 2);
-      filename = `${table ?? 'export'}.json`;
-    } else {
-      const tableName = table ?? 'table_name';
-      const colNames = cols.map((c) => `\`${c.name}\``).join(', ');
-      const rows = selectedIndices.map((actualRow) => {
-        const values = cols.map((_, colIdx) => {
-          const cell = columnarCellValue(columnarData, colIdx, actualRow);
-          if (cell.type === 'Null') return 'NULL';
-          if (cell.type === 'Integer' || cell.type === 'Float') return String(cell.value);
-          if (cell.type === 'Boolean') return cell.value ? '1' : '0';
-          return `'${formatCell(cell).replace(/'/g, "''")}'`;
-        }).join(', ');
-        return `INSERT INTO \`${tableName}\` (${colNames}) VALUES (${values});`;
-      });
-      content = rows.join('\n');
-      filename = `${table ?? 'export'}.sql`;
-    }
-
-    await ipc.saveSqlFile(content, filename);
-  }, [selectedRows, result.columns, columnarData, paginatedIndexMap, table]);
+    const slice: ColumnarSlice = {
+      columns: result.columns,
+      colIndexes: allColIndexes,
+      data: columnarData,
+      rowIndexes,
+    };
+    const content = await runExport(slice, format === 'sql' ? 'insert' : format, { tableName: table ?? 'table_name' });
+    await ipc.saveSqlFile(content, `${table ?? 'export'}.${format}`);
+  }, [selectedRows, result.columns, columnarData, paginatedIndexMap, table, allColIndexes]);
 
   // ─── Pagination helpers ────────────────────────────────────────────────────
 
@@ -1824,8 +1767,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
             <button
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
-                const rows = !isSelectionEmpty(cellSelection) ? getContextRowsFromCells() : getSelectedOrContextRows(contextMenu.rowIndex);
-                copyToClipboard(copyAsJson(!isSelectionEmpty(cellSelection) ? getContextColumnsFromCells() : result.columns, rows));
+                copyContextAs(contextMenu.rowIndex, 'json');
                 setContextMenu(null);
               }}
             >
@@ -1835,9 +1777,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
             <button
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
-                const cols = !isSelectionEmpty(cellSelection) ? getContextColumnsFromCells() : result.columns;
-                const rows = !isSelectionEmpty(cellSelection) ? getContextRowsFromCells() : getSelectedOrContextRows(contextMenu.rowIndex);
-                copyToClipboard(copyAsInsert(cols, rows, table || 'table'));
+                copyContextAs(contextMenu.rowIndex, 'insert');
                 setContextMenu(null);
               }}
             >
@@ -1847,9 +1787,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
             <button
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
-                const cols = !isSelectionEmpty(cellSelection) ? getContextColumnsFromCells() : result.columns;
-                const rows = !isSelectionEmpty(cellSelection) ? getContextRowsFromCells() : getSelectedOrContextRows(contextMenu.rowIndex);
-                copyToClipboard(copyAsCsv(cols, rows));
+                copyContextAs(contextMenu.rowIndex, 'csv');
                 setContextMenu(null);
               }}
             >
@@ -1859,9 +1797,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
             <button
               className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent hover:text-accent-foreground"
               onClick={() => {
-                const cols = !isSelectionEmpty(cellSelection) ? getContextColumnsFromCells() : result.columns;
-                const rows = !isSelectionEmpty(cellSelection) ? getContextRowsFromCells() : getSelectedOrContextRows(contextMenu.rowIndex);
-                copyToClipboard(copyAsMarkdown(cols, rows));
+                copyContextAs(contextMenu.rowIndex, 'markdown');
                 setContextMenu(null);
               }}
             >

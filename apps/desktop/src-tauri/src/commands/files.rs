@@ -39,13 +39,27 @@ pub async fn open_sql_file() -> Result<Option<(String, String)>, IpcError> {
     }
 }
 
+/// Save-dialog filter for a requested file name. The command also saves CSV and
+/// JSON exports, so a hardcoded `*.sql` filter would hide the file being written.
+fn save_filter_for(suggested_name: Option<&str>) -> (&'static str, &'static [&'static str]) {
+    let ext = suggested_name
+        .and_then(|name| name.rsplit_once('.'))
+        .map(|(_, ext)| ext.to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("csv") => ("CSV", &["csv"]),
+        Some("json") => ("JSON", &["json"]),
+        _ => ("SQL", &["sql"]),
+    }
+}
+
 #[tauri::command]
 pub async fn save_sql_file(
     content: String,
     suggested_name: Option<String>,
 ) -> Result<Option<String>, IpcError> {
+    let (filter_label, filter_exts) = save_filter_for(suggested_name.as_deref());
     let mut dialog = AsyncFileDialog::new()
-        .add_filter("SQL", &["sql"])
+        .add_filter(filter_label, filter_exts)
         .add_filter("All Files", &["*"]);
 
     if let Some(name) = &suggested_name {
@@ -85,5 +99,29 @@ pub async fn import_csv_file() -> Result<Option<(String, String)>, IpcError> {
             Ok(Some((name, content)))
         }
         None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::save_filter_for;
+
+    #[test]
+    fn filter_follows_the_requested_extension() {
+        assert_eq!(save_filter_for(Some("users.csv")), ("CSV", &["csv"][..]));
+        assert_eq!(save_filter_for(Some("users.JSON")), ("JSON", &["json"][..]));
+        assert_eq!(save_filter_for(Some("users.sql")), ("SQL", &["sql"][..]));
+    }
+
+    #[test]
+    fn unknown_and_missing_extensions_fall_back_to_sql() {
+        assert_eq!(save_filter_for(Some("dump.bak")), ("SQL", &["sql"][..]));
+        assert_eq!(save_filter_for(Some("dump")), ("SQL", &["sql"][..]));
+        assert_eq!(save_filter_for(None), ("SQL", &["sql"][..]));
+    }
+
+    #[test]
+    fn only_the_last_extension_counts() {
+        assert_eq!(save_filter_for(Some("orders.csv.json")), ("JSON", &["json"][..]));
     }
 }

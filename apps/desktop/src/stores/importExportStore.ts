@@ -1,11 +1,49 @@
 import { create } from 'zustand';
 import { ipc, extractErrorMessage } from '@/lib/ipc';
 import { toExcel } from '@/lib/exportFormats';
+import { runExport } from '@/lib/exportRunner';
 import { showErrorToast } from './toastStore';
+import type { ColumnarSlice, CopyFormat } from '@/lib/columnarFormat';
 import type { QueryResult } from '@/lib/types';
 
 type ImportFileType = 'csv' | 'json' | 'sql';
 type ExportFormat = 'csv' | 'json' | 'excel' | 'sql-insert' | 'sql-create' | 'markdown';
+
+/**
+ * What the export runs on. The text formats read the slice directly, so the
+ * dialog never materializes rows; `rowResult` exists only for Excel, whose
+ * sheet builder needs row objects, and is called only in that branch.
+ */
+export interface ExportSource {
+  slice: ColumnarSlice;
+  rowResult: () => QueryResult | null;
+}
+
+const COPY_FORMATS: Record<Exclude<ExportFormat, 'excel'>, CopyFormat> = {
+  csv: 'csv',
+  json: 'json',
+  'sql-insert': 'insert',
+  'sql-create': 'create',
+  markdown: 'markdown',
+};
+
+const MIME_TYPES: Record<ExportFormat, string> = {
+  csv: 'text/csv',
+  json: 'application/json',
+  excel: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'sql-insert': 'text/sql',
+  'sql-create': 'text/sql',
+  markdown: 'text/markdown',
+};
+
+const EXTENSIONS: Record<ExportFormat, string> = {
+  csv: '.csv',
+  json: '.json',
+  excel: '.xlsx',
+  'sql-insert': '_insert.sql',
+  'sql-create': '_create.sql',
+  markdown: '.md',
+};
 
 interface ImportExportState {
   importDialogOpen: boolean;
@@ -26,7 +64,7 @@ interface ImportExportState {
   setExportDialogOpen: (open: boolean) => void;
   parseFile: (file: File) => Promise<void>;
   executeImport: (connectionId: string, database: string) => Promise<void>;
-  exportResult: (result: QueryResult, tableName: string) => Promise<void>;
+  exportResult: (source: ExportSource, tableName: string) => Promise<void>;
   setCsvSeparator: (sep: string) => void;
   setImportMode: (mode: 'create' | 'insert') => void;
   setImportTargetTable: (table: string) => void;
@@ -328,7 +366,7 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
     }
   },
 
-  exportResult: async (result: QueryResult, tableName: string) => {
+  exportResult: async (source: ExportSource, tableName: string) => {
     const { exportFormat } = get();
     set({ exportLoading: true });
 
@@ -337,60 +375,26 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
 
       if (exportFormat === 'excel') {
         // Excel: dynamic import, runs on main thread (xlsx needs DOM-like env)
-        const buffer = await toExcel(result);
-        triggerDownload(buffer, `${safeName}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        const rows = source.rowResult();
+        if (!rows) {
+          set({ exportLoading: false });
+          return;
+        }
+        const buffer = await toExcel(rows);
+        triggerDownload(buffer, `${safeName}${EXTENSIONS.excel}`, MIME_TYPES.excel);
         set({ exportLoading: false, exportDialogOpen: false });
         return;
       }
 
-      // All other formats: offload to worker
-      const worker = new Worker(
-        new URL('../workers/export.worker.ts', import.meta.url),
-        { type: 'module' },
-      );
-
-      const mimeTypes: Record<string, string> = {
-        csv: 'text/csv',
-        json: 'application/json',
-        'sql-insert': 'text/sql',
-        'sql-create': 'text/sql',
-        markdown: 'text/markdown',
-      };
-      const extensions: Record<string, string> = {
-        csv: '.csv',
-        json: '.json',
-        'sql-insert': '_insert.sql',
-        'sql-create': '_create.sql',
-        markdown: '.md',
-      };
-
-      worker.onmessage = (e: MessageEvent) => {
-        if (e.data.type === 'export-result') {
-          triggerDownload(e.data.content, `${safeName}${extensions[exportFormat]}`, mimeTypes[exportFormat]);
-          set({ exportLoading: false, exportDialogOpen: false });
-        } else if (e.data.type === 'export-error') {
-          console.error('Export worker error:', e.data.error);
-          set({ exportLoading: false });
-        }
-        worker.terminate();
-      };
-
-      worker.onerror = () => {
-        set({ exportLoading: false });
-        worker.terminate();
-      };
-
-      worker.postMessage({
-        type: 'export',
-        format: exportFormat,
-        columns: result.columns,
-        rows: result.rows,
+      const content = await runExport(source.slice, COPY_FORMATS[exportFormat], {
         tableName: safeName,
-        options: { pretty: true },
+        pretty: true,
       });
+      triggerDownload(content, `${safeName}${EXTENSIONS[exportFormat]}`, MIME_TYPES[exportFormat]);
+      set({ exportLoading: false, exportDialogOpen: false });
     } catch (err) {
+      showErrorToast(extractErrorMessage(err));
       set({ exportLoading: false });
-      throw err;
     }
   },
 

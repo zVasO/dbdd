@@ -21,6 +21,7 @@ import {
 } from '@/lib/exportFormats';
 import { useQueryStore } from '@/stores/queryStore';
 import { useResultStore } from '@/stores/resultStore';
+import type { ColumnarSlice } from '@/lib/columnarFormat';
 import type { QueryResult } from '@/lib/types';
 import {
   Download,
@@ -168,9 +169,23 @@ export function ExportDialog() {
 
   const handleExport = useCallback(() => {
     if (!activeTab || !tabResult) return;
-    const full = useResultStore.getState().getAllResults(activeTab.id)[tabResult.activeResultIndex];
-    if (!full) return;
-    exportResult(full, tableName);
+    const columnar = tabResult.allColumnarResults[tabResult.activeResultIndex];
+    if (!columnar) return;
+    const slice: ColumnarSlice = {
+      columns: columnar.columns,
+      colIndexes: columnar.columns.map((_, i) => i),
+      data: columnar.data,
+      rowIndexes: Array.from({ length: columnar.row_count }, (_, i) => i),
+    };
+    exportResult(
+      {
+        slice,
+        // Excel-only: the one format that still needs materialized rows.
+        rowResult: () =>
+          useResultStore.getState().getAllResults(activeTab.id)[tabResult.activeResultIndex] ?? null,
+      },
+      tableName,
+    );
   }, [activeTab, tabResult, tableName, exportResult]);
 
   return (

@@ -23,6 +23,12 @@ describe('formatColumnar', () => {
     expect(out).toContain('"c, ""q"""'); // comma+quote inside a field gets quoted and escaped
   });
 
+  it('csv quotes a field containing a bare carriage return', () => {
+    const s = slice();
+    s.data[1] = { kind: 'Strings', values: ['a\rb', null, 'c'] };
+    expect(formatColumnar(s, 'csv').split('\n')[1]).toBe('1,"a\rb"');
+  });
+
   it('tsv joins with tabs and does not escape', () => {
     expect(formatColumnar(slice(), 'tsv').split('\n')[0]).toBe('id\tname');
     expect(formatColumnar(slice(), 'tsv').split('\n')[1]).toBe('1\ta');

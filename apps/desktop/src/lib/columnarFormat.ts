@@ -45,7 +45,7 @@ function cellToRaw(data: ColumnData[], colIndex: number, rowIndex: number): unkn
 }
 
 function csvEscape(s: string, delimiter: string): string {
-  if (s.includes(delimiter) || s.includes('"') || s.includes('\n')) {
+  if (s.includes(delimiter) || s.includes('"') || s.includes('\n') || s.includes('\r')) {
     return `"${s.replace(/"/g, '""')}"`;
   }
   return s;
