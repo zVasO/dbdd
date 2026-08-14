@@ -546,13 +546,17 @@ pub async fn cancel_query(
     // Abandoning the wait is what frees the tab; the driver call additionally
     // stops the query server-side for drivers that can target it by id, and
     // is a no-op for the rest.
-    cancel_tracked_query(&state.stream_cancellers, &query_id, || async {
+    let live = cancel_tracked_query(&state.stream_cancellers, &query_id, || async {
         conn.cancel_query(&query_id).await
     })
     .await;
-    state
-        .event_bus
-        .emit(AppEvent::QueryCancelled { query_id });
+    // A query that had already finished cancels nothing, and saying otherwise
+    // would retract a result the UI is showing.
+    if live {
+        state
+            .event_bus
+            .emit(AppEvent::QueryCancelled { query_id });
+    }
     Ok(())
 }
 

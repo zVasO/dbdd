@@ -2,7 +2,9 @@ import { create } from 'zustand';
 import { ipc, extractErrorMessage } from '@/lib/ipc';
 import { toExcel } from '@/lib/exportFormats';
 import { runExport } from '@/lib/exportRunner';
+import { quoteIdentifier } from '@/lib/sql-utils';
 import { showErrorToast } from './toastStore';
+import { useConnectionStore } from './connectionStore';
 import type { ColumnarSlice, CopyFormat } from '@/lib/columnarFormat';
 import type { QueryResult } from '@/lib/types';
 
@@ -110,6 +112,23 @@ function escapeSQL(val: string, type: string): string {
     return val === 'true' || val === '1' ? 'TRUE' : 'FALSE';
   }
   return `'${val.replace(/'/g, "''")}'`;
+}
+
+/**
+ * The import target, qualified with the selected database only on MySQL.
+ *
+ * A MySQL session can write to any database on the server, which is what the
+ * `USE` statement this replaces was reaching for — unreliably, since MySQL
+ * refuses to prepare `USE` and the statements after it went to whichever
+ * database the connection defaults to. Postgres cannot write across databases
+ * at all and its table list comes from the current one, so qualifying there
+ * would name a schema that doesn't exist; SQLite has no database to pick.
+ * Mirrors `qualifying_database` in the native import path.
+ */
+export function qualifiedTable(table: string, database: string, dbType: string): string {
+  const quoted = quoteIdentifier(table, dbType);
+  if (dbType !== 'mysql' || !database) return quoted;
+  return `${quoteIdentifier(database, dbType)}.${quoted}`;
 }
 
 function triggerDownload(content: string | ArrayBuffer, fileName: string, mimeType: string): void {
@@ -312,12 +331,10 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
       const allRows = get().importAllRows ?? importPreview.rows;
       const tableName = importTargetTable || 'imported_data';
       const statements: string[] = [];
-      // TODO: Use quoteIdentifier once dbType is available in import context
-
-      // Use the database
-      if (database) {
-        statements.push(`USE \`${database}\``);
-      }
+      const dbType = useConnectionStore
+        .getState()
+        .activeConnections.find((c) => c.connectionId === connectionId)?.config.db_type ?? '';
+      const target = qualifiedTable(tableName, database, dbType);
 
       // Create table if mode is "create"
       if (importMode === 'create') {
@@ -329,12 +346,12 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
               : detectedTypes[i] === 'BOOLEAN'
                 ? 'BOOLEAN'
                 : 'TEXT';
-          return `\`${col}\` ${sqlType}`;
+          return `${quoteIdentifier(col, dbType)} ${sqlType}`;
         });
-        statements.push(`CREATE TABLE IF NOT EXISTS \`${tableName}\` (\n  ${colDefs.join(',\n  ')}\n)`);
+        statements.push(`CREATE TABLE IF NOT EXISTS ${target} (\n  ${colDefs.join(',\n  ')}\n)`);
       }
 
-      const colNames = columns.map((c) => `\`${c}\``).join(', ');
+      const colNames = columns.map((c) => quoteIdentifier(c, dbType)).join(', ');
       const BATCH_SIZE = 50;
 
       for (let i = 0; i < allRows.length; i += BATCH_SIZE) {
@@ -344,7 +361,7 @@ export const useImportExportStore = create<ImportExportState>((set, get) => ({
           return `(${vals.join(', ')})`;
         });
         statements.push(
-          `INSERT INTO \`${tableName}\` (${colNames}) VALUES\n${valuesList.join(',\n')}`
+          `INSERT INTO ${target} (${colNames}) VALUES\n${valuesList.join(',\n')}`
         );
       }
 

@@ -26,6 +26,16 @@ fn ssl_opts_from(mode: &SslMode) -> Option<mysql_async::SslOpts> {
     }
 }
 
+/// MySQL's ER_UNSUPPORTED_PS: the statement is outside the grammar the server
+/// accepts over COM_STMT_PREPARE (USE, START TRANSACTION, ROLLBACK, SAVEPOINT,
+/// LOCK TABLES, LOAD DATA, ...). Such a statement only runs over the text
+/// protocol, so the binary path falls back to it on this code alone.
+const ER_UNSUPPORTED_PS: u16 = 1295;
+
+fn is_unsupported_ps(err: &mysql_async::Error) -> bool {
+    matches!(err, mysql_async::Error::Server(e) if e.code == ER_UNSUPPORTED_PS)
+}
+
 pub struct MySqlConnection {
     pool: mysql_async::Pool,
 }
@@ -106,10 +116,12 @@ impl DatabaseConnection for MySqlConnection {
             .await
             .map_err(|e| PurrqlError::Connection(e.to_string()))?;
 
-        let result: Vec<mysql_async::Row> = conn
-            .exec(sql, ())
-            .await
-            .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
+        let result: Vec<mysql_async::Row> = match conn.prep(sql).await {
+            Ok(stmt) => conn.exec(stmt, ()).await,
+            Err(e) if is_unsupported_ps(&e) => conn.query(sql).await,
+            Err(e) => Err(e),
+        }
+        .map_err(|e| PurrqlError::QueryExecution(e.to_string()))?;
 
         // Read from the OK packet that terminated the statement just run, so
         // it must be taken before `conn` is reused or returned to the pool.
@@ -233,7 +245,6 @@ impl DatabaseConnection for MySqlConnection {
         sql: &str,
         chunk_size: usize,
     ) -> Result<(Vec<ColumnMeta>, tokio::sync::mpsc::Receiver<Result<Vec<Row>>>)> {
-        use futures::StreamExt;
         use mysql_async::prelude::*;
 
         let pool = self.pool.clone();
@@ -252,90 +263,25 @@ impl DatabaseConnection for MySqlConnection {
                 }
             };
 
-            // Execute query and get an iterator-style result set
-            let query_result = match conn.exec_iter(&sql, ()).await {
-                Ok(r) => r,
+            // Preparing as its own step is what keeps the text fallback
+            // reachable here: a result set borrows the connection, so the
+            // protocol has to be settled before one exists.
+            match conn.prep(sql.as_str()).await {
+                Ok(stmt) => match conn.exec_iter(stmt, ()).await {
+                    Ok(r) => stream_result_set(r, chunk_size, meta_tx, tx).await,
+                    Err(e) => {
+                        let _ = meta_tx.send(Err(PurrqlError::QueryExecution(e.to_string())));
+                    }
+                },
+                Err(e) if is_unsupported_ps(&e) => match conn.query_iter(sql.as_str()).await {
+                    Ok(r) => stream_result_set(r, chunk_size, meta_tx, tx).await,
+                    Err(e) => {
+                        let _ = meta_tx.send(Err(PurrqlError::QueryExecution(e.to_string())));
+                    }
+                },
                 Err(e) => {
                     let _ = meta_tx.send(Err(PurrqlError::QueryExecution(e.to_string())));
-                    return;
                 }
-            };
-
-            // Extract column metadata from the result set before consuming rows
-            let columns_ref = query_result.columns().map(|arc| arc.to_vec());
-            let col_meta: Vec<ColumnMeta> = match &columns_ref {
-                Some(cols) => cols
-                    .iter()
-                    .map(|col| {
-                        let (data_type, native_type) = crate::type_mapping::map_column_meta(col);
-                        ColumnMeta {
-                            name: col.name_str().to_string(),
-                            data_type,
-                            native_type,
-                            nullable: true,
-                            is_primary_key: false,
-                            max_length: None,
-                        }
-                    })
-                    .collect(),
-                None => vec![],
-            };
-
-            let col_count = col_meta.len();
-
-            // Send column metadata back to the caller
-            if meta_tx.send(Ok(col_meta)).is_err() {
-                // Receiver dropped; drain the result set to return the connection
-                let _ = query_result.stream_and_drop::<mysql_async::Row>().await;
-                return;
-            }
-
-            // Stream rows using stream_and_drop for real cursor-based iteration
-            let mut stream = match query_result.stream_and_drop::<mysql_async::Row>().await {
-                Ok(Some(s)) => s,
-                Ok(None) => {
-                    // No result set (e.g. DDL statement) — nothing to stream
-                    return;
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(Err(PurrqlError::QueryExecution(e.to_string())))
-                        .await;
-                    return;
-                }
-            };
-
-            let mut chunk: Vec<Row> = Vec::with_capacity(chunk_size);
-
-            while let Some(result) = stream.next().await {
-                match result {
-                    Ok(row) => {
-                        let mut cells: Vec<CellValue> = Vec::with_capacity(col_count);
-                        for i in 0..row.len() {
-                            cells.push(crate::type_mapping::mysql_value_to_cell(&row, i));
-                        }
-                        chunk.push(Row { cells });
-
-                        if chunk.len() >= chunk_size {
-                            let full =
-                                std::mem::replace(&mut chunk, Vec::with_capacity(chunk_size));
-                            if tx.send(Ok(full)).await.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        let _ = tx
-                            .send(Err(PurrqlError::QueryExecution(e.to_string())))
-                            .await;
-                        return;
-                    }
-                }
-            }
-
-            // Flush any remaining rows in the last partial chunk
-            if !chunk.is_empty() {
-                let _ = tx.send(Ok(chunk)).await;
             }
         });
 
@@ -352,5 +298,132 @@ impl DatabaseConnection for MySqlConnection {
             .disconnect()
             .await
             .map_err(|e| PurrqlError::Connection(e.to_string()))
+    }
+}
+
+/// Publish the result set's column metadata, then pump its rows into `tx` in
+/// batches of `chunk_size`. Generic over the wire protocol so the binary and
+/// text paths share one implementation.
+async fn stream_result_set<P>(
+    query_result: mysql_async::QueryResult<'_, 'static, P>,
+    chunk_size: usize,
+    meta_tx: tokio::sync::oneshot::Sender<Result<Vec<ColumnMeta>>>,
+    tx: tokio::sync::mpsc::Sender<Result<Vec<Row>>>,
+) where
+    P: mysql_async::prelude::Protocol + Unpin,
+{
+    use futures::StreamExt;
+
+    // Extract column metadata from the result set before consuming rows
+    let columns_ref = query_result.columns().map(|arc| arc.to_vec());
+    let col_meta: Vec<ColumnMeta> = match &columns_ref {
+        Some(cols) => cols
+            .iter()
+            .map(|col| {
+                let (data_type, native_type) = crate::type_mapping::map_column_meta(col);
+                ColumnMeta {
+                    name: col.name_str().to_string(),
+                    data_type,
+                    native_type,
+                    nullable: true,
+                    is_primary_key: false,
+                    max_length: None,
+                }
+            })
+            .collect(),
+        None => vec![],
+    };
+
+    let col_count = col_meta.len();
+
+    // Send column metadata back to the caller
+    if meta_tx.send(Ok(col_meta)).is_err() {
+        // Receiver dropped; drain the result set to return the connection
+        let _ = query_result.stream_and_drop::<mysql_async::Row>().await;
+        return;
+    }
+
+    // Stream rows using stream_and_drop for real cursor-based iteration
+    let mut stream = match query_result.stream_and_drop::<mysql_async::Row>().await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            // No result set (e.g. DDL statement) — nothing to stream
+            return;
+        }
+        Err(e) => {
+            let _ = tx
+                .send(Err(PurrqlError::QueryExecution(e.to_string())))
+                .await;
+            return;
+        }
+    };
+
+    let mut chunk: Vec<Row> = Vec::with_capacity(chunk_size);
+
+    while let Some(result) = stream.next().await {
+        match result {
+            Ok(row) => {
+                let mut cells: Vec<CellValue> = Vec::with_capacity(col_count);
+                for i in 0..row.len() {
+                    cells.push(crate::type_mapping::mysql_value_to_cell(&row, i));
+                }
+                chunk.push(Row { cells });
+
+                if chunk.len() >= chunk_size {
+                    let full = std::mem::replace(&mut chunk, Vec::with_capacity(chunk_size));
+                    if tx.send(Ok(full)).await.is_err() {
+                        break;
+                    }
+                }
+            }
+            Err(e) => {
+                let _ = tx
+                    .send(Err(PurrqlError::QueryExecution(e.to_string())))
+                    .await;
+                return;
+            }
+        }
+    }
+
+    // Flush any remaining rows in the last partial chunk
+    if !chunk.is_empty() {
+        let _ = tx.send(Ok(chunk)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mysql_async::{Error, ServerError};
+
+    fn server_error(code: u16) -> Error {
+        Error::Server(ServerError {
+            code,
+            message: "This command is not supported in the prepared statement protocol yet"
+                .to_string(),
+            state: "HY000".to_string(),
+        })
+    }
+
+    #[test]
+    fn classifies_er_unsupported_ps() {
+        assert!(is_unsupported_ps(&server_error(1295)));
+    }
+
+    #[test]
+    fn leaves_other_server_errors_to_the_caller() {
+        // 1064 (syntax error) and 1146 (no such table) are real failures: a
+        // text-protocol retry would only repeat them.
+        assert!(!is_unsupported_ps(&server_error(1064)));
+        assert!(!is_unsupported_ps(&server_error(1146)));
+    }
+
+    #[test]
+    fn non_server_errors_are_not_unsupported_ps() {
+        let io = Error::Io(mysql_async::IoError::Io(std::io::Error::new(
+            std::io::ErrorKind::BrokenPipe,
+            "connection reset",
+        )));
+        assert!(!is_unsupported_ps(&io));
     }
 }
