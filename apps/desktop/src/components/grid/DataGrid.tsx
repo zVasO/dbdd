@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Key, Plus, Search, Trash2, X, Filter, Eye, ChevronUp, ChevronDown, ChevronsUpDown, ChevronLeft, ChevronRight as ChevronRightIcon, ChevronsLeft, ChevronsRight, Copy, CopyPlus, ClipboardPaste, FileJson, Table2, FileCode, FileText } from 'lucide-react';
 import { copyCellAsJson, copyCellAsText, copyToClipboard } from '@/lib/copyFormats';
-import { runExport } from '@/lib/exportRunner';
+import { copyFormatted, runExport } from '@/lib/exportRunner';
 import type { ColumnarSlice, CopyFormat } from '@/lib/columnarFormat';
 import type { QueryResult, CellValue, ColumnData } from '@/lib/types';
 import { ipc } from '@/lib/ipc';
@@ -1118,7 +1118,9 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
     return buildSlice(rowIdxs, allColIndexes);
   }, [cellSelection, selectedRows, allColIndexes, buildSlice]);
 
-  const copySelection = useCallback(async () => {
+  // Clipboard paths stay synchronous up to `copyFormatted`: awaiting first would
+  // drop the user gesture WKWebView requires for a clipboard write.
+  const copySelection = useCallback(() => {
     const tableName = table || 'table';
     // Cell selection
     if (!isSelectionEmpty(cellSelection)) {
@@ -1139,20 +1141,17 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
       }
       const colIdxs = [...new Set(parsed.map((p) => p.col))].sort((a, b) => a - b);
       const rowIdxs = [...new Set(parsed.map((p) => p.row))].sort((a, b) => a - b);
-      const content = await runExport(buildSlice(rowIdxs, colIdxs), defaultCopyFormat, { tableName });
-      await copyToClipboard(content);
+      copyFormatted(buildSlice(rowIdxs, colIdxs), defaultCopyFormat, { tableName });
       return;
     }
     // Row selection
     if (selectedRows.size === 0) return;
     const rowIdxs = [...selectedRows].sort((a, b) => a - b);
-    const content = await runExport(buildSlice(rowIdxs, allColIndexes), defaultCopyFormat, { tableName });
-    await copyToClipboard(content);
+    copyFormatted(buildSlice(rowIdxs, allColIndexes), defaultCopyFormat, { tableName });
   }, [cellSelection, selectedRows, result.columns, columnarData, paginatedIndexMap, defaultCopyFormat, buildSlice, allColIndexes, table]);
 
-  const copyContextAs = useCallback(async (contextRowIndex: number, format: CopyFormat) => {
-    const content = await runExport(buildContextSlice(contextRowIndex), format, { tableName: table || 'table' });
-    await copyToClipboard(content);
+  const copyContextAs = useCallback((contextRowIndex: number, format: CopyFormat) => {
+    copyFormatted(buildContextSlice(contextRowIndex), format, { tableName: table || 'table' });
   }, [buildContextSlice, table]);
 
   // ─── Grid keyboard navigation ──────────────────────────────────────────────
