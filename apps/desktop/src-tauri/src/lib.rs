@@ -327,6 +327,7 @@ pub fn run() {
                 event_bus,
                 driver_registry,
                 stream_cancellers: Arc::new(dashmap::DashMap::new()),
+                import_files: Arc::new(dashmap::DashMap::new()),
             });
 
             let menu = build_menu(app)?;
@@ -364,7 +365,8 @@ pub fn run() {
             commands::schema::list_all_columns,
             commands::files::open_sql_file,
             commands::files::save_sql_file,
-            commands::files::import_csv_file,
+            commands::import::import_csv,
+            commands::import::import_csv_execute,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

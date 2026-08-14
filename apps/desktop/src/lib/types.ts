@@ -74,6 +74,20 @@ export interface BatchSummary {
   failed: number;
 }
 
+/**
+ * What the backend knows about a CSV file the user picked. The file stays in
+ * Rust behind `file_token`; only these sample rows ever cross IPC.
+ */
+export interface CsvPreview {
+  file_token: string;
+  file_name: string;
+  headers: string[];
+  sample: string[][];
+  /** Extrapolated from the sampled rows unless `total_rows_exact`. */
+  total_rows_estimate: number | null;
+  total_rows_exact: boolean;
+}
+
 export interface ColumnMeta {
   name: string;
   data_type: string | Record<string, unknown>;

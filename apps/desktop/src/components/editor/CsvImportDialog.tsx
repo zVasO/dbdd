@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo } from 'react';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { ipc } from '@/lib/ipc';
+import type { CsvPreview } from '@/lib/types';
 import {
   Dialog,
   DialogContent,
@@ -26,57 +27,13 @@ interface CsvImportDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-interface ParsedCsv {
-  headers: string[];
-  rows: string[][];
-  fileName: string;
-}
+/** Errors listed before the rest are folded into a count. */
+const MAX_LISTED_ERRORS = 5;
 
-function parseCsv(content: string): { headers: string[]; rows: string[][] } {
-  const lines = content.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length === 0) return { headers: [], rows: [] };
-
-  const delimiter = content.includes('\t') ? '\t' : ',';
-
-  function parseLine(line: string): string[] {
-    const cells: string[] = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
-      if (inQuotes) {
-        if (ch === '"' && line[i + 1] === '"') {
-          current += '"';
-          i++;
-        } else if (ch === '"') {
-          inQuotes = false;
-        } else {
-          current += ch;
-        }
-      } else {
-        if (ch === '"') {
-          inQuotes = true;
-        } else if (ch === delimiter) {
-          cells.push(current);
-          current = '';
-        } else {
-          current += ch;
-        }
-      }
-    }
-    cells.push(current);
-    return cells;
-  }
-
-  const headers = parseLine(lines[0]);
-  const rows = lines.slice(1).map(parseLine);
-  return { headers, rows };
-}
-
-function escapeValue(val: string): string {
-  if (val === '' || val.toLowerCase() === 'null' || val.toLowerCase() === '\\n') return 'NULL';
-  const escaped = val.replace(/'/g, "''");
-  return `'${escaped}'`;
+function rowCountLabel(csv: CsvPreview): string {
+  if (csv.total_rows_estimate === null) return 'size unknown';
+  const count = csv.total_rows_estimate.toLocaleString();
+  return csv.total_rows_exact ? `${count} rows` : `~${count} rows`;
 }
 
 export function CsvImportDialog({ open, onOpenChange }: CsvImportDialogProps) {
@@ -84,7 +41,7 @@ export function CsvImportDialog({ open, onOpenChange }: CsvImportDialogProps) {
   const databases = useSchemaStore((s) => s.databases);
   const tables = useSchemaStore((s) => s.tables);
 
-  const [csv, setCsv] = useState<ParsedCsv | null>(null);
+  const [csv, setCsv] = useState<CsvPreview | null>(null);
   const [targetDb, setTargetDb] = useState<string>('');
   const [targetTable, setTargetTable] = useState<string>('');
   const [columnMap, setColumnMap] = useState<Record<number, string>>({});
@@ -97,14 +54,12 @@ export function CsvImportDialog({ open, onOpenChange }: CsvImportDialogProps) {
   }, [targetDb, tables]);
 
   const handlePickFile = useCallback(async () => {
-    const file = await ipc.importCsvFile();
-    if (!file) return;
-    const [name, content] = file;
-    const parsed = parseCsv(content);
-    setCsv({ headers: parsed.headers, rows: parsed.rows, fileName: name });
+    const preview = await ipc.importCsv();
+    if (!preview) return;
+    setCsv(preview);
     // Auto-map: set each CSV column index to itself (same name)
     const map: Record<number, string> = {};
-    parsed.headers.forEach((h, i) => {
+    preview.headers.forEach((h, i) => {
       map[i] = h;
     });
     setColumnMap(map);
@@ -122,48 +77,40 @@ export function CsvImportDialog({ open, onOpenChange }: CsvImportDialogProps) {
   const handleImport = useCallback(async () => {
     if (!csv || !targetTable || !activeConnectionId) return;
 
-    const mappedCols = Object.entries(columnMap)
-      .filter(([, targetCol]) => targetCol && targetCol !== '__skip__')
-      .map(([csvIdx, targetCol]) => ({ csvIdx: Number(csvIdx), targetCol }));
+    const columnMapping = csv.headers.map((_, idx) => {
+      const targetCol = (columnMap[idx] ?? '').trim();
+      return targetCol && targetCol !== '__skip__' ? targetCol : null;
+    });
 
-    if (mappedCols.length === 0) return;
+    if (columnMapping.every((targetCol) => targetCol === null)) return;
 
     setImporting(true);
     setResult(null);
 
     try {
-      const colNames = mappedCols.map((m) => `\`${m.targetCol}\``).join(', ');
-      const batchSize = 50;
-      const statements: string[] = [];
-
-      for (let i = 0; i < csv.rows.length; i += batchSize) {
-        const batch = csv.rows.slice(i, i + batchSize);
-        const valuesList = batch
-          .map((row) => {
-            const vals = mappedCols.map((m) => escapeValue(row[m.csvIdx] ?? ''));
-            return `(${vals.join(', ')})`;
-          })
-          .join(',\n');
-        statements.push(`INSERT INTO \`${targetTable}\` (${colNames}) VALUES\n${valuesList}`);
-      }
-
-      const results = await ipc.executeBatch(activeConnectionId, statements);
-      let success = 0;
-      const errors: string[] = [];
-      results.forEach((r, i) => {
-        if (r.Err) {
-          errors.push(`Batch ${i + 1}: ${r.Err}`);
-        } else {
-          success += (r.Ok?.affected_rows ?? 0);
-        }
+      const summary = await ipc.importCsvExecute({
+        fileToken: csv.file_token,
+        connectionId: activeConnectionId,
+        database: targetDb || null,
+        table: targetTable,
+        columnMapping,
+        createTable: false,
       });
-      setResult({ success, errors });
+
+      const failures = summary.outcomes.flatMap((outcome, i) =>
+        outcome.error ? [`Batch ${i + 1}: ${outcome.error}`] : []
+      );
+      const errors = failures.slice(0, MAX_LISTED_ERRORS);
+      if (failures.length > errors.length) {
+        errors.push(`…and ${failures.length - errors.length} more.`);
+      }
+      setResult({ success: summary.total_affected, errors });
     } catch (err) {
       setResult({ success: 0, errors: [String(err)] });
     } finally {
       setImporting(false);
     }
-  }, [csv, targetTable, activeConnectionId, columnMap]);
+  }, [csv, targetDb, targetTable, activeConnectionId, columnMap]);
 
   const handleClose = useCallback(() => {
     onOpenChange(false);
@@ -193,7 +140,7 @@ export function CsvImportDialog({ open, onOpenChange }: CsvImportDialogProps) {
             </Button>
             {csv && (
               <span className="text-sm text-muted-foreground">
-                {csv.fileName} — {csv.rows.length} rows, {csv.headers.length} columns
+                {csv.file_name} — {rowCountLabel(csv)}, {csv.headers.length} columns
               </span>
             )}
           </div>
@@ -258,7 +205,7 @@ export function CsvImportDialog({ open, onOpenChange }: CsvImportDialogProps) {
                             />
                           </td>
                           <td className="px-2 py-1 text-muted-foreground truncate max-w-[200px]">
-                            {csv.rows[0]?.[idx] ?? ''}
+                            {csv.sample[0]?.[idx] ?? ''}
                           </td>
                         </tr>
                       ))}
@@ -282,7 +229,7 @@ export function CsvImportDialog({ open, onOpenChange }: CsvImportDialogProps) {
                       </tr>
                     </thead>
                     <tbody>
-                      {csv.rows.slice(0, 5).map((row, ri) => (
+                      {csv.sample.slice(0, 5).map((row, ri) => (
                         <tr key={ri} className="border-t border-border">
                           {row.map((cell, ci) => (
                             <td key={ci} className="px-2 py-1 whitespace-nowrap truncate max-w-[150px]">{cell}</td>
@@ -318,7 +265,10 @@ export function CsvImportDialog({ open, onOpenChange }: CsvImportDialogProps) {
           <Button variant="outline" onClick={handleClose}>Cancel</Button>
           <Button
             onClick={handleImport}
-            disabled={!csv || !targetTable || importing}
+            // A file token is spent by the import that used it, so a repeat
+            // click would find nothing to read: choosing the file again is
+            // what starts a second import.
+            disabled={!csv || !targetTable || importing || result !== null}
             className="gap-1.5"
           >
             {importing ? (
@@ -326,7 +276,7 @@ export function CsvImportDialog({ open, onOpenChange }: CsvImportDialogProps) {
             ) : (
               <Upload className="h-3.5 w-3.5" />
             )}
-            Import {csv ? `(${csv.rows.length} rows)` : ''}
+            Import {csv ? `(${rowCountLabel(csv)})` : ''}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -12,7 +12,8 @@ use serde::Serialize;
 use purrql_core::error::{IpcError, PurrqlError};
 use purrql_core::models::columnar::{column_kind_for_data_type, ColumnData, ColumnKind};
 use purrql_core::models::query::{QueryHistoryEntry, QueryResult, QueryStatus};
-use purrql_engine::event_bus::AppEvent;
+use purrql_core::ports::connection::DatabaseConnection;
+use purrql_engine::event_bus::{AppEvent, EventBus};
 use purrql_engine::schema_cache;
 
 use crate::state::AppState;
@@ -656,7 +657,7 @@ pub struct BatchSummary {
 /// while `failed` counts what didn't. An outcome with neither an error nor a
 /// count is a driver saying it can't know the count, which contributes
 /// nothing to either total.
-fn summarize(outcomes: Vec<StatementOutcome>) -> BatchSummary {
+pub(crate) fn summarize(outcomes: Vec<StatementOutcome>) -> BatchSummary {
     let total_affected = outcomes.iter().filter_map(|o| o.affected_rows).sum();
     let failed = outcomes.iter().filter(|o| o.error.is_some()).count() as u32;
     BatchSummary {
@@ -667,13 +668,10 @@ fn summarize(outcomes: Vec<StatementOutcome>) -> BatchSummary {
 }
 
 /// Statements per progress window when the caller doesn't pick one.
-const DEFAULT_BATCH_WINDOW: usize = 200;
+pub(crate) const DEFAULT_BATCH_WINDOW: usize = 200;
 
-/// Run `statements` and return only their counts, reporting progress as it goes.
-///
-/// The counts-only reply is the point: `execute_batch` returns a full
-/// `QueryResult` envelope per statement, so a 20k-row CSV import serializes
-/// 400 of them across IPC to display a single success number.
+/// Run `statements` in order, appending one outcome per statement and emitting
+/// a `QueryProgress` event every `window` statements.
 ///
 /// Deliberately sequential, with no concurrency at all. The callers are
 /// imports, whose statements are ordered — the `CREATE TABLE` must land before
@@ -681,30 +679,21 @@ const DEFAULT_BATCH_WINDOW: usize = 200;
 /// trade correctness for throughput. `window` only sets how often progress is
 /// reported, never how much runs at once.
 ///
-/// A failing statement doesn't stop the batch: its error is recorded in place
-/// and the rest still run, matching `execute_batch` and letting the caller
-/// report how many of the import's statements got through.
-#[tauri::command]
-pub async fn execute_batch_summary(
-    state: State<'_, AppState>,
-    connection_id: Uuid,
-    statements: Vec<String>,
-    window: Option<usize>,
-) -> Result<BatchSummary, IpcError> {
-    let conn = {
-        let active = state
-            .connection_manager
-            .get(&connection_id)
-            .ok_or(IpcError::from("Connection not found"))?;
-        Arc::clone(&active.connection)
-    };
-
-    let has_ddl = statements.iter().any(|sql| schema_cache::is_ddl(sql));
-    let window = window.unwrap_or(DEFAULT_BATCH_WINDOW).max(1);
-    let batch_id = Uuid::new_v4();
-    let start = std::time::Instant::now();
-
-    let mut outcomes = Vec::with_capacity(statements.len());
+/// A failing statement doesn't stop the run: its error is recorded in place and
+/// the rest still go, matching `execute_batch` and letting the caller report
+/// how many of the import's statements got through.
+///
+/// `outcomes` carries in and out so a caller streaming a file can hand over one
+/// window at a time and still report a single running total.
+pub(crate) async fn run_statements_windowed(
+    conn: &dyn DatabaseConnection,
+    event_bus: &EventBus,
+    batch_id: Uuid,
+    start: std::time::Instant,
+    window: usize,
+    statements: &[String],
+    outcomes: &mut Vec<StatementOutcome>,
+) {
     for chunk in statements.chunks(window) {
         for sql in chunk {
             // A SELECT inside a batch keeps the same cap it gets on its own,
@@ -725,12 +714,49 @@ pub async fn execute_batch_summary(
                 },
             });
         }
-        state.event_bus.emit(AppEvent::QueryProgress {
+        event_bus.emit(AppEvent::QueryProgress {
             query_id: batch_id,
             rows_fetched: outcomes.len() as u64,
             elapsed_ms: start.elapsed().as_millis() as u64,
         });
     }
+}
+
+/// Run `statements` and return only their counts, reporting progress as it goes.
+///
+/// The counts-only reply is the point: `execute_batch` returns a full
+/// `QueryResult` envelope per statement, so a 20k-row CSV import serializes
+/// 400 of them across IPC to display a single success number.
+///
+/// See `run_statements_windowed` for the ordering and failure guarantees.
+#[tauri::command]
+pub async fn execute_batch_summary(
+    state: State<'_, AppState>,
+    connection_id: Uuid,
+    statements: Vec<String>,
+    window: Option<usize>,
+) -> Result<BatchSummary, IpcError> {
+    let conn = {
+        let active = state
+            .connection_manager
+            .get(&connection_id)
+            .ok_or(IpcError::from("Connection not found"))?;
+        Arc::clone(&active.connection)
+    };
+
+    let has_ddl = statements.iter().any(|sql| schema_cache::is_ddl(sql));
+
+    let mut outcomes = Vec::with_capacity(statements.len());
+    run_statements_windowed(
+        conn.as_ref(),
+        &state.event_bus,
+        Uuid::new_v4(),
+        std::time::Instant::now(),
+        window.unwrap_or(DEFAULT_BATCH_WINDOW).max(1),
+        &statements,
+        &mut outcomes,
+    )
+    .await;
 
     if has_ddl {
         state.schema_cache.invalidate_connection(&connection_id);

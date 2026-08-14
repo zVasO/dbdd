@@ -81,27 +81,6 @@ pub async fn save_sql_file(
     }
 }
 
-#[tauri::command]
-pub async fn import_csv_file() -> Result<Option<(String, String)>, IpcError> {
-    let file = AsyncFileDialog::new()
-        .add_filter("CSV", &["csv", "tsv"])
-        .add_filter("All Files", &["*"])
-        .pick_file()
-        .await;
-
-    match file {
-        Some(f) => {
-            let path = f.path().to_path_buf();
-            check_file_size(&path).await?;
-            let content =
-                tokio::fs::read_to_string(&path).await.map_err(|e| IpcError::from(e.to_string()))?;
-            let name = f.file_name();
-            Ok(Some((name, content)))
-        }
-        None => Ok(None),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::save_filter_for;

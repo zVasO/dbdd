@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import type {
   ConnectionConfig, SavedConnection, QueryResult, ColumnarResult,
   DatabaseInfo, SchemaInfo, TableInfo, TableStructure, TableRef, ColumnRef,
-  QueryHistoryEntry, IpcError, BatchSummary,
+  QueryHistoryEntry, IpcError, BatchSummary, CsvPreview,
   StreamMeta, StreamChunk, StreamDone, StreamError, StreamCancelled,
 } from './types';
 
@@ -136,8 +136,27 @@ export const ipc = {
   saveSqlFile: (content: string, suggestedName?: string) =>
     invoke<string | null>('save_sql_file', { content, suggestedName }),
 
-  importCsvFile: () =>
-    invoke<[string, string] | null>('import_csv_file'),
+  /**
+   * Pick a CSV file and describe it. The file itself stays in Rust: what comes
+   * back is its headers, a sample of rows, and a token to import it with.
+   */
+  importCsv: () =>
+    invoke<CsvPreview | null>('import_csv'),
+
+  /**
+   * Import the file behind `fileToken`. `columnMapping` has one entry per CSV
+   * column — the table column it feeds, or null to skip it — and only the
+   * counts come back.
+   */
+  importCsvExecute: (args: {
+    fileToken: string;
+    connectionId: string;
+    database: string | null;
+    table: string;
+    columnMapping: (string | null)[];
+    createTable: boolean;
+    window?: number;
+  }) => invoke<BatchSummary>('import_csv_execute', { ...args }),
 
   listenToStream: async (queryId: string, callbacks: {
     onMeta: (meta: StreamMeta) => void;
