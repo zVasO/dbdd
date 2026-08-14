@@ -160,7 +160,7 @@ impl PostgresConnection {
             let _registration = registration;
             {
                 let mut stream = sqlx::query(&sql).fetch(&mut *conn);
-                let mut col_types: Vec<String> = vec![];
+                let mut col_decoders: Vec<PgDecoder> = vec![];
                 let mut meta_tx = Some(meta_tx);
                 let mut chunk: Vec<Row> = Vec::with_capacity(chunk_size);
 
@@ -183,14 +183,14 @@ impl PostgresConnection {
                                         }
                                     })
                                     .collect();
-                                col_types = row
+                                col_decoders = row
                                     .columns()
                                     .iter()
-                                    .map(|c| c.type_info().name().to_string())
+                                    .map(|c| decoder_for_type(c.type_info().name()))
                                     .collect();
                                 let _ = sender.send(Ok(cols));
                             }
-                            chunk.push(convert_pg_row(&row, &col_types));
+                            chunk.push(convert_pg_row(&row, &col_decoders));
                             if chunk.len() >= chunk_size {
                                 let full =
                                     std::mem::replace(&mut chunk, Vec::with_capacity(chunk_size));
@@ -348,39 +348,85 @@ fn hex_preview(bytes: &[u8], max_bytes: usize) -> String {
     s
 }
 
-fn pg_typed_cell(row: &PgRow, index: usize, pg_type: &str) -> CellValue {
+/// Which decode path a column takes, resolved once per column by
+/// [`decoder_for_type`] instead of re-matching the Postgres type name for
+/// every cell in that column.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum PgDecoder {
+    Bool,
+    Int2,
+    Int4,
+    Int8,
+    Float4,
+    Float8,
+    Numeric,
+    Text,
+    Json,
+    Uuid,
+    Timestamp,
+    TimestampTz,
+    Date,
+    Time,
+    Bytea,
+    Other,
+}
+
+/// The one place the Postgres type-name string is matched. Called once per
+/// column, not once per cell.
+fn decoder_for_type(pg_type: &str) -> PgDecoder {
     match pg_type {
-        "BOOL" => match row.try_get::<Option<bool>, _>(index) {
+        "BOOL" => PgDecoder::Bool,
+        "INT2" => PgDecoder::Int2,
+        "INT4" => PgDecoder::Int4,
+        "INT8" => PgDecoder::Int8,
+        "FLOAT4" => PgDecoder::Float4,
+        "FLOAT8" => PgDecoder::Float8,
+        "NUMERIC" => PgDecoder::Numeric,
+        "TEXT" | "VARCHAR" | "CHAR" | "BPCHAR" | "NAME" => PgDecoder::Text,
+        "BYTEA" => PgDecoder::Bytea,
+        "TIMESTAMP" => PgDecoder::Timestamp,
+        "TIMESTAMPTZ" => PgDecoder::TimestampTz,
+        "DATE" => PgDecoder::Date,
+        "TIME" | "TIMETZ" => PgDecoder::Time,
+        "UUID" => PgDecoder::Uuid,
+        "JSON" | "JSONB" => PgDecoder::Json,
+        _ => PgDecoder::Other,
+    }
+}
+
+fn decode_cell(row: &PgRow, index: usize, decoder: PgDecoder) -> CellValue {
+    match decoder {
+        PgDecoder::Bool => match row.try_get::<Option<bool>, _>(index) {
             Ok(Some(b)) => CellValue::Boolean(b),
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        "INT2" => match row.try_get::<Option<i16>, _>(index) {
+        PgDecoder::Int2 => match row.try_get::<Option<i16>, _>(index) {
             Ok(Some(n)) => CellValue::Integer(n as i64),
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        "INT4" => match row.try_get::<Option<i32>, _>(index) {
+        PgDecoder::Int4 => match row.try_get::<Option<i32>, _>(index) {
             Ok(Some(n)) => CellValue::Integer(n as i64),
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        "INT8" => match row.try_get::<Option<i64>, _>(index) {
+        PgDecoder::Int8 => match row.try_get::<Option<i64>, _>(index) {
             Ok(Some(n)) => CellValue::Integer(n),
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        "FLOAT4" => match row.try_get::<Option<f32>, _>(index) {
+        PgDecoder::Float4 => match row.try_get::<Option<f32>, _>(index) {
             Ok(Some(n)) => CellValue::Float(n as f64),
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        "FLOAT8" => match row.try_get::<Option<f64>, _>(index) {
+        PgDecoder::Float8 => match row.try_get::<Option<f64>, _>(index) {
             Ok(Some(n)) => CellValue::Float(n),
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        "NUMERIC" => match row.try_get::<Option<sqlx::types::BigDecimal>, _>(index) {
+        PgDecoder::Numeric => match row.try_get::<Option<sqlx::types::BigDecimal>, _>(index) {
             Ok(Some(n)) => CellValue::Text(n.to_string()),
             Ok(None) => CellValue::Null,
             Err(e) => {
@@ -388,14 +434,12 @@ fn pg_typed_cell(row: &PgRow, index: usize, pg_type: &str) -> CellValue {
                 CellValue::Null
             }
         },
-        "TEXT" | "VARCHAR" | "CHAR" | "BPCHAR" | "NAME" => {
-            match row.try_get::<Option<String>, _>(index) {
-                Ok(Some(s)) => CellValue::Text(s),
-                Ok(None) => CellValue::Null,
-                Err(_) => CellValue::Null,
-            }
-        }
-        "BYTEA" => match row.try_get::<Option<Vec<u8>>, _>(index) {
+        PgDecoder::Text => match row.try_get::<Option<String>, _>(index) {
+            Ok(Some(s)) => CellValue::Text(s),
+            Ok(None) => CellValue::Null,
+            Err(_) => CellValue::Null,
+        },
+        PgDecoder::Bytea => match row.try_get::<Option<Vec<u8>>, _>(index) {
             Ok(Some(b)) => CellValue::Bytes {
                 size: b.len() as u64,
                 preview: hex_preview(&b, 32),
@@ -403,43 +447,43 @@ fn pg_typed_cell(row: &PgRow, index: usize, pg_type: &str) -> CellValue {
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        "TIMESTAMP" => match row.try_get::<Option<chrono::NaiveDateTime>, _>(index) {
+        PgDecoder::Timestamp => match row.try_get::<Option<chrono::NaiveDateTime>, _>(index) {
             Ok(Some(dt)) => CellValue::DateTime(dt.format("%Y-%m-%d %H:%M:%S").to_string()),
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        "TIMESTAMPTZ" => match row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(index) {
-            Ok(Some(dt)) => {
-                CellValue::DateTime(dt.format("%Y-%m-%d %H:%M:%S%z").to_string())
+        PgDecoder::TimestampTz => {
+            match row.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>(index) {
+                Ok(Some(dt)) => CellValue::DateTime(dt.format("%Y-%m-%d %H:%M:%S%z").to_string()),
+                Ok(None) => CellValue::Null,
+                Err(_) => CellValue::Null,
             }
-            Ok(None) => CellValue::Null,
-            Err(_) => CellValue::Null,
-        },
-        "DATE" => match row.try_get::<Option<chrono::NaiveDate>, _>(index) {
+        }
+        PgDecoder::Date => match row.try_get::<Option<chrono::NaiveDate>, _>(index) {
             Ok(Some(d)) => CellValue::DateTime(d.format("%Y-%m-%d").to_string()),
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        "TIME" | "TIMETZ" => match row.try_get::<Option<chrono::NaiveTime>, _>(index) {
+        PgDecoder::Time => match row.try_get::<Option<chrono::NaiveTime>, _>(index) {
             Ok(Some(t)) => CellValue::Time(t.format("%H:%M:%S").to_string()),
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        "UUID" => match row.try_get::<Option<uuid::Uuid>, _>(index) {
+        PgDecoder::Uuid => match row.try_get::<Option<uuid::Uuid>, _>(index) {
             Ok(Some(u)) => CellValue::Text(u.to_string()),
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        "JSON" | "JSONB" => match row.try_get::<Option<serde_json::Value>, _>(index) {
+        PgDecoder::Json => match row.try_get::<Option<serde_json::Value>, _>(index) {
             Ok(Some(j)) => CellValue::Json(j),
             Ok(None) => CellValue::Null,
             Err(_) => CellValue::Null,
         },
-        _ => match row.try_get::<Option<String>, _>(index) {
+        PgDecoder::Other => match row.try_get::<Option<String>, _>(index) {
             Ok(Some(s)) => CellValue::Text(s),
             Ok(None) => CellValue::Null,
             Err(e) => {
-                tracing::warn!(pg_type, error = %e, "unhandled Postgres type, value dropped");
+                tracing::warn!(decoder = ?decoder, error = %e, "unhandled Postgres type, value dropped");
                 CellValue::Null
             }
         },
@@ -452,16 +496,16 @@ fn map_pg_column_meta(col: &sqlx::postgres::PgColumn) -> (purrql_core::models::t
     (mapped, native)
 }
 
-fn convert_pg_row(row: &PgRow, col_types: &[String]) -> Row {
-    let mut cells = Vec::with_capacity(col_types.len());
-    for (i, ct) in col_types.iter().enumerate() {
-        cells.push(pg_typed_cell(row, i, ct));
+fn convert_pg_row(row: &PgRow, col_decoders: &[PgDecoder]) -> Row {
+    let mut cells = Vec::with_capacity(col_decoders.len());
+    for (i, decoder) in col_decoders.iter().enumerate() {
+        cells.push(decode_cell(row, i, *decoder));
     }
     Row { cells }
 }
 
 fn extract_pg_result(rows: &[PgRow]) -> (Vec<ColumnMeta>, Vec<Row>) {
-    let (columns, col_types): (Vec<ColumnMeta>, Vec<String>) =
+    let (columns, col_decoders): (Vec<ColumnMeta>, Vec<PgDecoder>) =
         if let Some(first_row) = rows.first() {
             let cols: Vec<ColumnMeta> = first_row
                 .columns()
@@ -478,21 +522,21 @@ fn extract_pg_result(rows: &[PgRow]) -> (Vec<ColumnMeta>, Vec<Row>) {
                     }
                 })
                 .collect();
-            let types: Vec<String> = first_row
+            let decoders: Vec<PgDecoder> = first_row
                 .columns()
                 .iter()
-                .map(|c| c.type_info().name().to_string())
+                .map(|c| decoder_for_type(c.type_info().name()))
                 .collect();
-            (cols, types)
+            (cols, decoders)
         } else {
             (vec![], vec![])
         };
 
     let mut result_rows: Vec<Row> = Vec::with_capacity(rows.len());
     for row in rows {
-        let mut cells: Vec<CellValue> = Vec::with_capacity(col_types.len());
-        for (i, ct) in col_types.iter().enumerate() {
-            cells.push(pg_typed_cell(row, i, ct));
+        let mut cells: Vec<CellValue> = Vec::with_capacity(col_decoders.len());
+        for (i, decoder) in col_decoders.iter().enumerate() {
+            cells.push(decode_cell(row, i, *decoder));
         }
         result_rows.push(Row { cells });
     }
@@ -637,8 +681,8 @@ impl DatabaseConnection for PostgresConnection {
 #[cfg(test)]
 mod tests {
     use super::{
-        forget_pid, is_closed_connection_error, is_retryable_statement, lookup_pid, record_pid,
-        with_retry, PidRegistration, QueryPids,
+        decoder_for_type, forget_pid, is_closed_connection_error, is_retryable_statement,
+        lookup_pid, record_pid, with_retry, PgDecoder, PidRegistration, QueryPids,
     };
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
@@ -906,5 +950,43 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn maps_every_known_pg_type_name_to_its_decoder_and_falls_back_to_other() {
+        let cases = [
+            ("BOOL", PgDecoder::Bool),
+            ("INT2", PgDecoder::Int2),
+            ("INT4", PgDecoder::Int4),
+            ("INT8", PgDecoder::Int8),
+            ("FLOAT4", PgDecoder::Float4),
+            ("FLOAT8", PgDecoder::Float8),
+            ("NUMERIC", PgDecoder::Numeric),
+            ("TEXT", PgDecoder::Text),
+            ("VARCHAR", PgDecoder::Text),
+            ("CHAR", PgDecoder::Text),
+            ("BPCHAR", PgDecoder::Text),
+            ("NAME", PgDecoder::Text),
+            ("BYTEA", PgDecoder::Bytea),
+            ("TIMESTAMP", PgDecoder::Timestamp),
+            ("TIMESTAMPTZ", PgDecoder::TimestampTz),
+            ("DATE", PgDecoder::Date),
+            ("TIME", PgDecoder::Time),
+            ("TIMETZ", PgDecoder::Time),
+            ("UUID", PgDecoder::Uuid),
+            ("JSON", PgDecoder::Json),
+            ("JSONB", PgDecoder::Json),
+            ("MONEY", PgDecoder::Other),
+            ("INT4RANGE", PgDecoder::Other),
+            ("", PgDecoder::Other),
+        ];
+
+        for (pg_type, expected) in cases {
+            assert_eq!(
+                decoder_for_type(pg_type),
+                expected,
+                "{pg_type} should map to {expected:?}"
+            );
+        }
     }
 }
