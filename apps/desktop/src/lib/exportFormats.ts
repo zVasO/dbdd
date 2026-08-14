@@ -1,4 +1,5 @@
-import type { QueryResult, CellValue } from '@/lib/types';
+import type { QueryResult, CellValue, ColumnData } from '@/lib/types';
+import { formatColumnar, type ColumnarSlice } from '@/lib/columnarFormat';
 
 /** Convert a tagged CellValue union to a plain JS primitive. */
 export function cellValueToJS(cell: CellValue): string | number | boolean | null {
@@ -27,30 +28,63 @@ export function cellValueToJS(cell: CellValue): string | number | boolean | null
   }
 }
 
-function cellToSqlLiteral(cell: CellValue): string {
+/**
+ * Row->columnar bridge for the delegated formats below. Mirrors copyFormats.ts's `cellForMode`:
+ * 'json' keeps Json/Array cells as real nested structures so `formatColumnar`'s JSON format can
+ * emit them unstringified (copyFormats' contract); 'sql' and 'text' flatten them to their final
+ * string up front and differ only on Bytes (NULL vs '[N bytes]').
+ */
+type AdapterMode = 'json' | 'sql' | 'text';
+
+function cellForMode(cell: CellValue | undefined, mode: AdapterMode): { kind: ColumnData['kind']; value: unknown } {
+  if (!cell || cell.type === 'Null') return { kind: 'Strings', value: null };
   switch (cell.type) {
-    case 'Null':
-      return 'NULL';
-    case 'Integer':
-    case 'Float':
-      return String(cell.value);
-    case 'Boolean':
-      return cell.value ? 'TRUE' : 'FALSE';
+    case 'Integer': return { kind: 'Integers', value: cell.value };
+    case 'Float': return { kind: 'Floats', value: cell.value };
+    case 'Boolean': return { kind: 'Booleans', value: cell.value };
     case 'Text':
     case 'DateTime':
     case 'Date':
     case 'Time':
     case 'Uuid':
-      return `'${String(cell.value).replace(/'/g, "''")}'`;
+      return { kind: 'Strings', value: cell.value };
     case 'Json':
-      return `'${JSON.stringify(cell.value).replace(/'/g, "''")}'`;
+      return mode === 'json'
+        ? { kind: 'Json', value: cell.value }
+        : { kind: 'Strings', value: JSON.stringify(cell.value) };
     case 'Bytes':
-      return 'NULL';
+      return mode === 'sql'
+        ? { kind: 'Strings', value: null }
+        : { kind: 'Strings', value: `[${cell.value.size} bytes]` };
     case 'Array':
-      return `'${JSON.stringify(cell.value.map(cellValueToJS)).replace(/'/g, "''")}'`;
+      return mode === 'json'
+        ? { kind: 'Json', value: cell.value.map(cellValueToJS) }
+        : { kind: 'Strings', value: JSON.stringify(cell.value.map(cellValueToJS)) };
     default:
-      return 'NULL';
+      return { kind: 'Strings', value: null };
   }
+}
+
+function resultToSlice(result: QueryResult, mode: AdapterMode): ColumnarSlice {
+  const { columns, rows } = result;
+  const data: ColumnData[] = columns.map((_, colIdx) => {
+    let kind: ColumnData['kind'] = 'Strings';
+    for (const row of rows) {
+      const cell = row.cells[colIdx];
+      if (cell && cell.type !== 'Null') {
+        kind = cellForMode(cell, mode).kind;
+        break;
+      }
+    }
+    const values = rows.map((row) => cellForMode(row.cells[colIdx], mode).value);
+    return { kind, values } as ColumnData;
+  });
+  return {
+    columns,
+    colIndexes: columns.map((_, i) => i),
+    data,
+    rowIndexes: rows.map((_, i) => i),
+  };
 }
 
 function resultToObjectArray(result: QueryResult): Record<string, string | number | boolean | null>[] {
@@ -69,12 +103,8 @@ export interface CsvOptions {
 }
 
 export async function toCSV(result: QueryResult, options?: CsvOptions): Promise<string> {
-  const { default: Papa } = await import('papaparse');
-  const data = resultToObjectArray(result);
-  return Papa.unparse(data, {
-    delimiter: options?.separator ?? ',',
-    header: options?.includeHeaders !== false,
-  });
+  const out = formatColumnar(resultToSlice(result, 'text'), 'csv', { delimiter: options?.separator ?? ',' });
+  return options?.includeHeaders === false ? out.split('\n').slice(1).join('\n') : out;
 }
 
 export interface JsonOptions {
@@ -82,11 +112,7 @@ export interface JsonOptions {
 }
 
 export function toJSON(result: QueryResult, options?: JsonOptions): string {
-  const data = resultToObjectArray(result);
-  if (options?.pretty !== false) {
-    return JSON.stringify(data, null, 2);
-  }
-  return JSON.stringify(data);
+  return formatColumnar(resultToSlice(result, 'json'), 'json', { pretty: options?.pretty !== false });
 }
 
 export async function toExcel(result: QueryResult): Promise<ArrayBuffer> {
@@ -101,16 +127,7 @@ export async function toExcel(result: QueryResult): Promise<ArrayBuffer> {
 
 export function toSQLInsert(result: QueryResult, tableName: string): string {
   if (result.rows.length === 0) return `-- No data to export from ${tableName}`;
-
-  const colNames = result.columns.map((c) => `\`${c.name}\``).join(', ');
-  const lines: string[] = [];
-
-  for (const row of result.rows) {
-    const vals = result.columns.map((_, i) => cellToSqlLiteral(row.cells[i])).join(', ');
-    lines.push(`INSERT INTO \`${tableName}\` (${colNames}) VALUES (${vals});`);
-  }
-
-  return lines.join('\n');
+  return formatColumnar(resultToSlice(result, 'sql'), 'insert', { tableName });
 }
 
 function sqlTypeFromDataType(dataType: string): string {
@@ -157,17 +174,5 @@ export function toSQLCreateAndInsert(result: QueryResult, tableName: string): st
 
 export function toMarkdown(result: QueryResult): string {
   if (result.columns.length === 0) return '';
-
-  const header = '| ' + result.columns.map((c) => c.name).join(' | ') + ' |';
-  const separator = '| ' + result.columns.map(() => '---').join(' | ') + ' |';
-  const rows = result.rows.map((row) => {
-    const cells = result.columns.map((_, i) => {
-      const val = cellValueToJS(row.cells[i]);
-      const str = val === null ? 'NULL' : String(val);
-      return str.replace(/\|/g, '\\|').replace(/\n/g, ' ');
-    });
-    return '| ' + cells.join(' | ') + ' |';
-  });
-
-  return [header, separator, ...rows].join('\n');
+  return formatColumnar(resultToSlice(result, 'text'), 'markdown');
 }
