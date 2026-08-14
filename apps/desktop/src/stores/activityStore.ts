@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { AppEvent } from '../lib/types';
 
 export interface ActivityEntry {
   id: string;
@@ -6,9 +7,13 @@ export interface ActivityEntry {
   sql: string;
   timestamp: Date;
   durationMs: number | null;
-  status: 'running' | 'success' | 'error';
+  status: 'running' | 'success' | 'error' | 'cancelled';
   rowCount: number | null;
   error: string | null;
+  /** Backend query_id, attached once the caller knows it — links this entry to AppEvents on the bus. */
+  queryId: string | null;
+  /** Progress text from the latest QueryProgress event, if any. */
+  progress: string | null;
 }
 
 interface RecentTable {
@@ -25,6 +30,13 @@ interface ActivityState {
   logStart: (sql: string, connectionId?: string | null) => string;
   logSuccess: (id: string, durationMs: number, rowCount: number | null) => void;
   logError: (id: string, durationMs: number, error: string) => void;
+  logCancelled: (id: string, durationMs: number) => void;
+  /** Links a locally-created entry to the backend's query_id, so bus events can find it. */
+  attachQueryId: (id: string, queryId: string) => void;
+  /** Bus-driven: QueryCancelled → 'cancelled' status, matched by query_id. */
+  updateCancelled: (queryId: string) => void;
+  /** Bus-driven: QueryProgress → progress text, matched by query_id. */
+  updateProgress: (queryId: string, rowsFetched: number) => void;
   toggleExpanded: () => void;
   clear: () => void;
   /** Get entries filtered to a specific connection (null = all) */
@@ -53,6 +65,8 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       status: 'running',
       rowCount: null,
       error: null,
+      queryId: null,
+      progress: null,
     };
 
     set((state) => ({
@@ -78,6 +92,47 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       if (idx === -1) return state;
       const entries = [...state.entries];
       entries[idx] = { ...entries[idx], status: 'error' as const, durationMs, error };
+      return { entries };
+    });
+  },
+
+  logCancelled: (id: string, durationMs: number) => {
+    set((state) => {
+      const idx = state.entries.findIndex((e) => e.id === id);
+      if (idx === -1) return state;
+      const entries = [...state.entries];
+      entries[idx] = { ...entries[idx], status: 'cancelled' as const, durationMs, error: null };
+      return { entries };
+    });
+  },
+
+  attachQueryId: (id: string, queryId: string) => {
+    set((state) => {
+      const idx = state.entries.findIndex((e) => e.id === id);
+      if (idx === -1) return state;
+      const entries = [...state.entries];
+      entries[idx] = { ...entries[idx], queryId };
+      return { entries };
+    });
+  },
+
+  updateCancelled: (queryId: string) => {
+    set((state) => {
+      const idx = state.entries.findIndex((e) => e.queryId === queryId);
+      if (idx === -1) return state;
+      const entries = [...state.entries];
+      const durationMs = Math.round(Date.now() - entries[idx].timestamp.getTime());
+      entries[idx] = { ...entries[idx], status: 'cancelled' as const, error: null, durationMs };
+      return { entries };
+    });
+  },
+
+  updateProgress: (queryId: string, rowsFetched: number) => {
+    set((state) => {
+      const idx = state.entries.findIndex((e) => e.queryId === queryId);
+      if (idx === -1) return state;
+      const entries = [...state.entries];
+      entries[idx] = { ...entries[idx], progress: `${rowsFetched.toLocaleString()} rows` };
       return { entries };
     });
   },
@@ -111,3 +166,22 @@ export const useActivityStore = create<ActivityState>((set, get) => ({
       .map((r) => r.table);
   },
 }));
+
+/**
+ * Dispatches an AppEvent from the backend's `app-event` bus into activityStore.
+ * Only QueryCancelled and QueryProgress are wired: started/completed/error
+ * entries are already written directly by queryStore, so handling them here
+ * too would duplicate rather than update. Everything else is a deliberate no-op.
+ */
+export function applyAppEvent(event: AppEvent): void {
+  switch (event.event_type) {
+    case 'QueryCancelled':
+      useActivityStore.getState().updateCancelled(event.payload.query_id);
+      return;
+    case 'QueryProgress':
+      useActivityStore.getState().updateProgress(event.payload.query_id, event.payload.rows_fetched);
+      return;
+    default:
+      return;
+  }
+}

@@ -138,7 +138,7 @@ function releaseStream(tabId: string, cancel: boolean): boolean {
     // entry here or it stays "running" forever.
     useActivityStore
       .getState()
-      .logError(stream.activityId, Math.round(performance.now() - stream.startedAt), 'Cancelled');
+      .logCancelled(stream.activityId, Math.round(performance.now() - stream.startedAt));
   }
   return true;
 }
@@ -350,6 +350,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
           // generated here and published before the await so the Stop button
           // has something to cancel while the query runs.
           const queryId = crypto.randomUUID();
+          activity.attachQueryId(activityId, queryId);
           set((s) => updateTab(s, tabId, (t) => ({ ...t, activeQueryId: queryId })));
 
           const result = await ipc.executeQueryColumnar(connectionId, tab.sql, queryId);
@@ -369,6 +370,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
           // frontend has finished setting up listeners, leaving the query stuck
           // in "running" state forever.
           const queryId = crypto.randomUUID();
+          activity.attachQueryId(activityId, queryId);
           set((s) => updateTab(s, tabId, (t) => ({ ...t, activeQueryId: queryId })));
 
           const cleanup = await ipc.listenToStream(queryId, {
@@ -399,7 +401,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
             onCancelled: (cancelled) => {
               releaseStream(tabId, false);
               useResultStore.getState().finishStream(tabId, cancelled.total_rows, cancelled.execution_time_ms, true);
-              activity.logError(activityId, cancelled.execution_time_ms, 'Cancelled');
+              activity.logCancelled(activityId, cancelled.execution_time_ms);
 
               set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null })));
             },
@@ -409,7 +411,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
           // starting the stream then would leave it running for nobody.
           if (!tabStillOpen()) {
             cleanup();
-            activity.logError(activityId, Math.round(performance.now() - startTime), 'Cancelled');
+            activity.logCancelled(activityId, Math.round(performance.now() - startTime));
             return;
           }
           activeStreams.set(tabId, {
@@ -442,7 +444,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       const durationMs = Math.round(performance.now() - startTime);
 
       if (isCancellationError(e)) {
-        useActivityStore.getState().logError(activityId, durationMs, 'Cancelled');
+        useActivityStore.getState().logCancelled(activityId, durationMs);
         if (!tabStillOpen()) return;
         useResultStore.getState().markCancelled(tabId);
         set((s) => updateTab(s, tabId, (t) => ({ ...t, isExecuting: false, activeQueryId: null })));

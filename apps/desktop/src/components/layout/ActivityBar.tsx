@@ -23,6 +23,7 @@ import {
   Terminal,
   Copy,
   Check,
+  Ban,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -249,6 +250,14 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
               {entry.rowCount.toLocaleString()} row{entry.rowCount !== 1 ? 's' : ''}
             </span>
           )}
+          {entry.status === 'running' && entry.progress && (
+            <span className="text-muted-foreground">{entry.progress}</span>
+          )}
+          {entry.status === 'cancelled' && (
+            <Badge variant="secondary" className="h-3.5 px-1 text-[10px] text-amber-600 dark:text-amber-400">
+              Cancelled
+            </Badge>
+          )}
         </div>
         <p
           className={cn(
@@ -298,6 +307,9 @@ function StatusIcon({ entry }: { entry: ActivityEntry }) {
   }
   if (entry.status === 'error') {
     return <XCircle className="mt-0.5 h-3 w-3 shrink-0 text-destructive" />;
+  }
+  if (entry.status === 'cancelled') {
+    return <Ban className="mt-0.5 h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400" />;
   }
   return <CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0 text-primary" />;
 }

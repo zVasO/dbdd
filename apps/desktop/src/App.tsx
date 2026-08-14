@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { loadSession } from "@/lib/sessionRecovery";
 import { ipc } from "@/lib/ipc";
 import { setupMenuBridge, teardownMenuBridge } from "@/lib/menuBridge";
+import { useTauriEvent } from "@/hooks/useTauriEvent";
 // Initialize theme store on import (applies saved theme to DOM)
 import "@/stores/themeStore";
 
@@ -23,6 +24,9 @@ const PING_INTERVAL_MS = 30_000;
 
 function App() {
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
+
+  // Bridge the backend's app-event bus to activityStore (cancellations, progress).
+  useTauriEvent();
 
   // Warn before closing the app while uncommitted row changes are pending.
   const [pendingCloseCount, setPendingCloseCount] = useState<number | null>(null);
