@@ -670,6 +670,13 @@ pub(crate) fn summarize(outcomes: Vec<StatementOutcome>) -> BatchSummary {
 /// Statements per progress window when the caller doesn't pick one.
 pub(crate) const DEFAULT_BATCH_WINDOW: usize = 200;
 
+/// Largest window a caller may ask for. The value arrives over IPC and the CSV
+/// import sizes buffers from it, where a wild number would allocate eagerly and
+/// abort the process on a failed allocation instead of returning an error.
+/// Clamping is lossless in practice: a window only sets how often progress is
+/// reported, so anything past a few hundred already means "report once".
+pub(crate) const MAX_BATCH_WINDOW: usize = 10_000;
+
 /// Run `statements` in order, appending one outcome per statement and emitting
 /// a `QueryProgress` event every `window` statements.
 ///
@@ -752,7 +759,7 @@ pub async fn execute_batch_summary(
         &state.event_bus,
         Uuid::new_v4(),
         std::time::Instant::now(),
-        window.unwrap_or(DEFAULT_BATCH_WINDOW).max(1),
+        window.unwrap_or(DEFAULT_BATCH_WINDOW).clamp(1, MAX_BATCH_WINDOW),
         &statements,
         &mut outcomes,
     )

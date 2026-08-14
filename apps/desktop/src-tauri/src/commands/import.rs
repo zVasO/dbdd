@@ -15,6 +15,7 @@ use purrql_core::ports::dialect::QueryDialect;
 
 use crate::commands::query::{
     run_statements_windowed, summarize, BatchSummary, StatementOutcome, DEFAULT_BATCH_WINDOW,
+    MAX_BATCH_WINDOW,
 };
 use crate::state::AppState;
 
@@ -495,7 +496,9 @@ pub async fn import_csv_execute(
     .await
     .map_err(|e| IpcError::from(e.to_string()))??;
 
-    let window = window.unwrap_or(DEFAULT_BATCH_WINDOW).max(1);
+    let window = window
+        .unwrap_or(DEFAULT_BATCH_WINDOW)
+        .clamp(1, MAX_BATCH_WINDOW);
     let batch_id = Uuid::new_v4();
     let start = Instant::now();
     let mut outcomes: Vec<StatementOutcome> = Vec::new();
