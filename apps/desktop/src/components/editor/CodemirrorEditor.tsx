@@ -5,6 +5,7 @@ import { sql, PostgreSQL } from '@codemirror/lang-sql';
 import { autocompletion, acceptCompletion } from '@codemirror/autocomplete';
 import { keymap } from '@codemirror/view';
 import { useUIStore } from '@/stores/uiStore';
+import { useShortcutStore, formatBinding } from '@/stores/shortcutStore';
 
 import {
   baseSetup,
@@ -120,7 +121,9 @@ export function CodemirrorEditor({ value, onChange, onExecute }: Props) {
           maxRenderedOptions: 50,
         }),
         keymap.of([{ key: 'Tab', run: acceptCompletion }]),
-        placeholder('Écrire une requête… ⌘↵ pour exécuter'),
+        placeholder(
+          `Write a query… ${formatBinding(useShortcutStore.getState().getBinding('editor.execute'))} to run`,
+        ),
         purrqlKeybindings({
           onExecute: () => executeRef.current(),
           onFormat: () => { void formatRef.current(); },

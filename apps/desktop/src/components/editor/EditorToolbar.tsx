@@ -59,7 +59,8 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
   );
 
   const handleUpdateSavedQuery = useCallback(async () => {
-    if (!savedQuery || !activeTab) return;
+    // Never let a cleared editor overwrite the stored SQL with nothing.
+    if (!savedQuery || !activeTab?.sql.trim()) return;
     setUpdatingSavedQuery(true);
     try {
       await useSavedQueryStore.getState().save({
@@ -252,7 +253,7 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
                   size="icon"
                   variant="ghost"
                   onClick={handleUpdateSavedQuery}
-                  disabled={updatingSavedQuery}
+                  disabled={updatingSavedQuery || !activeTab?.sql.trim()}
                   className="h-7 w-7 rounded-r-none text-primary hover:text-primary"
                 >
                   {updatingSavedQuery ? (
