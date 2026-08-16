@@ -171,3 +171,18 @@ export const useConnectionStore = create<ConnectionState>((set, get) => ({
     );
   },
 }));
+
+/**
+ * The id anything persisted must be keyed on. `activeConnectionId` is a runtime
+ * handle minted fresh by every connect, so rows stored under it become
+ * unreachable after reconnecting; the backend keys its own storage on the saved
+ * config id (`delete_connection` cascades saved queries on it).
+ */
+export function usePersistentConnectionId(): string | null {
+  return useConnectionStore((s) => s.activeConfig?.id ?? null);
+}
+
+/** Non-reactive counterpart of {@link usePersistentConnectionId}. */
+export function getPersistentConnectionId(): string | null {
+  return useConnectionStore.getState().activeConfig?.id ?? null;
+}

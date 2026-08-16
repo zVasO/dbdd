@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Save, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -57,6 +57,7 @@ export function SaveQueryDialog({
   const [description, setDescription] = useState('');
   const [database, setDatabase] = useState<string>(ALL_DATABASES);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
 
   const isEditing = !!query;
 
@@ -76,7 +77,11 @@ export function SaveQueryDialog({
   }, [open, query, defaultDatabase]);
 
   const handleSave = useCallback(async () => {
-    if (!connectionId || !name.trim()) return;
+    // The Enter path bypasses the disabled button, so held keys would otherwise
+    // mint a fresh id per repeat and save the query several times over. The
+    // guard is a ref because repeats can re-enter before `saving` re-renders.
+    if (!connectionId || !name.trim() || savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       const saved = await useSavedQueryStore.getState().save({
@@ -94,6 +99,7 @@ export function SaveQueryDialog({
     } catch (e) {
       showErrorToast(`Save failed: ${extractErrorMessage(e)}`);
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }, [connectionId, name, description, database, sql, query, isEditing, onSaved, onOpenChange]);

@@ -10,7 +10,7 @@ vi.mock('../../lib/ipc', () => ({
   extractErrorMessage: (e: unknown) => String(e),
 }));
 
-const { useConnectionStore } = await import('../connectionStore');
+const { useConnectionStore, getPersistentConnectionId } = await import('../connectionStore');
 
 function config(overrides: Partial<ConnectionConfig> = {}): ConnectionConfig {
   return {
@@ -75,5 +75,23 @@ describe('connectionStore.connect', () => {
     expect(savedConnections[0].config.name).toBe('Renamed');
     expect(savedConnections[0].created_at).toBe('2020-01-01T00:00:00.000Z');
     expect(savedConnections[0].sort_order).toBe(3);
+  });
+
+  it('exposes the saved config id, not the per-connect runtime handle, as the persistent id', async () => {
+    // Anything stored across sessions (saved queries, history) must key on the
+    // config id: the backend mints a fresh connection id on every connect and
+    // cascades its own deletes on the config id.
+    ipcMock.connect.mockResolvedValue('runtime-handle-1');
+
+    await useConnectionStore.getState().connect(config({ id: 'config-a' }));
+
+    expect(useConnectionStore.getState().activeConnectionId).toBe('runtime-handle-1');
+    expect(getPersistentConnectionId()).toBe('config-a');
+
+    ipcMock.connect.mockResolvedValue('runtime-handle-2');
+    await useConnectionStore.getState().connect(config({ id: 'config-a' }));
+
+    expect(useConnectionStore.getState().activeConnectionId).toBe('runtime-handle-2');
+    expect(getPersistentConnectionId()).toBe('config-a');
   });
 });

@@ -1,5 +1,5 @@
 import { useChangeStore } from '@/stores/changeStore';
-import { useConnectionStore } from '@/stores/connectionStore';
+import { useConnectionStore, usePersistentConnectionId } from '@/stores/connectionStore';
 import { ipc, extractErrorMessage } from '@/lib/ipc';
 import { useQueryStore } from '@/stores/queryStore';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
@@ -40,6 +40,8 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
   const setPreviewOpen = useChangeStore((s) => s.setPreviewOpen);
   const generateSql = useChangeStore((s) => s.generateSql);
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
+  // Saved queries outlive the session, so they key on the config id, not the handle.
+  const savedQueryKey = usePersistentConnectionId();
   const activeTab = useQueryStore((s) => s.tabs.find((t) => t.id === s.activeTabId));
   const [isCommitting, setIsCommitting] = useState(false);
   const [txState, setTxState] = useState<'none' | 'active' | 'error'>('none');
@@ -51,8 +53,8 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
   const [updatingSavedQuery, setUpdatingSavedQuery] = useState(false);
   // The link survives edits, so a saved query deleted elsewhere falls back to "save new".
   const savedQuery = useSavedQueryStore((s) =>
-    activeTab?.savedQueryId && activeConnectionId
-      ? s.byConnection[activeConnectionId]?.find((q) => q.id === activeTab.savedQueryId) ?? null
+    activeTab?.savedQueryId && savedQueryKey
+      ? s.byConnection[savedQueryKey]?.find((q) => q.id === activeTab.savedQueryId) ?? null
       : null,
   );
 
@@ -288,7 +290,7 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
                 size="icon"
                 variant="ghost"
                 onClick={() => setSaveQueryOpen(true)}
-                disabled={!activeConnectionId || !activeTab?.sql.trim()}
+                disabled={!savedQueryKey || !activeTab?.sql.trim()}
                 className="h-7 w-7"
               >
                 <Bookmark className="h-3.5 w-3.5" />
@@ -511,7 +513,7 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
       <SaveQueryDialog
         open={saveQueryOpen}
         onOpenChange={setSaveQueryOpen}
-        connectionId={activeConnectionId}
+        connectionId={savedQueryKey}
         sql={activeTab?.sql ?? ''}
         defaultDatabase={activeTab?.database ?? null}
         onSaved={(query) => {

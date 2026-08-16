@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { Command } from 'cmdk';
 import { useUIStore } from '@/stores/uiStore';
 import { useQueryStore } from '@/stores/queryStore';
-import { useConnectionStore } from '@/stores/connectionStore';
+import { useConnectionStore, usePersistentConnectionId } from '@/stores/connectionStore';
 import { useActivityStore } from '@/stores/activityStore';
 import { groupByDatabase, useSavedQueryStore } from '@/stores/savedQueryStore';
 import { Badge } from '@/components/ui/badge';
@@ -63,9 +63,9 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
   // Subscribe to overrides so display updates when shortcuts change
   useShortcutStore((s) => s.overrides);
 
-  const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
+  const savedQueryKey = usePersistentConnectionId();
   const savedQueries = useSavedQueryStore(
-    (s) => (activeConnectionId ? s.byConnection[activeConnectionId] : undefined) ?? NO_SAVED_QUERIES,
+    (s) => (savedQueryKey ? s.byConnection[savedQueryKey] : undefined) ?? NO_SAVED_QUERIES,
   );
   // Flattened through the grouping helper so the palette lists the
   // connection-wide queries first, then each database alphabetically.
@@ -84,10 +84,10 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
 
   // Refresh the saved queries each time the palette opens
   useEffect(() => {
-    if (open && activeConnectionId) {
-      void useSavedQueryStore.getState().load(activeConnectionId);
+    if (open && savedQueryKey) {
+      void useSavedQueryStore.getState().load(savedQueryKey);
     }
-  }, [open, activeConnectionId]);
+  }, [open, savedQueryKey]);
 
   function runAndClose(fn: () => void) {
     fn();

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
-import { useConnectionStore } from '@/stores/connectionStore';
+import { useConnectionStore, getPersistentConnectionId } from '@/stores/connectionStore';
 import { useQueryStore } from '@/stores/queryStore';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useSavedQueryStore } from '@/stores/savedQueryStore';
@@ -90,7 +90,8 @@ export function AppLayout() {
       // Clear stale schema from previous connection before loading new one
       useSchemaStore.getState().reset();
       useChangeStore.getState().discard();
-      void useSavedQueryStore.getState().load(activeConnectionId);
+      const savedQueryKey = getPersistentConnectionId();
+      if (savedQueryKey) void useSavedQueryStore.getState().load(savedQueryKey);
 
       const targetDb = activeConfig?.database;
 

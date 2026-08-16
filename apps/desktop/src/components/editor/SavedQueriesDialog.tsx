@@ -10,7 +10,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { useConnectionStore } from '@/stores/connectionStore';
+import { usePersistentConnectionId } from '@/stores/connectionStore';
 import { useQueryStore } from '@/stores/queryStore';
 import { groupByDatabase, useSavedQueryStore } from '@/stores/savedQueryStore';
 import { useUIStore } from '@/stores/uiStore';
@@ -23,7 +23,7 @@ const NO_QUERIES: SavedQuery[] = [];
 export function SavedQueriesDialog() {
   const open = useSavedQueryStore((s) => s.manageOpen);
   const setOpen = useSavedQueryStore((s) => s.setManageOpen);
-  const connectionId = useConnectionStore((s) => s.activeConnectionId);
+  const connectionId = usePersistentConnectionId();
   const queries = useSavedQueryStore(
     (s) => (connectionId ? s.byConnection[connectionId] : undefined) ?? NO_QUERIES,
   );
