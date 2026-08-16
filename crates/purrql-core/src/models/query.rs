@@ -75,3 +75,15 @@ pub enum QueryStatus {
     Error,
     Cancelled,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedQuery {
+    pub id: Uuid,
+    pub connection_id: Uuid,
+    pub database: Option<String>,
+    pub name: String,
+    pub description: Option<String>,
+    pub sql: String,
+    pub created_at: String,
+    pub updated_at: String,
+}

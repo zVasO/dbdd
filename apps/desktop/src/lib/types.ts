@@ -146,6 +146,17 @@ export interface QueryHistoryEntry {
   error_message: string | null;
 }
 
+export interface SavedQuery {
+  id: string;
+  connection_id: string;
+  database: string | null;
+  name: string;
+  description: string | null;
+  sql: string;
+  created_at: string;
+  updated_at: string;
+}
+
 // === SCHEMA ===
 
 export interface TableRef {

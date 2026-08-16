@@ -3,7 +3,7 @@ import { listen } from '@tauri-apps/api/event';
 import type {
   ConnectionConfig, SavedConnection, QueryResult, ColumnarResult,
   DatabaseInfo, SchemaInfo, TableInfo, TableStructure, TableRef, ColumnRef,
-  QueryHistoryEntry, IpcError, BatchSummary, CsvPreview,
+  QueryHistoryEntry, SavedQuery, IpcError, BatchSummary, CsvPreview,
   StreamMeta, StreamChunk, StreamDone, StreamError, StreamCancelled,
 } from './types';
 
@@ -84,6 +84,17 @@ export const ipc = {
 
   executeQueryStream: (connectionId: string, sql: string, chunkSize?: number, queryId?: string) =>
     invoke<string>('execute_query_stream', { connectionId, sql, chunkSize, queryId }),
+
+  saveSavedQuery: (query: SavedQuery) =>
+    invoke<void>('save_saved_query', { query }),
+
+  listSavedQueries: (connectionId: string) =>
+    dedup(`savedQueries:${connectionId}`, () =>
+      invoke<SavedQuery[]>('list_saved_queries', { connectionId })
+    ),
+
+  deleteSavedQuery: (id: string) =>
+    invoke<void>('delete_saved_query', { id }),
 
   executeBatch: (connectionId: string, statements: string[]) =>
     invoke<Array<{ Ok?: QueryResult; Err?: IpcError }>>('execute_batch', {

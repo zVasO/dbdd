@@ -36,6 +36,20 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
             connection_id TEXT PRIMARY KEY,
             ciphertext TEXT NOT NULL,
             nonce TEXT NOT NULL
-        );",
+        );
+
+        CREATE TABLE IF NOT EXISTS saved_queries (
+            id TEXT PRIMARY KEY,
+            connection_id TEXT NOT NULL,
+            database TEXT,
+            name TEXT NOT NULL,
+            description TEXT,
+            sql TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_saved_queries_conn
+        ON saved_queries(connection_id, database, name);",
     )
 }

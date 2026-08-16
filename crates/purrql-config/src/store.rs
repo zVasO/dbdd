@@ -9,7 +9,7 @@ use uuid::Uuid;
 use purrql_core::error::{PurrqlError, Result};
 use purrql_core::models::connection::ConnectionConfig;
 use purrql_core::models::connection::SavedConnection;
-use purrql_core::models::query::{QueryHistoryEntry, QueryStatus};
+use purrql_core::models::query::{QueryHistoryEntry, QueryStatus, SavedQuery};
 
 use crate::crypto;
 
@@ -150,6 +150,11 @@ impl ConfigStore {
             let conn = conn.lock().map_err(|e| PurrqlError::Internal(e.to_string()))?;
             conn.execute(
                 "DELETE FROM encrypted_passwords WHERE connection_id = ?1",
+                rusqlite::params![id],
+            )
+            .map_err(|e| PurrqlError::Config(e.to_string()))?;
+            conn.execute(
+                "DELETE FROM saved_queries WHERE connection_id = ?1",
                 rusqlite::params![id],
             )
             .map_err(|e| PurrqlError::Config(e.to_string()))?;
@@ -465,6 +470,103 @@ impl ConfigStore {
     pub async fn purge_history_default(&self) -> Result<u64> {
         self.purge_history(HISTORY_RETAIN_COUNT, HISTORY_RETAIN_DAYS).await
     }
+
+    /// Insert or update a saved query. Renames go through this too — the
+    /// caller sets `updated_at` before calling.
+    pub async fn upsert_saved_query(&self, q: SavedQuery) -> Result<()> {
+        let conn = Arc::clone(&self.write_conn);
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| PurrqlError::Internal(e.to_string()))?;
+            conn.execute(
+                "INSERT OR REPLACE INTO saved_queries \
+                 (id, connection_id, database, name, description, sql, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    q.id.to_string(),
+                    q.connection_id.to_string(),
+                    q.database,
+                    q.name,
+                    q.description,
+                    q.sql,
+                    q.created_at,
+                    q.updated_at,
+                ],
+            )
+            .map_err(|e| PurrqlError::Config(e.to_string()))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| PurrqlError::Internal(e.to_string()))?
+    }
+
+    /// List saved queries for a connection, ordered with the unfiled ones
+    /// (NULL `database`) first, then by database, then by name.
+    pub async fn list_saved_queries(&self, connection_id: &Uuid) -> Result<Vec<SavedQuery>> {
+        let conn = Arc::clone(&self.read_conn);
+        let connection_id_str = connection_id.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| PurrqlError::Internal(e.to_string()))?;
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, connection_id, database, name, description, sql, created_at, updated_at \
+                     FROM saved_queries WHERE connection_id = ?1 \
+                     ORDER BY database NULLS FIRST, name",
+                )
+                .map_err(|e| PurrqlError::Config(e.to_string()))?;
+
+            let rows = stmt
+                .query_map(rusqlite::params![connection_id_str], |row| {
+                    let id: String = row.get(0)?;
+                    let connection_id: String = row.get(1)?;
+                    let database: Option<String> = row.get(2)?;
+                    let name: String = row.get(3)?;
+                    let description: Option<String> = row.get(4)?;
+                    let sql: String = row.get(5)?;
+                    let created_at: String = row.get(6)?;
+                    let updated_at: String = row.get(7)?;
+                    Ok((id, connection_id, database, name, description, sql, created_at, updated_at))
+                })
+                .map_err(|e| PurrqlError::Config(e.to_string()))?;
+
+            let mut queries = Vec::new();
+            for row in rows {
+                let (id, connection_id, database, name, description, sql, created_at, updated_at) =
+                    row.map_err(|e| PurrqlError::Config(e.to_string()))?;
+                queries.push(SavedQuery {
+                    id: Uuid::parse_str(&id).unwrap_or_else(|_| Uuid::new_v4()),
+                    connection_id: Uuid::parse_str(&connection_id).unwrap_or_else(|_| Uuid::new_v4()),
+                    database,
+                    name,
+                    description,
+                    sql,
+                    created_at,
+                    updated_at,
+                });
+            }
+            Ok(queries)
+        })
+        .await
+        .map_err(|e| PurrqlError::Internal(e.to_string()))?
+    }
+
+    pub async fn delete_saved_query(&self, id: &Uuid) -> Result<()> {
+        let conn = Arc::clone(&self.write_conn);
+        let id = id.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| PurrqlError::Internal(e.to_string()))?;
+            conn.execute(
+                "DELETE FROM saved_queries WHERE id = ?1",
+                rusqlite::params![id],
+            )
+            .map_err(|e| PurrqlError::Config(e.to_string()))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| PurrqlError::Internal(e.to_string()))?
+    }
 }
 
 #[cfg(test)]
@@ -541,6 +643,128 @@ mod tests {
 
         let deleted = store.purge_history_default().await.unwrap();
         assert_eq!(deleted, 0);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn saved_query(connection_id: Uuid, database: Option<&str>, name: &str) -> SavedQuery {
+        SavedQuery {
+            id: Uuid::new_v4(),
+            connection_id,
+            database: database.map(|s| s.to_string()),
+            name: name.to_string(),
+            description: None,
+            sql: "SELECT 1".to_string(),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn list_saved_queries_orders_by_null_database_first_then_name() {
+        let (store, dir) = test_store();
+        let connection_id = Uuid::new_v4();
+
+        store.upsert_saved_query(saved_query(connection_id, Some("app_db"), "zeta")).await.unwrap();
+        store.upsert_saved_query(saved_query(connection_id, None, "beta")).await.unwrap();
+        store.upsert_saved_query(saved_query(connection_id, Some("app_db"), "alpha")).await.unwrap();
+
+        let list = store.list_saved_queries(&connection_id).await.unwrap();
+        let names: Vec<_> = list.iter().map(|q| q.name.clone()).collect();
+        assert_eq!(names, vec!["beta", "alpha", "zeta"]);
+        assert_eq!(list[0].database, None);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn upsert_saved_query_with_same_id_updates_in_place_and_keeps_count_stable() {
+        let (store, dir) = test_store();
+        let connection_id = Uuid::new_v4();
+        let id = Uuid::new_v4();
+
+        let mut q = SavedQuery {
+            id,
+            connection_id,
+            database: None,
+            name: "original".to_string(),
+            description: None,
+            sql: "SELECT 1".to_string(),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        store.upsert_saved_query(q.clone()).await.unwrap();
+
+        q.name = "renamed".to_string();
+        q.sql = "SELECT 2".to_string();
+        q.updated_at = "2024-01-02T00:00:00Z".to_string();
+        store.upsert_saved_query(q.clone()).await.unwrap();
+
+        let list = store.list_saved_queries(&connection_id).await.unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, id);
+        assert_eq!(list[0].name, "renamed");
+        assert_eq!(list[0].sql, "SELECT 2");
+        assert_eq!(list[0].updated_at, "2024-01-02T00:00:00Z");
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn delete_saved_query_removes_it() {
+        let (store, dir) = test_store();
+        let connection_id = Uuid::new_v4();
+        let q = saved_query(connection_id, None, "to-delete");
+        let id = q.id;
+        store.upsert_saved_query(q).await.unwrap();
+
+        store.delete_saved_query(&id).await.unwrap();
+
+        let list = store.list_saved_queries(&connection_id).await.unwrap();
+        assert!(list.is_empty());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn list_saved_queries_for_a_connection_without_any_is_empty() {
+        let (store, dir) = test_store();
+
+        let list = store.list_saved_queries(&Uuid::new_v4()).await.unwrap();
+        assert!(list.is_empty());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn list_saved_queries_only_returns_queries_for_the_given_connection() {
+        let (store, dir) = test_store();
+        let connection_a = Uuid::new_v4();
+        let connection_b = Uuid::new_v4();
+        store.upsert_saved_query(saved_query(connection_a, None, "a-query")).await.unwrap();
+        store.upsert_saved_query(saved_query(connection_b, None, "b-query")).await.unwrap();
+
+        let list_a = store.list_saved_queries(&connection_a).await.unwrap();
+        assert_eq!(list_a.len(), 1);
+        assert_eq!(list_a[0].name, "a-query");
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn delete_connection_cascades_to_its_saved_queries() {
+        let (store, dir) = test_store();
+        let connection_id = Uuid::new_v4();
+        store.upsert_saved_query(saved_query(connection_id, None, "cascade-me")).await.unwrap();
+
+        let mut config = ConnectionConfig::default();
+        config.id = connection_id;
+        store.save_connection(&config).await.unwrap();
+
+        store.delete_connection(&connection_id).await.unwrap();
+
+        let list = store.list_saved_queries(&connection_id).await.unwrap();
+        assert!(list.is_empty());
 
         let _ = std::fs::remove_dir_all(dir);
     }
