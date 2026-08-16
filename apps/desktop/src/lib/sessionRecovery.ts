@@ -9,6 +9,7 @@ interface SavedTab {
   editorVisible: boolean;
   database?: string;
   table?: string;
+  savedQueryId?: string;
 }
 
 interface SavedSession {
@@ -18,12 +19,12 @@ interface SavedSession {
 }
 
 export function saveSession(
-  tabs: Array<{ id: string; connectionId: string | null; title: string; sql: string; editorVisible: boolean; database?: string; table?: string }>,
+  tabs: Array<{ id: string; connectionId: string | null; title: string; sql: string; editorVisible: boolean; database?: string; table?: string; savedQueryId?: string }>,
   activeTabIds: Record<string, string>,
 ): void {
   const session: SavedSession = {
-    tabs: tabs.map(({ id, connectionId, title, sql, editorVisible, database, table }) => ({
-      id, connectionId, title, sql, editorVisible, database, table,
+    tabs: tabs.map(({ id, connectionId, title, sql, editorVisible, database, table, savedQueryId }) => ({
+      id, connectionId, title, sql, editorVisible, database, table, savedQueryId,
     })),
     activeTabIds,
   };

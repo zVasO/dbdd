@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react'
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useQueryStore } from '@/stores/queryStore';
 import { useSchemaStore } from '@/stores/schemaStore';
+import { useSavedQueryStore } from '@/stores/savedQueryStore';
 import { useUIStore } from '@/stores/uiStore';
 import { useChangeStore } from '@/stores/changeStore';
 import { useFilterStore } from '@/stores/filterStore';
@@ -28,6 +29,7 @@ const ExportDialog = lazy(() => import('@/components/import-export/ExportDialog'
 const DataGeneratorDialog = lazy(() => import('@/components/data-gen/DataGeneratorDialog').then(m => ({ default: m.DataGeneratorDialog })));
 const ShareDialog = lazy(() => import('@/components/sharing/ShareDialog').then(m => ({ default: m.ShareDialog })));
 const NotesPanel = lazy(() => import('@/components/notes/NotesPanel').then(m => ({ default: m.NotesPanel })));
+const SavedQueriesDialog = lazy(() => import('@/components/editor/SavedQueriesDialog').then(m => ({ default: m.SavedQueriesDialog })));
 import { useImportExportStore } from '@/stores/importExportStore';
 import { useDataGenStore } from '@/stores/dataGenStore';
 import { useNotesStore } from '@/stores/notesStore';
@@ -88,6 +90,7 @@ export function AppLayout() {
       // Clear stale schema from previous connection before loading new one
       useSchemaStore.getState().reset();
       useChangeStore.getState().discard();
+      void useSavedQueryStore.getState().load(activeConnectionId);
 
       const targetDb = activeConfig?.database;
 
@@ -334,6 +337,7 @@ export function AppLayout() {
         <ShareDialog open={shareDialogOpen} onOpenChange={setShareDialogOpen} />
         <ConnectionDialog open={connectionDialogOpen} onOpenChange={setConnectionDialogOpen} />
         <NotesPanel />
+        <SavedQueriesDialog />
       </Suspense>
     </div>
   );

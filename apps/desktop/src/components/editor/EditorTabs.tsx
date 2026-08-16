@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { Button } from '@/components/ui/button';
-import { X, Plus, ChevronDown, GitBranch, LayoutDashboard, Activity, Search, Code2, Workflow, ArrowLeftRight, Bell, RefreshCw, FileCode } from 'lucide-react';
+import { X, Plus, ChevronDown, GitBranch, LayoutDashboard, Activity, Search, Code2, Workflow, ArrowLeftRight, Bell, RefreshCw, Bookmark } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
@@ -12,6 +12,7 @@ import {
 import type { QueryTab } from '@/stores/queryStore';
 import { useQueryStore } from '@/stores/queryStore';
 import { useResultStore } from '@/stores/resultStore';
+import { useSavedQueryStore } from '@/stores/savedQueryStore';
 
 function TabIcon({ viewMode, isActive }: { viewMode: string; isActive?: boolean }) {
   const iconClass = cn('size-3', isActive ? 'text-foreground' : 'text-muted-foreground');
@@ -154,13 +155,10 @@ export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTa
               New Query Tab
             </DropdownMenuItem>
             <DropdownMenuItem
-              onClick={() => {
-                console.log('New from Template');
-                onNewTab();
-              }}
+              onClick={() => useSavedQueryStore.getState().setManageOpen(true)}
             >
-              <FileCode className="size-4" />
-              New from Template
+              <Bookmark className="size-4" />
+              From saved query…
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

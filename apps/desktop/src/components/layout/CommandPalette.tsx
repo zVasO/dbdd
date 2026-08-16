@@ -1,9 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Command } from 'cmdk';
 import { useUIStore } from '@/stores/uiStore';
 import { useQueryStore } from '@/stores/queryStore';
 import { useConnectionStore } from '@/stores/connectionStore';
 import { useActivityStore } from '@/stores/activityStore';
+import { groupByDatabase, useSavedQueryStore } from '@/stores/savedQueryStore';
+import { Badge } from '@/components/ui/badge';
+import type { SavedQuery } from '@/lib/types';
 import {
   Plus,
   Play,
@@ -33,6 +36,8 @@ import {
   Users,
   Plug,
   Columns,
+  Bookmark,
+  Library,
 } from 'lucide-react';
 import { openSqlFile, saveSqlFile } from '@/lib/fileOps';
 import { useAIStore } from '@/stores/aiStore';
@@ -40,6 +45,8 @@ import { useImportExportStore } from '@/stores/importExportStore';
 import { useDataGenStore } from '@/stores/dataGenStore';
 import { useNotesStore } from '@/stores/notesStore';
 import { useShortcutStore, formatBinding } from '@/stores/shortcutStore';
+
+const NO_SAVED_QUERIES: SavedQuery[] = [];
 
 interface CommandPaletteProps {
   onOpenPreferences?: () => void;
@@ -56,6 +63,17 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
   // Subscribe to overrides so display updates when shortcuts change
   useShortcutStore((s) => s.overrides);
 
+  const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
+  const savedQueries = useSavedQueryStore(
+    (s) => (activeConnectionId ? s.byConnection[activeConnectionId] : undefined) ?? NO_SAVED_QUERIES,
+  );
+  // Flattened through the grouping helper so the palette lists the
+  // connection-wide queries first, then each database alphabetically.
+  const orderedSavedQueries = useMemo(
+    () => groupByDatabase(savedQueries).flatMap((g) => g.queries),
+    [savedQueries],
+  );
+
   // Register modal when open
   useEffect(() => {
     if (open) {
@@ -63,6 +81,13 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
       return () => popModal('commandPalette');
     }
   }, [open, pushModal, popModal]);
+
+  // Refresh the saved queries each time the palette opens
+  useEffect(() => {
+    if (open && activeConnectionId) {
+      void useSavedQueryStore.getState().load(activeConnectionId);
+    }
+  }, [open, activeConnectionId]);
 
   function runAndClose(fn: () => void) {
     fn();
@@ -160,7 +185,37 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
               >
                 Close Tab
               </CommandItem>
+              <CommandItem
+                onSelect={() => runAndClose(() => useSavedQueryStore.getState().setManageOpen(true))}
+                icon={<Library className="h-4 w-4" />}
+              >
+                Manage saved queries…
+              </CommandItem>
             </Command.Group>
+
+            {/* Saved queries group — only for connections that have some */}
+            {orderedSavedQueries.length > 0 && (
+              <Command.Group
+                heading="Saved queries"
+                className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground"
+              >
+                {orderedSavedQueries.map((query) => (
+                  <CommandItem
+                    key={query.id}
+                    value={`${query.name} ${query.database ?? 'All databases'} ${query.id}`}
+                    onSelect={() => runAndClose(() => useQueryStore.getState().openSavedQuery(query))}
+                    icon={<Bookmark className="h-4 w-4" />}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span className="truncate">{query.name}</span>
+                      <Badge variant="secondary" className="shrink-0 text-[10px]">
+                        {query.database ?? 'All databases'}
+                      </Badge>
+                    </span>
+                  </CommandItem>
+                ))}
+              </Command.Group>
+            )}
 
             {/* View group */}
             <Command.Group
@@ -426,14 +481,17 @@ function CommandItem({
   icon,
   shortcut,
   onSelect,
+  value,
 }: {
   children: React.ReactNode;
   icon: React.ReactNode;
   shortcut?: string;
   onSelect: () => void;
+  value?: string;
 }) {
   return (
     <Command.Item
+      value={value}
       onSelect={onSelect}
       className="flex cursor-pointer items-center gap-3 rounded-md px-2 py-2 text-sm text-popover-foreground aria-selected:bg-accent aria-selected:text-accent-foreground"
     >

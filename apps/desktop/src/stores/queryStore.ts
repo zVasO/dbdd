@@ -7,7 +7,7 @@ import { usePreferencesStore } from './preferencesStore';
 import { useResultStore, registerAdjacentTabResolver, FLUSH_THRESHOLD } from './resultStore';
 import { saveSession } from '../lib/sessionRecovery';
 import { splitStatements } from '../lib/sql-utils';
-import type { QueryResult, QueryHistoryEntry, ColumnarResult } from '../lib/types';
+import type { QueryResult, QueryHistoryEntry, ColumnarResult, SavedQuery } from '../lib/types';
 
 async function maybeNotifyQueryComplete(
   executionTimeMs: number,
@@ -61,6 +61,8 @@ export interface QueryTab {
   table?: string;
   /** Column name to highlight in the grid after a sidebar double-click — cleared after display */
   highlightedColumn?: string;
+  /** Saved query this tab was opened from — editing the SQL does not clear it */
+  savedQueryId?: string;
 }
 
 interface QueryState {
@@ -79,6 +81,10 @@ interface QueryState {
   // --- Actions ---
 
   createTab: (title?: string, opts?: { editorVisible?: boolean; database?: string; table?: string }) => string;
+  /** Open a saved query in its own tab, or focus the tab already holding it */
+  openSavedQuery: (query: SavedQuery) => string;
+  /** Point a tab at the saved query it was just saved as */
+  linkSavedQuery: (tabId: string, savedQueryId: string) => void;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
   updateSql: (tabId: string, sql: string) => void;
@@ -90,7 +96,7 @@ interface QueryState {
   cancelQuery: (connectionId: string, queryId: string) => Promise<void>;
   loadHistory: (connectionId: string) => Promise<void>;
   reorderTabs: (fromIndex: number, toIndex: number) => void;
-  restoreTabs: (tabs: Array<{ id: string; title: string; sql: string; editorVisible: boolean; connectionId?: string | null; database?: string; table?: string }>, activeTabIds?: Record<string, string>) => void;
+  restoreTabs: (tabs: Array<{ id: string; title: string; sql: string; editorVisible: boolean; connectionId?: string | null; database?: string; table?: string; savedQueryId?: string }>, activeTabIds?: Record<string, string>) => void;
 
   /** Called internally when active connection changes — recomputes visible tabs */
   _syncVisibleTabs: () => void;
@@ -207,6 +213,27 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     set({ allTabs: newAllTabs, activeTabIds: newActiveTabIds });
     get()._syncVisibleTabs();
     return id;
+  },
+
+  openSavedQuery: (query) => {
+    const connId = getActiveConnectionId();
+    const existing = get().allTabs.find(
+      (t) => t.savedQueryId === query.id && (t.connectionId === connId || !t.connectionId),
+    );
+    if (existing) {
+      get().setActiveTab(existing.id);
+      return existing.id;
+    }
+    const id = get().createTab(query.name, {
+      editorVisible: true,
+      database: query.database ?? undefined,
+    });
+    set((s) => updateTab(s, id, (t) => ({ ...t, sql: query.sql, savedQueryId: query.id })));
+    return id;
+  },
+
+  linkSavedQuery: (tabId, savedQueryId) => {
+    set((s) => updateTab(s, tabId, (t) => ({ ...t, savedQueryId })));
   },
 
   closeTab: (id) => {
@@ -534,7 +561,7 @@ useQueryStore.subscribe((state) => {
   if (_saveTimeout) clearTimeout(_saveTimeout);
   _saveTimeout = setTimeout(() => {
     const snapshot = JSON.stringify(
-      state.allTabs.map((t) => [t.id, t.connectionId, t.title, t.sql, t.editorVisible, t.database, t.table]),
+      state.allTabs.map((t) => [t.id, t.connectionId, t.title, t.sql, t.editorVisible, t.database, t.table, t.savedQueryId]),
     );
     if (snapshot === _lastTabSnapshot) return;
     _lastTabSnapshot = snapshot;

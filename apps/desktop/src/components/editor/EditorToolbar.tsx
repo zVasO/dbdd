@@ -11,11 +11,19 @@ import {
   TooltipContent,
   TooltipProvider,
 } from '@/components/ui/tooltip';
-import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2, Wand2, FolderOpen, Download, Sparkles, Brain, Zap, GitBranch, Check, X, StopCircle } from 'lucide-react';
+import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2, Wand2, FolderOpen, Download, Sparkles, Brain, Zap, GitBranch, Check, X, StopCircle, Bookmark, BookmarkCheck, BookmarkPlus, ChevronDown } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import { useState, useCallback } from 'react';
 import { showSuccessToast, showErrorToast } from '@/stores/toastStore';
 import { useAIStore } from '@/stores/aiStore';
+import { useSavedQueryStore } from '@/stores/savedQueryStore';
 import { AiResultDialog } from '@/components/ai/AiResultDialog';
+import { SaveQueryDialog } from '@/components/editor/SaveQueryDialog';
 import { cn } from '@/lib/utils';
 
 interface Props {
@@ -39,6 +47,35 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
   const [aiDialogTitle, setAiDialogTitle] = useState('');
   const [aiDialogContent, setAiDialogContent] = useState('');
   const [aiDialogLoading, setAiDialogLoading] = useState(false);
+  const [saveQueryOpen, setSaveQueryOpen] = useState(false);
+  const [updatingSavedQuery, setUpdatingSavedQuery] = useState(false);
+  // The link survives edits, so a saved query deleted elsewhere falls back to "save new".
+  const savedQuery = useSavedQueryStore((s) =>
+    activeTab?.savedQueryId && activeConnectionId
+      ? s.byConnection[activeConnectionId]?.find((q) => q.id === activeTab.savedQueryId) ?? null
+      : null,
+  );
+
+  const handleUpdateSavedQuery = useCallback(async () => {
+    if (!savedQuery || !activeTab) return;
+    setUpdatingSavedQuery(true);
+    try {
+      await useSavedQueryStore.getState().save({
+        id: savedQuery.id,
+        connection_id: savedQuery.connection_id,
+        database: savedQuery.database,
+        name: savedQuery.name,
+        description: savedQuery.description,
+        sql: activeTab.sql,
+        created_at: savedQuery.created_at,
+      });
+      showSuccessToast(`"${savedQuery.name}" updated`);
+    } catch (err) {
+      showErrorToast(`Save failed: ${extractErrorMessage(err)}`);
+    } finally {
+      setUpdatingSavedQuery(false);
+    }
+  }, [savedQuery, activeTab]);
 
   const handleCommit = useCallback(async () => {
     if (!activeConnectionId || !hasPending) return;
@@ -203,6 +240,63 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
           </TooltipTrigger>
           <TooltipContent>Save SQL file (Ctrl+Shift+S)</TooltipContent>
         </Tooltip>
+
+        {/* Save as a named query */}
+        {savedQuery ? (
+          <div className="flex items-center">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={handleUpdateSavedQuery}
+                  disabled={updatingSavedQuery}
+                  className="h-7 w-7 rounded-r-none text-primary hover:text-primary"
+                >
+                  {updatingSavedQuery ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <BookmarkCheck className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Update &quot;{savedQuery.name}&quot;</TooltipContent>
+            </Tooltip>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-7 w-4 rounded-l-none px-0"
+                  aria-label="Saved query options"
+                >
+                  <ChevronDown className="h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" sideOffset={4}>
+                <DropdownMenuItem onClick={() => setSaveQueryOpen(true)}>
+                  <BookmarkPlus className="size-4" />
+                  Save as new…
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        ) : (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => setSaveQueryOpen(true)}
+                disabled={!activeConnectionId || !activeTab?.sql.trim()}
+                className="h-7 w-7"
+              >
+                <Bookmark className="h-3.5 w-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Save query</TooltipContent>
+          </Tooltip>
+        )}
 
         <div className="mx-1 h-4 w-px bg-border" />
 
@@ -414,6 +508,16 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
           </div>
         )}
       </div>
+      <SaveQueryDialog
+        open={saveQueryOpen}
+        onOpenChange={setSaveQueryOpen}
+        connectionId={activeConnectionId}
+        sql={activeTab?.sql ?? ''}
+        defaultDatabase={activeTab?.database ?? null}
+        onSaved={(query) => {
+          if (activeTab) useQueryStore.getState().linkSavedQuery(activeTab.id, query.id);
+        }}
+      />
       <AiResultDialog
         open={aiDialogOpen}
         onOpenChange={setAiDialogOpen}
