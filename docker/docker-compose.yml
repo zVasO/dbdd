@@ -1,0 +1,66 @@
+name: vasodb-testdata
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: vasodb-postgres
+    environment:
+      POSTGRES_USER: vasodb
+      POSTGRES_PASSWORD: vasodb
+      POSTGRES_DB: appdb
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vasodb -d appdb"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  mysql:
+    image: mysql:8.4
+    container_name: vasodb-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: vasodb
+      MYSQL_USER: vasodb
+      MYSQL_PASSWORD: vasodb
+      MYSQL_DATABASE: appdb
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pvasodb"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # ---- Jeux publics optionnels : `docker compose --profile extra up -d` ----
+
+  # Base "world" (pays/villes/langues), petite mais réaliste.
+  world-db:
+    image: ghusta/postgres-world-db:2.12
+    container_name: vasodb-world
+    profiles: [extra]
+    ports:
+      - "5434:5432"
+    # user/password/db: world/world123/world-db
+
+  # Base "employees" MySQL (~300k employés, 2.8M lignes de salaires) —
+  # idéale pour tester la pagination serveur et les gros COUNT(*).
+  employees:
+    image: genschsa/mysql-employees
+    container_name: vasodb-employees
+    profiles: [extra]
+    environment:
+      MYSQL_ROOT_PASSWORD: vasodb
+    ports:
+      - "3308:3306"
+    # user/password/db: root/vasodb/employees
+
+volumes:
+  pg-data:
+  mysql-data:
