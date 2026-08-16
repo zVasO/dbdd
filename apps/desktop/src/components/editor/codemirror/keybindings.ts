@@ -3,12 +3,14 @@ import { toggleComment } from '@codemirror/commands';
 import type { Extension } from '@codemirror/state';
 import { Prec } from '@codemirror/state';
 import { useShortcutStore, type ShortcutBinding } from '@/stores/shortcutStore';
+import { useUIStore } from '@/stores/uiStore';
 
 // === Types ===
 
 interface KeybindingCallbacks {
   onExecute: () => void;
   onFormat: () => void;
+  onCommandPalette?: () => void;
 }
 
 // === Modifier mapping ===
@@ -80,6 +82,23 @@ export function purrqlKeybindings(callbacks: KeybindingCallbacks): Extension {
     },
   ]));
 
+  // Explicit Mod-k binding so the command palette opens regardless of
+  // window-listener propagation while focus is inside the editor.
+  const commandPaletteKeymap = Prec.highest(keymap.of([
+    {
+      key: 'Mod-k',
+      run: () => {
+        if (callbacks.onCommandPalette) {
+          callbacks.onCommandPalette();
+        } else {
+          useUIStore.getState().setCommandPaletteOpen(true);
+        }
+        return true;
+      },
+      preventDefault: true,
+    },
+  ]));
+
   const otherKeymaps = keymap.of([
     {
       key: bindingToCm6Key(formatBinding),
@@ -96,7 +115,7 @@ export function purrqlKeybindings(callbacks: KeybindingCallbacks): Extension {
     },
   ]);
 
-  return [executeKeymap, otherKeymaps];
+  return [executeKeymap, commandPaletteKeymap, otherKeymaps];
 }
 
 export { bindingToCm6Key };

@@ -7,6 +7,7 @@ import { usePreferencesStore } from '@/stores/preferencesStore';
 import { useConnectionStore, type ActiveConnection } from '@/stores/connectionStore';
 import { useSchemaStore } from '@/stores/schemaStore';
 import { useThemeStore } from '@/stores/themeStore';
+import { useShortcutStore, formatBinding } from '@/stores/shortcutStore';
 import { ConnectionStatus } from '@/components/connection/ConnectionStatus';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -29,6 +30,10 @@ export function StatusBar({ connected, dbType, onDisconnect, onOpenConnectionDia
   const theme = usePreferencesStore((s) => s.theme);
   const pendingCount = useChangeStore((s) => s.pendingCount());
   const hasPending = pendingCount > 0;
+  const commandPaletteBinding = useShortcutStore((s) => s.getBinding('global.commandPalette'));
+  // Subscribe to overrides so the badge updates when the user rebinds the shortcut
+  useShortcutStore((s) => s.overrides);
+  const setCommandPaletteOpen = useUIStore((s) => s.setCommandPaletteOpen);
 
   const activeConnections = useConnectionStore((s) => s.activeConnections);
   const activeConnectionId = useConnectionStore((s) => s.activeConnectionId);
@@ -179,7 +184,14 @@ export function StatusBar({ connected, dbType, onDisconnect, onOpenConnectionDia
           </>
         )}
         {activeTab?.isExecuting && <span>Executing...</span>}
-        <kbd className="rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px] text-muted-foreground">Ctrl+K</kbd>
+        <button
+          type="button"
+          onClick={() => setCommandPaletteOpen(true)}
+          title="Open command palette"
+          className="rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          {formatBinding(commandPaletteBinding)}
+        </button>
         {/* Theme selector dropdown */}
         <div className="relative" ref={themeDropdownRef}>
           <Button

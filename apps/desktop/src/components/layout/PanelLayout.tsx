@@ -16,9 +16,10 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { cn } from '@/lib/utils';
 import { quoteIdentifier } from '@/lib/sql-utils';
 import { ipc } from '@/lib/ipc';
-import { Table2, Columns3 } from 'lucide-react';
+import { Table2, Columns3, Play } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { usePreferencesStore } from '@/stores/preferencesStore';
+import { useShortcutStore, formatBinding } from '@/stores/shortcutStore';
 import type { QueryResult } from '@/lib/types';
 import type { QueryTab, TabViewMode } from '@/stores/queryStore';
 
@@ -91,7 +92,7 @@ function SplitEditorResults({ children }: SplitEditorResultsProps) {
         {children[0]}
       </div>
       <div
-        className="h-1 shrink-0 cursor-row-resize bg-border transition-colors hover:bg-primary/30"
+        className="relative h-[3px] shrink-0 cursor-row-resize bg-transparent transition-colors before:absolute before:inset-x-0 before:-top-[2px] before:-bottom-[2px] before:content-[''] hover:bg-primary/40 active:bg-primary/60"
         onMouseDown={handleMouseDown}
       />
       <div className="flex flex-1 flex-col overflow-hidden border-t border-border">
@@ -530,9 +531,20 @@ function renderResult(
       </div>
     );
   }
+  const executeBinding = useShortcutStore.getState().getBinding('editor.execute');
+  const commandPaletteBinding = useShortcutStore.getState().getBinding('global.commandPalette');
   return (
-    <div className="flex h-full items-center justify-center text-muted-foreground">
-      <p className="text-sm">Run a query to see results</p>
+    <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground">
+      <Play className="h-8 w-8 text-muted-foreground/40" />
+      <p className="text-sm">
+        Run a query to see results —{' '}
+        <kbd className="rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px]">
+          {formatBinding(executeBinding)}
+        </kbd>
+      </p>
+      <p className="text-xs text-muted-foreground/70">
+        {formatBinding(commandPaletteBinding)} — command palette
+      </p>
     </div>
   );
 }

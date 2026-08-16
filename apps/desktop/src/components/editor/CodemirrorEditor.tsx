@@ -1,9 +1,10 @@
 import { useEffect, useRef } from 'react';
-import { EditorView, type ViewUpdate } from '@codemirror/view';
+import { EditorView, placeholder, type ViewUpdate } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { sql, PostgreSQL } from '@codemirror/lang-sql';
 import { autocompletion, acceptCompletion } from '@codemirror/autocomplete';
 import { keymap } from '@codemirror/view';
+import { useUIStore } from '@/stores/uiStore';
 
 import {
   baseSetup,
@@ -119,9 +120,11 @@ export function CodemirrorEditor({ value, onChange, onExecute }: Props) {
           maxRenderedOptions: 50,
         }),
         keymap.of([{ key: 'Tab', run: acceptCompletion }]),
+        placeholder('Écrire une requête… ⌘↵ pour exécuter'),
         purrqlKeybindings({
           onExecute: () => executeRef.current(),
           onFormat: () => { void formatRef.current(); },
+          onCommandPalette: () => useUIStore.getState().setCommandPaletteOpen(true),
         }),
         EditorView.updateListener.of((update: ViewUpdate) => {
           if (!update.docChanged) return;
