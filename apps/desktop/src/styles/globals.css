@@ -221,3 +221,39 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { @apply bg-muted-foreground/30 rounded; }
 ::-webkit-scrollbar-thumb:hover { @apply bg-muted-foreground/50; }
+
+/* Boot spinner — lives here rather than inline in index.html: a <style> tag in
+   the shipped HTML makes Tauri add a nonce to `style-src`, which drops
+   'unsafe-inline' and gets CodeMirror's generated stylesheets refused. */
+#root:empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background: oklch(0.2679 0.0036 106.6427);
+}
+
+#root:empty::after {
+  content: "";
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid oklch(0.4336 0.0113 100.2195);
+  border-top-color: oklch(0.6724 0.1308 38.7559);
+  animation: root-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #root:empty::after {
+    animation: root-pulse 1.2s ease-in-out infinite;
+    border-top-color: oklch(0.4336 0.0113 100.2195);
+  }
+}
+
+@keyframes root-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes root-pulse {
+  50% { opacity: 0.25; }
+}

@@ -59,12 +59,21 @@ export function lineNumbersExtension(show: boolean): Extension {
   return show ? [lineNumbers(), highlightActiveLineGutter()] : [];
 }
 
+// Tauri stamps a nonce on every <style> of the shipped HTML, and a nonce in
+// `style-src` makes the CSP disregard 'unsafe-inline' — CodeMirror's generated
+// stylesheets are then refused and the editor renders unstyled.
+function cspNonceExtension(): Extension {
+  const nonce = document.querySelector<HTMLStyleElement>('style[nonce]')?.nonce;
+  return nonce ? EditorView.cspNonce.of(nonce) : [];
+}
+
 // ---------------------------------------------------------------------------
 // Base setup — standard extensions shared by every editor instance
 // ---------------------------------------------------------------------------
 
 export function baseSetup(): Extension[] {
   return [
+    cspNonceExtension(),
     highlightActiveLine(),
     drawSelection(),
     rectangularSelection(),
