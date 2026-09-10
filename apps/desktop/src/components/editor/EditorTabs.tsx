@@ -163,6 +163,7 @@ export function EditorTabs({ tabs, activeTabId, onSelectTab, onCloseTab, onNewTa
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      <div data-tauri-drag-region className="h-full flex-1" />
     </div>
   );
 }
