@@ -515,6 +515,8 @@ export const Sidebar = React.memo(function Sidebar({ onOpenConnectionDialog }: S
         style={{ width: 'var(--sidebar-width)' }}
       >
         {/* Database selector — pl-[78px] reserves space for macOS traffic lights.
+            The h-9 height is coupled to trafficLightPosition.y in tauri.conf.json:
+            tao sizes the titlebar container to (button height + y), so 14 + 20 ≈ 36 centers the buttons.
             The row is a window drag region; interactive controls opt out with no-drag. */}
         <div className="relative border-b border-sidebar-border h-9" ref={dbSelectorRef}>
           <div
