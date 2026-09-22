@@ -56,6 +56,7 @@ Most database tools are either **bloated Electron apps** that eat your RAM, or *
 | **Batch queries** | Execute multiple statements in a single run |
 | **Query history** | Full history with search, replay, and versioning |
 | **SQL snippets** | Save and reuse common query templates |
+| **Saved queries** | Name and persist queries per connection and database, reopen them from the command palette |
 
 ### Data Tools
 

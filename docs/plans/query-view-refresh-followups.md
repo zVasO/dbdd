@@ -27,6 +27,14 @@ Chantier livré sur `master` (`39430d7..b409722`, 6 commits), revue finale : pr�
 - **⌘K fiabilisé** : binding CM6 explicite `Prec.highest` (marche avec le focus dans l'éditeur), badge status bar honnête (⌘K sur macOS, respecte les rebinds, cliquable). Audit modal : aucun leak (l'hypothèse initiale) ; bug inverse découvert et ticketé (#12).
 - **Requêtes sauvegardées par base de données** : table SQLite `saved_queries` (clée sur le **config id persistant** — un Critical de revue a corrigé un cléage initial sur le handle éphémère), cascade à la suppression de connexion, nommage + description + base (« All databases » = NULL), groupe « Saved queries » dans la palette ⌘K groupé par base, dialogue de gestion (recherche/renommer/supprimer), bouton Bookmark dans la toolbar avec fourche « Update »/« Save as new », lien `savedQueryId` sur l'onglet (dédoublonnage à l'ouverture), garde anti-écrasement par SQL vide, garde anti-double-submit synchrone.
 
+## Post-chantier (2026-09-09 → 2026-09-10)
+
+- `2e83a2b` **Thème éditeur invisible en build packagé** : le spinner de boot en `<style>` inline dans `index.html` recevait un nonce de tauri-codegen, `set_csp` ajoutait `'nonce-N'` à `style-src`, ce qui (CSP3) neutralise `'unsafe-inline'` — toutes les feuilles générées par CodeMirror étaient refusées (pas de gouttière, pas de mono, pas de coloration, tooltip d'autocomplétion mal positionné). Invisible en dev (Vite, aucune CSP). Spinner déplacé dans `globals.css`, nonce transmis à CodeMirror (`setup.ts`). **Le smoke « éditeur lisible » doit se faire sur un build packagé, pas seulement en `pnpm dev`.**
+- `05e0c29` bouton rouge macOS (permission `core:window:allow-destroy` manquante) et feux tricolores recentrés sur la ligne du sélecteur.
+- `80d5ad9` zone vide de la barre d'onglets = drag region Tauri (déplacement + double-clic zoom) ; header du sidebar aligné sur le même mécanisme.
+
+Aucun des tickets 1–13 ci-dessus n'est touché par ces commits : tous restent ouverts.
+
 ## Smoke manuel (~1 min)
 
 Éditeur lisible dans les DEUX modes (ligne active subtile, sélection orangée, syntaxe contrastée) ; ⌘K depuis l'éditeur focus ; sauvegarder une requête nommée sous une base → ⌘K → la retrouver dans son groupe → l'ouvrir (active l'onglet existant si déjà ouvert) → la modifier → « Update » → **se déconnecter/reconnecter → toujours listée** ; éditeur vidé → bouton Update désactivé.

@@ -1,5 +1,7 @@
 # Query View Refresh Implementation Plan
 
+> **Statut (2026-09-22) : livré sur `master` (`d0b6cd1..b409722`, 2026-08-16).** Tickets restants, findings parqués et smoke manuel dans [query-view-refresh-followups.md](query-view-refresh-followups.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Un éditeur SQL visuellement cohérent dans les deux modes (le thème actuel est cassé), un ⌘K fiable qui donne accès aux requêtes, et un système de requêtes sauvegardées **par base de données** avec nommage, persisté en SQLite.
@@ -38,7 +40,7 @@ Le commit utilisateur e57f9e4 a remplacé un `cssVarToHex` mort-né (il ne parsa
 **Interfaces:**
 - Produces: `purrqlTheme(isDark)` même signature ; keybindings gagne une entrée optionnelle `onCommandPalette?: () => void` dans `buildEditorKeymap` (T3 n'en dépend pas).
 
-- [ ] **Step 1: Réécrire la palette de `purrqlTheme`**
+- [x] **Step 1: Réécrire la palette de `purrqlTheme`**
 
 Remplacer les sept locals + trois hardcodés par (exactement ces valeurs, ajustables par la revue si un contraste est insuffisant) :
 
@@ -72,19 +74,19 @@ Règles du `EditorView.theme` (garder la structure actuelle, corriger/ajouter) :
 
 `HighlightStyle` : keyword → `keywordColor` + bold ; string → `stringColor` ; number → `numberColor` ; comment → `mutedFg` + italic ; operator → `fg` ; typeName/function → `keywordColor` sans bold ; `propertyName` → `fg`. Vérifier dans setup.ts quels tags sont réellement mappés par le langage SQL et couvrir `tags.function(tags.variableName)` si présent.
 
-- [ ] **Step 2: ⌘K inarrêtable**
+- [x] **Step 2: ⌘K inarrêtable**
 
 1. `keybindings.ts` : ajouter à `buildEditorKeymap` un binding `Mod-k` en `Prec.highest` appelant `useUIStore.getState().setCommandPaletteOpen(true)` et retournant `true` (import direct du store, comme les autres fichiers font ; ou paramètre callback si le fichier est aujourd'hui pur — regarder et suivre la convention du fichier). Sans lui, un focus dans l'éditeur laisse marcher le handler window (pas de binding CM sur Mod-k) MAIS le rend dépendant de la propagation — le binding explicite garantit le comportement et documente l'intention.
 2. Audit du verrou modal : `grep -n "pushModal\|popModal" apps/desktop/src -r` — vérifier que CHAQUE pushModal a son popModal dans le cleanup du même effet, y compris les dialogs lazy (CsvImportDialog, ImportDialog, ExportDialog, DataGeneratorDialog, ShareDialog, ConnectionDialog, NotesPanel, PreferencesDialog, SnippetPalette, OpenAnything). Un id qui reste dans la pile après fermeture tue TOUS les raccourcis (`when: !isModalOpen()`) — c'est l'explication la plus probable du « ⌘K ne fait rien » de l'utilisateur. Corriger tout déséquilibre trouvé et le nommer dans le rapport. Ajouter en défense : dans `useKeyboardShortcut` RIEN ; dans `uiStore`, si le même id est push deux fois, dédupliquer (Set-like) pour rendre le leak inoffensif — seulement si un leak a été trouvé.
 3. `StatusBar.tsx:182` : remplacer le `<kbd>Ctrl+K</kbd>` codé en dur par le binding réel formaté (le shortcutStore expose la définition ; utiliser le même helper d'affichage que ShortcutsSection — `formatBinding` ou équivalent, afficher ⌘K sur macOS) et rendre le badge cliquable (`onClick={() => setCommandPaletteOpen(true)}`).
 
-- [ ] **Step 3: Polish minimal de la vue requête** (dans le périmètre « refonte », sans toucher à la structure)
+- [x] **Step 3: Polish minimal de la vue requête** (dans le périmètre « refonte », sans toucher à la structure)
 
 - `SqlEditor`/CodemirrorEditor : ajouter un `placeholder` CM6 (« Écrire une requête… ⌘↵ pour exécuter ») via l'extension `placeholder()` de @codemirror/view.
 - L'état vide des résultats (« Run a query to see results », PanelLayout.tsx:533-537) : remplacer par un empty-state centré avec l'icône Play, le raccourci ⌘↵ dans un `<kbd>`, et une ligne « ⌘K — palette de commandes ». Classes tokens uniquement.
 - Le handle de split vertical (PanelLayout SplitEditorResults `h-1 bg-border`) : passer à `h-[3px] bg-transparent hover:bg-primary/40 active:bg-primary/60` avec une zone de hit de 7px (`before:` ou padding) — l'actuel est un trait dur.
 
-- [ ] **Step 4: Vérification, commit, push**
+- [x] **Step 4: Vérification, commit, push**
 
 Trio frontend. Self-check avant commit : grep `#264f78|#add6ff|#ce9178|#a31515|#b5cea8|#098658` dans theme.ts → zéro ; les deux modes lisibles (raisonner sur les L oklch : light bg L≈0.98 / dark bg L≈0.27).
 
@@ -148,9 +150,9 @@ export interface SavedQuery {
 ```
 ipc.ts : `saveSavedQuery(query: SavedQuery)`, `listSavedQueries(connectionId)` (dédupé `savedQueries:${connectionId}`), `deleteSavedQuery(id)`.
 
-- [ ] **Step 1: TDD store** — tests d'abord dans store.rs (pattern existant, base temporaire) : upsert puis list (tri database/name, NULL database en premier) ; upsert même id = update (updated_at change, count stable) ; delete ; list d'une connexion sans requêtes = vide ; les requêtes d'une autre connexion n'apparaissent pas. Rouge (méthodes absentes) → implémenter → vert.
-- [ ] **Step 2: Migration + commandes + registre + bindings TS.** La suppression d'une connexion sauvegardée doit nettoyer ses requêtes : ajouter le DELETE dans `delete_connection` (store.rs:133+, où les passwords sont déjà nettoyés — vérifier et faire pareil) + un test.
-- [ ] **Step 3: Vérification (les cinq commandes), commit, push**
+- [x] **Step 1: TDD store** — tests d'abord dans store.rs (pattern existant, base temporaire) : upsert puis list (tri database/name, NULL database en premier) ; upsert même id = update (updated_at change, count stable) ; delete ; list d'une connexion sans requêtes = vide ; les requêtes d'une autre connexion n'apparaissent pas. Rouge (méthodes absentes) → implémenter → vert.
+- [x] **Step 2: Migration + commandes + registre + bindings TS.** La suppression d'une connexion sauvegardée doit nettoyer ses requêtes : ajouter le DELETE dans `delete_connection` (store.rs:133+, où les passwords sont déjà nettoyés — vérifier et faire pareil) + un test.
+- [x] **Step 3: Vérification (les cinq commandes), commit, push**
 
 ```bash
 git add crates/purrql-config/ apps/desktop/src-tauri/ apps/desktop/src/lib/ipc.ts apps/desktop/src/lib/types.ts
@@ -190,10 +192,10 @@ Le flux complet : bouton « Save query » dans la toolbar → dialogue de nommag
   ```
   `useQueryStore.openSavedQuery(q)` — crée/active l'onglet.
 
-- [ ] **Step 1: TDD savedQueryStore** — tests d'abord (groupByDatabase pur : tri, NULL premier ; save stampe updated_at et remplace l'entrée locale ; remove retire ; load remplace la tranche sans toucher les autres connexions). Rouge → implémenter → vert.
-- [ ] **Step 2: Dialogues + toolbar.** SaveQueryDialog : champs Nom (requis), Description, Base (Select alimenté par schemaStore.databases + option « Toutes les bases » = NULL, pré-sélection = `tab.database ?? null`) ; en mode update, pré-rempli. SavedQueriesDialog : `Command` de cmdk OU liste simple ScrollArea groupée — choisir le plus simple cohérent avec l'existant ; chaque ligne : nom, base badge, aperçu SQL tronqué, actions Ouvrir/Renommer/Supprimer (confirm inline, pas de nouveau dialog). Les DEUX dialogues push/popModal.
-- [ ] **Step 3: Palette + tabs + queryStore + session.** Le groupe palette n'apparaît que si la connexion active a des requêtes ; `load(connectionId)` est déclenché à l'ouverture de la palette et au connect (chercher où `loadSavedConnections`-équivalent se fait au connect — connectionStore.connect — et suivre). Ouvrir une requête déjà ouverte dans un onglet (même savedQueryId) ACTIVE l'onglet existant au lieu d'en créer un deuxième.
-- [ ] **Step 4: Vérification (trio frontend), commit, push**
+- [x] **Step 1: TDD savedQueryStore** — tests d'abord (groupByDatabase pur : tri, NULL premier ; save stampe updated_at et remplace l'entrée locale ; remove retire ; load remplace la tranche sans toucher les autres connexions). Rouge → implémenter → vert.
+- [x] **Step 2: Dialogues + toolbar.** SaveQueryDialog : champs Nom (requis), Description, Base (Select alimenté par schemaStore.databases + option « Toutes les bases » = NULL, pré-sélection = `tab.database ?? null`) ; en mode update, pré-rempli. SavedQueriesDialog : `Command` de cmdk OU liste simple ScrollArea groupée — choisir le plus simple cohérent avec l'existant ; chaque ligne : nom, base badge, aperçu SQL tronqué, actions Ouvrir/Renommer/Supprimer (confirm inline, pas de nouveau dialog). Les DEUX dialogues push/popModal.
+- [x] **Step 3: Palette + tabs + queryStore + session.** Le groupe palette n'apparaît que si la connexion active a des requêtes ; `load(connectionId)` est déclenché à l'ouverture de la palette et au connect (chercher où `loadSavedConnections`-équivalent se fait au connect — connectionStore.connect — et suivre). Ouvrir une requête déjà ouverte dans un onglet (même savedQueryId) ACTIVE l'onglet existant au lieu d'en créer un deuxième.
+- [x] **Step 4: Vérification (trio frontend), commit, push**
 
 ```bash
 git add apps/desktop/src/stores/ apps/desktop/src/components/editor/ apps/desktop/src/components/layout/CommandPalette.tsx apps/desktop/src/lib/sessionRecovery.ts
