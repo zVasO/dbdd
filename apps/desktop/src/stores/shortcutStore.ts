@@ -48,6 +48,7 @@ export const SHORTCUT_DEFS: ShortcutDef[] = [
 
   // Editor
   { id: 'editor.execute', label: 'Execute Query', category: 'editor', default: { key: 'Enter', modifiers: ['ctrl'] } },
+  { id: 'editor.executeAll', label: 'Execute Script', category: 'editor', default: { key: 'Enter', modifiers: ['ctrl', 'shift'] } },
   { id: 'editor.format', label: 'Format SQL', category: 'editor', default: { key: 'i', modifiers: ['ctrl'] } },
   { id: 'editor.toggleComment', label: 'Toggle Comment', category: 'editor', default: { key: '/', modifiers: ['ctrl'] } },
 

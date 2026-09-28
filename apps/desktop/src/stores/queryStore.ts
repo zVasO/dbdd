@@ -6,7 +6,7 @@ import { useConnectionStore } from './connectionStore';
 import { usePreferencesStore } from './preferencesStore';
 import { useResultStore, registerAdjacentTabResolver, FLUSH_THRESHOLD } from './resultStore';
 import { saveSession } from '../lib/sessionRecovery';
-import { splitStatements } from '../lib/sql-utils';
+import { splitStatements, resolveSqlToRun } from '../lib/sql-utils';
 import type { QueryResult, QueryHistoryEntry, ColumnarResult, SavedQuery } from '../lib/types';
 
 async function maybeNotifyQueryComplete(
@@ -92,7 +92,12 @@ interface QueryState {
   setHighlightedColumn: (tabId: string, columnName: string | null) => void;
   setViewMode: (tabId: string, mode: TabViewMode) => void;
   setActiveResult: (tabId: string, index: number) => void;
-  executeQuery: (connectionId: string, tabId: string) => Promise<void>;
+  /** Run the tab's whole script, or `sqlOverride` when given */
+  executeQuery: (connectionId: string, tabId: string, sqlOverride?: string) => Promise<void>;
+  /** Run the editor selection, or the statement under the cursor */
+  executeAtCursor: (connectionId: string, tabId: string) => Promise<void>;
+  /** Remember the editor selection of a tab (not reactive — no re-render) */
+  setEditorSelection: (tabId: string, range: EditorSelectionRange) => void;
   cancelQuery: (connectionId: string, queryId: string) => Promise<void>;
   loadHistory: (connectionId: string) => Promise<void>;
   reorderTabs: (fromIndex: number, toIndex: number) => void;
@@ -120,6 +125,18 @@ interface ActiveStream {
 }
 
 const activeStreams = new Map<string, ActiveStream>();
+
+export interface EditorSelectionRange {
+  from: number;
+  to: number;
+}
+
+/**
+ * Last editor selection per tab. Module-scoped rather than store state: the
+ * cursor moves on every keystroke and nothing renders from it, it is only read
+ * when a run needs to know which statement is under the cursor.
+ */
+const editorSelections = new Map<string, EditorSelectionRange>();
 
 /** Cancellation is best-effort: a driver without server-side cancel still frees the tab. */
 function cancelQuietly(connectionId: string, queryId: string): void {
@@ -237,6 +254,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   },
 
   closeTab: (id) => {
+    editorSelections.delete(id);
     const connId = getActiveConnectionId();
     const { allTabs, activeTabIds } = get();
     const newAllTabs = allTabs.filter((t) => t.id !== id);
@@ -315,15 +333,35 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     useResultStore.getState().setActiveResultIndex(tabId, index);
   },
 
-  executeQuery: async (connectionId, tabId) => {
+  setEditorSelection: (tabId, range) => {
+    editorSelections.set(tabId, range);
+  },
+
+  executeAtCursor: async (connectionId, tabId) => {
     const tab = get().allTabs.find((t) => t.id === tabId);
     if (!tab || !tab.sql.trim()) return;
+    const dbType = useConnectionStore
+      .getState()
+      .activeConnections.find((c) => c.connectionId === connectionId)?.config.db_type;
+    const { from, to } = editorSelections.get(tabId) ?? { from: 0, to: 0 };
+    // Clamp: the remembered range can outlive an external edit of the SQL
+    const clamp = (n: number) => Math.min(Math.max(n, 0), tab.sql.length);
+    const sql = resolveSqlToRun(tab.sql, clamp(from), clamp(to), dbType ?? '');
+    if (!sql) return;
+    await get().executeQuery(connectionId, tabId, sql);
+  },
+
+  executeQuery: async (connectionId, tabId, sqlOverride) => {
+    const tab = get().allTabs.find((t) => t.id === tabId);
+    if (!tab) return;
+    const sql = sqlOverride ?? tab.sql;
+    if (!sql.trim()) return;
     // Guard re-entrancy (e.g. spamming Cmd+Enter): a second run would register
     // a second stream on the same tab, interleaving rows. Stop the current one first.
     if (tab.isExecuting) return;
 
     const activity = useActivityStore.getState();
-    const activityId = activity.logStart(tab.sql, connectionId);
+    const activityId = activity.logStart(sql, connectionId);
     const startTime = performance.now();
     // Result-store setters write their key unconditionally, so anything that
     // lands after the tab closed would resurrect an entry `clearResult` just
@@ -338,7 +376,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     const dbType = useConnectionStore
       .getState()
       .activeConnections.find((c) => c.connectionId === connectionId)?.config.db_type;
-    const statements = splitStatements(tab.sql, dbType ?? '');
+    const statements = splitStatements(sql, dbType ?? '');
     const isMulti = statements.length > 1;
 
     try {
@@ -368,7 +406,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         // Detect when single-shot is appropriate:
         // - Table browse queries (tab.table set) always use single-shot — bounded by table size
         // - Queries with small explicit LIMIT use single-shot — lower overhead than streaming
-        const limitMatch = tab.sql.match(/\bLIMIT\s+(\d+)/i);
+        const limitMatch = sql.match(/\bLIMIT\s+(\d+)/i);
         const hasSmallLimit = limitMatch && parseInt(limitMatch[1], 10) <= 5000;
         const isTableBrowse = !!tab.table;
 
@@ -380,7 +418,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
           activity.attachQueryId(activityId, queryId);
           set((s) => updateTab(s, tabId, (t) => ({ ...t, activeQueryId: queryId })));
 
-          const result = await ipc.executeQueryColumnar(connectionId, tab.sql, queryId);
+          const result = await ipc.executeQueryColumnar(connectionId, sql, queryId);
           const durationMs = Math.round(performance.now() - startTime);
           useActivityStore.getState().logSuccess(activityId, durationMs, result.row_count);
           if (!tabStillOpen()) return;
@@ -451,7 +489,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
           // Now start the stream — listeners are already registered
           try {
-            await ipc.executeQueryStream(connectionId, tab.sql, FLUSH_THRESHOLD, queryId);
+            await ipc.executeQueryStream(connectionId, sql, FLUSH_THRESHOLD, queryId);
           } catch (e) {
             releaseStream(tabId, false);
             throw e;

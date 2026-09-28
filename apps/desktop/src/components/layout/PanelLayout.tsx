@@ -120,7 +120,7 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const tabResult = useResultStore((s) => activeTab ? s.results[activeTab.id] : undefined);
 
-  const { updateSql, executeQuery, createTab, closeTab, setActiveTab: setPrimaryActiveTab, setEditorVisible, setViewMode, setActiveResult } = useQueryStore.getState();
+  const { updateSql, executeQuery, executeAtCursor, setEditorSelection, createTab, closeTab, setActiveTab: setPrimaryActiveTab, setEditorVisible, setViewMode, setActiveResult } = useQueryStore.getState();
   const setSecondaryActiveTab = useUIStore.getState().setSecondaryActiveTabId;
   const setActiveTab = paneId === 'secondary' ? setSecondaryActiveTab : setPrimaryActiveTab;
 
@@ -356,7 +356,7 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
                   isExecuting={activeTab.isExecuting}
                   onRun={() => {
                     if (activeConnectionId && activeTabId) {
-                      executeQuery(activeConnectionId, activeTabId);
+                      executeAtCursor(activeConnectionId, activeTabId);
                     }
                   }}
                 />
@@ -366,9 +366,15 @@ export function PanelLayout({ paneId = 'primary', onOpenConnectionDialog }: Pane
                     onChange={(val) => updateSql(activeTab.id, val)}
                     onExecute={() => {
                       if (activeConnectionId) {
+                        executeAtCursor(activeConnectionId, activeTab.id);
+                      }
+                    }}
+                    onExecuteAll={() => {
+                      if (activeConnectionId) {
                         executeQuery(activeConnectionId, activeTab.id);
                       }
                     }}
+                    onSelectionChange={(range) => setEditorSelection(activeTab.id, range)}
                   />
                   <>
                     {(tabResult?.allColumnarResults.length ?? 0) > 1 && (
