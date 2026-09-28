@@ -29,7 +29,12 @@ import { useThemeStore } from '@/stores/themeStore';
 interface Props {
   value: string;
   onChange: (value: string) => void;
+  /** Run the selection, or the statement under the cursor */
   onExecute: () => void;
+  /** Run the whole script */
+  onExecuteAll: () => void;
+  /** Called whenever the selection or cursor moves */
+  onSelectionChange: (range: { from: number; to: number }) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -42,7 +47,7 @@ const DEBOUNCE_MS = 150;
 // Component
 // ---------------------------------------------------------------------------
 
-export function CodemirrorEditor({ value, onChange, onExecute }: Props) {
+export function CodemirrorEditor({ value, onChange, onExecute, onExecuteAll, onSelectionChange }: Props) {
   // --- Store subscriptions ---
   const fontSize = usePreferencesStore((s) => s.editorFontSize);
   const showLineNumbers = usePreferencesStore((s) => s.editorShowLineNumbers);
@@ -62,9 +67,13 @@ export function CodemirrorEditor({ value, onChange, onExecute }: Props) {
   // Stable callback refs to avoid stale closures inside CM6 listeners
   const onChangeRef = useRef(onChange);
   const onExecuteRef = useRef(onExecute);
+  const onExecuteAllRef = useRef(onExecuteAll);
+  const onSelectionChangeRef = useRef(onSelectionChange);
 
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
   useEffect(() => { onExecuteRef.current = onExecute; }, [onExecute]);
+  useEffect(() => { onExecuteAllRef.current = onExecuteAll; }, [onExecuteAll]);
+  useEffect(() => { onSelectionChangeRef.current = onSelectionChange; }, [onSelectionChange]);
 
   // --- Format handler (shared between keybinding and DOM event) ---
   const formatRef = useRef(async () => {
@@ -87,8 +96,8 @@ export function CodemirrorEditor({ value, onChange, onExecute }: Props) {
     }
   });
 
-  // --- Execute handler: flush debounce, sync doc, then call onExecute ---
-  const executeRef = useRef(() => {
+  // --- Execute handlers: flush debounce, sync doc and cursor, then run ---
+  const flushRef = useRef(() => {
     const view = viewRef.current;
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
@@ -98,8 +107,17 @@ export function CodemirrorEditor({ value, onChange, onExecute }: Props) {
       const currentDoc = view.state.doc.toString();
       lastExternalValueRef.current = currentDoc;
       onChangeRef.current(currentDoc);
+      const { from, to } = view.state.selection.main;
+      onSelectionChangeRef.current({ from, to });
     }
+  });
+  const executeRef = useRef(() => {
+    flushRef.current();
     onExecuteRef.current();
+  });
+  const executeAllRef = useRef(() => {
+    flushRef.current();
+    onExecuteAllRef.current();
   });
 
   // --- Mount: create EditorView ---
@@ -126,10 +144,15 @@ export function CodemirrorEditor({ value, onChange, onExecute }: Props) {
         ),
         purrqlKeybindings({
           onExecute: () => executeRef.current(),
+          onExecuteAll: () => executeAllRef.current(),
           onFormat: () => { void formatRef.current(); },
           onCommandPalette: () => useUIStore.getState().setCommandPaletteOpen(true),
         }),
         EditorView.updateListener.of((update: ViewUpdate) => {
+          if (update.selectionSet || update.docChanged) {
+            const { from, to } = update.state.selection.main;
+            onSelectionChangeRef.current({ from, to });
+          }
           if (!update.docChanged) return;
           const doc = update.state.doc.toString();
           lastExternalValueRef.current = doc;

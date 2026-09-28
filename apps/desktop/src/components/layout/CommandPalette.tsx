@@ -100,6 +100,16 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
 
   function handleRunQuery() {
     runAndClose(() => {
+      const { activeTabId, executeAtCursor } = useQueryStore.getState();
+      const connectionId = useConnectionStore.getState().activeConnectionId;
+      if (activeTabId && connectionId) {
+        executeAtCursor(connectionId, activeTabId);
+      }
+    });
+  }
+
+  function handleRunScript() {
+    runAndClose(() => {
       const { activeTabId, executeQuery } = useQueryStore.getState();
       const connectionId = useConnectionStore.getState().activeConnectionId;
       if (activeTabId && connectionId) {
@@ -177,6 +187,13 @@ export function CommandPalette({ onOpenPreferences, onOpenCsvImport, onOpenConne
                 shortcut={formatBinding(sc('editor.execute'))}
               >
                 Run Query
+              </CommandItem>
+              <CommandItem
+                onSelect={handleRunScript}
+                icon={<Play className="h-4 w-4" />}
+                shortcut={formatBinding(sc('editor.executeAll'))}
+              >
+                Run Script
               </CommandItem>
               <CommandItem
                 onSelect={handleCloseTab}

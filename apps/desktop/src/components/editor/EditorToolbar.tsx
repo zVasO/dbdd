@@ -12,6 +12,7 @@ import {
   TooltipProvider,
 } from '@/components/ui/tooltip';
 import { Play, Save, Eye, Undo2, Redo2, Trash2, Loader2, Wand2, FolderOpen, Download, Sparkles, Brain, Zap, GitBranch, Check, X, StopCircle, Bookmark, BookmarkCheck, BookmarkPlus, ChevronDown } from 'lucide-react';
+import { useShortcutStore, formatBinding } from '@/stores/shortcutStore';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -158,7 +159,7 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
               Run
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Run query (Ctrl+Enter)</TooltipContent>
+          <TooltipContent>Run the statement under the cursor ({formatBinding(useShortcutStore.getState().getBinding('editor.execute'))})</TooltipContent>
         </Tooltip>
 
         {/* Cancel query */}

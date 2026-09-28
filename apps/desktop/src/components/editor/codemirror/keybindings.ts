@@ -9,6 +9,7 @@ import { useUIStore } from '@/stores/uiStore';
 
 interface KeybindingCallbacks {
   onExecute: () => void;
+  onExecuteAll: () => void;
   onFormat: () => void;
   onCommandPalette?: () => void;
 }
@@ -66,16 +67,25 @@ export function purrqlKeybindings(callbacks: KeybindingCallbacks): Extension {
   const { getBinding } = useShortcutStore.getState();
 
   const executeBinding = getBinding('editor.execute');
+  const executeAllBinding = getBinding('editor.executeAll');
   const formatBinding = getBinding('editor.format');
   const commentBinding = getBinding('editor.toggleComment');
 
-  // Execute binding gets highest priority so Mod-Enter always fires,
+  // Execute bindings get highest priority so Mod-Enter always fires,
   // even when the autocomplete popup is open.
   const executeKeymap = Prec.highest(keymap.of([
     {
       key: bindingToCm6Key(executeBinding),
       run: () => {
         callbacks.onExecute();
+        return true;
+      },
+      preventDefault: true,
+    },
+    {
+      key: bindingToCm6Key(executeAllBinding),
+      run: () => {
+        callbacks.onExecuteAll();
         return true;
       },
       preventDefault: true,
