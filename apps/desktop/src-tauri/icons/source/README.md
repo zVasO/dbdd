@@ -1,7 +1,8 @@
 # App icon sources
 
-- `icon.svg`: the 1024 × 1024 master ("Verre liquide": stacked glass layers,
-  the front one tinted with Loom's orange accent).
+- `icon.svg`: the 1024 × 1024 master ("Verre liquide · Prisme": three
+  isometric glass slabs stacked like a database, the top one tinted with
+  Loom's orange accent).
 - `icon-small.svg`: the same icon simplified for 32 px and below (no glow,
   more opaque glass), so small sizes stay crisp instead of being downscaled.
 - `icon.png`, `small-16.png`, `small-24.png`, `small-32.png`: renders of the
