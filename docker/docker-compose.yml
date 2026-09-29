@@ -1,12 +1,12 @@
-name: vasodb-testdata
+name: spool-testdata
 
 services:
   postgres:
     image: postgres:16
-    container_name: vasodb-postgres
+    container_name: spool-postgres
     environment:
-      POSTGRES_USER: vasodb
-      POSTGRES_PASSWORD: vasodb
+      POSTGRES_USER: spool
+      POSTGRES_PASSWORD: spool
       POSTGRES_DB: appdb
     ports:
       - "5433:5432"
@@ -14,18 +14,18 @@ services:
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
       - pg-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U vasodb -d appdb"]
+      test: ["CMD-SHELL", "pg_isready -U spool -d appdb"]
       interval: 5s
       timeout: 3s
       retries: 20
 
   mysql:
     image: mysql:8.4
-    container_name: vasodb-mysql
+    container_name: spool-mysql
     environment:
-      MYSQL_ROOT_PASSWORD: vasodb
-      MYSQL_USER: vasodb
-      MYSQL_PASSWORD: vasodb
+      MYSQL_ROOT_PASSWORD: spool
+      MYSQL_USER: spool
+      MYSQL_PASSWORD: spool
       MYSQL_DATABASE: appdb
     ports:
       - "3307:3306"
@@ -33,7 +33,7 @@ services:
       - ./mysql-init:/docker-entrypoint-initdb.d:ro
       - mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pvasodb"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pspool"]
       interval: 5s
       timeout: 3s
       retries: 30
@@ -43,7 +43,7 @@ services:
   # Base "world" (pays/villes/langues), petite mais réaliste.
   world-db:
     image: ghusta/postgres-world-db:2.12
-    container_name: vasodb-world
+    container_name: spool-world
     profiles: [extra]
     ports:
       - "5434:5432"
@@ -53,13 +53,13 @@ services:
   # idéale pour tester la pagination serveur et les gros COUNT(*).
   employees:
     image: genschsa/mysql-employees
-    container_name: vasodb-employees
+    container_name: spool-employees
     profiles: [extra]
     environment:
-      MYSQL_ROOT_PASSWORD: vasodb
+      MYSQL_ROOT_PASSWORD: spool
     ports:
       - "3308:3306"
-    # user/password/db: root/vasodb/employees
+    # user/password/db: root/spool/employees
 
 volumes:
   pg-data:

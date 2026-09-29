@@ -2,12 +2,12 @@
 resolver = "2"
 members = [
     "apps/desktop/src-tauri",
-    "crates/purrql-core",
-    "crates/purrql-engine",
-    "crates/purrql-mysql",
-    "crates/purrql-sqlite",
-    "crates/purrql-postgres",
-    "crates/purrql-config",
+    "crates/spool-core",
+    "crates/spool-engine",
+    "crates/spool-mysql",
+    "crates/spool-sqlite",
+    "crates/spool-postgres",
+    "crates/spool-config",
 ]
 
 [workspace.dependencies]

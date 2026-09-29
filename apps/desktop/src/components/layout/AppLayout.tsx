@@ -125,7 +125,7 @@ export function AppLayout() {
   const isModalOpen = useUIStore((s) => s.isModalOpen);
   const chatOpen = useAIStore((s) => s.chatOpen);
 
-  // Global commit handler — always mounted, handles vasodb:commit from any source
+  // Global commit handler — always mounted, handles spool:commit from any source
   // (DataGrid Ctrl+S while editing, native menu Save, keyboard shortcut)
   const handleGlobalCommit = useCallback(async () => {
     const changeStore = useChangeStore.getState();
@@ -145,8 +145,8 @@ export function AppLayout() {
   }, []);
 
   useEffect(() => {
-    window.addEventListener('vasodb:commit', handleGlobalCommit);
-    return () => window.removeEventListener('vasodb:commit', handleGlobalCommit);
+    window.addEventListener('spool:commit', handleGlobalCommit);
+    return () => window.removeEventListener('spool:commit', handleGlobalCommit);
   }, [handleGlobalCommit]);
 
   useKeyboardShortcuts([

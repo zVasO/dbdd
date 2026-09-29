@@ -1,5 +1,5 @@
 [package]
-name = "purrql-desktop"
+name = "spool-desktop"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,12 +7,12 @@ edition = "2021"
 tauri-build = { workspace = true }
 
 [dependencies]
-purrql-core = { path = "../../../crates/purrql-core" }
-purrql-engine = { path = "../../../crates/purrql-engine" }
-purrql-config = { path = "../../../crates/purrql-config" }
-purrql-mysql = { path = "../../../crates/purrql-mysql" }
-purrql-sqlite = { path = "../../../crates/purrql-sqlite" }
-purrql-postgres = { path = "../../../crates/purrql-postgres" }
+spool-core = { path = "../../../crates/spool-core" }
+spool-engine = { path = "../../../crates/spool-engine" }
+spool-config = { path = "../../../crates/spool-config" }
+spool-mysql = { path = "../../../crates/spool-mysql" }
+spool-sqlite = { path = "../../../crates/spool-sqlite" }
+spool-postgres = { path = "../../../crates/spool-postgres" }
 tauri = { workspace = true }
 tauri-plugin-stronghold = "2"
 serde = { workspace = true }
@@ -27,6 +27,7 @@ tracing-subscriber = { workspace = true }
 rfd = "0.15"
 csv = "1"
 tauri-plugin-notification = "2"
+dirs = "7"
 
 [features]
 devtools = ["tauri/devtools"]

@@ -32,7 +32,7 @@ function completionTypeForItem(itemType: 'table' | 'column'): string {
 // Main completer
 // ---------------------------------------------------------------------------
 
-export async function purrqlSqlCompleter(
+export async function spoolSqlCompleter(
   ctx: CompletionContext,
 ): Promise<CompletionResult | null> {
   const word = ctx.matchBefore(/\w*/);

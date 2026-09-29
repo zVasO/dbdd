@@ -86,7 +86,7 @@ const FLOAT_DATA_TYPES = new Set(['Float', 'Double']);
 const JSON_DATA_TYPES = new Set(['Json', 'Jsonb']);
 
 /**
- * Mirrors the Rust `column_kind_for_data_type` (purrql-core columnar.rs)
+ * Mirrors the Rust `column_kind_for_data_type` (spool-core columnar.rs)
  * mapping from a column's declared `data_type` to a `ColumnData['kind']`.
  * Unit variants (e.g. `DataType::Integer`) arrive as a bare string; variants
  * with fields (e.g. `DataType::Decimal { .. }`) arrive as a single-key object

@@ -1,4 +1,4 @@
-# Bases de test Docker pour vasodb
+# Bases de test Docker pour spool
 
 ## Démarrage
 
@@ -15,10 +15,10 @@ Reset complet : `docker compose down -v && docker compose up -d`.
 
 | Service | Hôte | Port | User | Mot de passe | Base |
 |---|---|---|---|---|---|
-| Postgres (seed) | localhost | **5433** | `vasodb` | `vasodb` | `appdb` |
-| MySQL (seed) | localhost | **3307** | `vasodb` | `vasodb` | `appdb` (+ `zoo`) |
+| Postgres (seed) | localhost | **5433** | `spool` | `spool` | `appdb` |
+| MySQL (seed) | localhost | **3307** | `spool` | `spool` | `appdb` (+ `zoo`) |
 | Postgres world-db (profil `extra`) | localhost | 5434 | `world` | `world123` | `world-db` |
-| MySQL employees (profil `extra`) | localhost | 3308 | `root` | `vasodb` | `employees` |
+| MySQL employees (profil `extra`) | localhost | 3308 | `root` | `spool` | `employees` |
 
 ## Ce que chaque jeu de données teste
 

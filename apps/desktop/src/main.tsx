@@ -1,3 +1,5 @@
+// Must stay the first import: it renames stored keys before any store reads them.
+import "./lib/migrateLegacyStorage";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";

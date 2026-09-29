@@ -31,7 +31,7 @@ export function WelcomePage() {
     <div className="flex h-full items-center justify-center bg-background p-4">
       <Card className="w-full max-w-2xl max-h-[90vh] flex flex-col">
         <CardHeader>
-          <CardTitle className="text-3xl">VasOdb</CardTitle>
+          <CardTitle className="text-3xl">Spool</CardTitle>
           <CardDescription>Connect to a database to get started.</CardDescription>
         </CardHeader>
         <CardContent className="overflow-y-auto">

@@ -10,8 +10,8 @@ use serde::Serialize;
 use tauri::State;
 use uuid::Uuid;
 
-use purrql_core::error::IpcError;
-use purrql_core::ports::dialect::QueryDialect;
+use spool_core::error::IpcError;
+use spool_core::ports::dialect::QueryDialect;
 
 use crate::commands::query::{
     run_statements_windowed, summarize, BatchSummary, StatementOutcome, DEFAULT_BATCH_WINDOW,

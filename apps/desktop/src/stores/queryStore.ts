@@ -33,8 +33,8 @@ async function maybeNotifyQueryComplete(
     }
     if (permitted) {
       const title = error
-        ? 'VasOdb: Query failed'
-        : 'VasOdb: Query completed';
+        ? 'Spool: Query failed'
+        : 'Spool: Query completed';
       const body = error
         ? `Error: ${String(error).substring(0, 100)}`
         : `Completed in ${(executionTimeMs / 1000).toFixed(1)}s — ${rowCount} rows`;

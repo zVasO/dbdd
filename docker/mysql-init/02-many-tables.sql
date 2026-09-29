@@ -72,5 +72,5 @@ CALL make_wide();
 DROP PROCEDURE make_tables;
 DROP PROCEDURE make_wide;
 
-GRANT ALL PRIVILEGES ON zoo.* TO 'vasodb'@'%';
+GRANT ALL PRIVILEGES ON zoo.* TO 'spool'@'%';
 FLUSH PRIVILEGES;

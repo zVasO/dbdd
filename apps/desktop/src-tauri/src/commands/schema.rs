@@ -3,8 +3,8 @@ use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
 
-use purrql_core::error::IpcError;
-use purrql_core::models::schema::*;
+use spool_core::error::IpcError;
+use spool_core::models::schema::*;
 
 use crate::state::AppState;
 

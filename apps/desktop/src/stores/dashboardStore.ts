@@ -54,7 +54,7 @@ interface DashboardState {
   executeAllWidgets: (dashboardId: string, connectionId: string) => Promise<void>;
 }
 
-const STORAGE_KEY = 'vasodb:dashboards';
+const STORAGE_KEY = 'spool:dashboards';
 
 function persistDashboards(dashboards: Dashboard[]) {
   try {

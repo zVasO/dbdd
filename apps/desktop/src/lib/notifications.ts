@@ -38,7 +38,7 @@ export async function sendNotification(title: string, body: string): Promise<voi
     new Notification(title, {
       body,
       icon: '/icon.png',
-      tag: `vasodb-${Date.now()}`,
+      tag: `spool-${Date.now()}`,
     });
   } catch {
     console.log(`[Notification] ${title}: ${body}`);

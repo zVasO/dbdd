@@ -1,6 +1,6 @@
 <div align="center">
 
-# PurrQL
+# Spool
 
 **A modern, blazing-fast database IDE built with Rust and React.**
 
@@ -24,9 +24,9 @@ Connect, query, explore, and manage your databases — all from one elegant desk
 
 ---
 
-## Why PurrQL?
+## Why Spool?
 
-Most database tools are either **bloated Electron apps** that eat your RAM, or **bare-bones CLI tools** that lack discoverability. PurrQL sits in the sweet spot:
+Most database tools are either **bloated Electron apps** that eat your RAM, or **bare-bones CLI tools** that lack discoverability. Spool sits in the sweet spot:
 
 - **Native performance** — Rust backend via Tauri, not Electron. Tiny memory footprint.
 - **Beautiful UI** — React 19 + Tailwind + Radix. Dark/light themes. Feels like a native app.
@@ -89,7 +89,7 @@ Most database tools are either **bloated Electron apps** that eat your RAM, or *
 
 ## Architecture
 
-PurrQL follows a **clean, layered architecture** with strict separation of concerns:
+Spool follows a **clean, layered architecture** with strict separation of concerns:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -99,13 +99,13 @@ PurrQL follows a **clean, layered architecture** with strict separation of conce
 │                    IPC Layer (Tauri)                     │
 │              Commands · Events · Security               │
 ├─────────────────────────────────────────────────────────┤
-│               Application (purrql-engine)                │
+│               Application (spool-engine)                │
 │     ConnectionManager · SchemaCache · EventBus          │
 ├─────────────────────────────────────────────────────────┤
-│                  Domain (purrql-core)                    │
+│                  Domain (spool-core)                    │
 │        Models · Ports (traits) · Error types            │
 ├────────────┬────────────┬────────────┬──────────────────┤
-│  purrql-   │  purrql-   │  purrql-   │    purrql-      │
+│  spool-    │  spool-    │  spool-    │    spool-        │
 │  mysql     │  postgres  │  sqlite    │    config       │
 │ mysql_async│   sqlx     │ rusqlite   │ keyring + AES   │
 └────────────┴────────────┴────────────┴──────────────────┘
@@ -114,7 +114,7 @@ PurrQL follows a **clean, layered architecture** with strict separation of conce
 ### Workspace Structure
 
 ```
-purrql/
+spool/
 ├── apps/desktop/              # Tauri desktop application
 │   ├── src/                   # React frontend
 │   │   ├── components/        # 27+ UI component modules
@@ -126,12 +126,12 @@ purrql/
 │       └── src/commands/      # IPC command handlers
 │
 ├── crates/                    # Rust library crates
-│   ├── purrql-core/           # Domain models & abstract traits
-│   ├── purrql-engine/         # Connection manager, cache, events
-│   ├── purrql-config/         # Encrypted configuration storage
-│   ├── purrql-mysql/          # MySQL driver implementation
-│   ├── purrql-postgres/       # PostgreSQL driver implementation
-│   └── purrql-sqlite/         # SQLite driver implementation
+│   ├── spool-core/            # Domain models & abstract traits
+│   ├── spool-engine/          # Connection manager, cache, events
+│   ├── spool-config/          # Encrypted configuration storage
+│   ├── spool-mysql/           # MySQL driver implementation
+│   ├── spool-postgres/        # PostgreSQL driver implementation
+│   └── spool-sqlite/          # SQLite driver implementation
 ```
 
 ---
@@ -206,7 +206,7 @@ Native bundles are output to `apps/desktop/src-tauri/target/release/bundle/`.
 
 ## Performance
 
-PurrQL is engineered for speed at every layer:
+Spool is engineered for speed at every layer:
 
 - **84% smaller editor bundle** — CodeMirror 6 replaced Monaco Editor
 - **Streaming query results** — segment-based with batched flush
@@ -258,6 +258,6 @@ Private — All rights reserved.
 
 **Built with Rust and React, powered by Tauri.**
 
-*PurrQL — because your databases deserve better.*
+*Spool — because your databases deserve better.*
 
 </div>

@@ -6,7 +6,7 @@ export interface QueryVersion {
 }
 
 const MAX_VERSIONS_PER_TAB = 50;
-const STORAGE_PREFIX = 'vasodb:query-versions:';
+const STORAGE_PREFIX = 'spool:query-versions:';
 
 function getStorageKey(tabId: string): string {
   return `${STORAGE_PREFIX}${tabId}`;
