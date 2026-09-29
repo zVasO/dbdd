@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Theme, ThemeColors, ThemeTypography, ThemeLayout, ThemeShadows } from '@/lib/themeTypes';
 import { applyThemeToDOM, importTheme, parseCSSVariablesDual } from '@/lib/themeTypes';
-import { BUILT_IN_THEMES, DARK_DEFAULT } from '@/lib/builtInThemes';
+import { BUILT_IN_THEMES, DEFAULT_THEME } from '@/lib/builtInThemes';
 
 const STORAGE_KEY = 'vasodb:themes';
 const ACTIVE_KEY = 'vasodb:active-theme';
@@ -44,7 +44,7 @@ function saveCustomThemes(themes: Theme[]) {
 }
 
 function loadActiveThemeId(): string {
-  return localStorage.getItem(ACTIVE_KEY) || 'dark-default';
+  return localStorage.getItem(ACTIVE_KEY) || DEFAULT_THEME.id;
 }
 
 function saveActiveThemeId(id: string) {
@@ -59,7 +59,7 @@ export const useThemeStore = create<ThemeState>((set, get) => {
   const customThemes = loadCustomThemes();
   const allThemes = [...BUILT_IN_THEMES, ...customThemes];
   const activeId = loadActiveThemeId();
-  const activeTheme = allThemes.find((t) => t.id === activeId) || DARK_DEFAULT;
+  const activeTheme = allThemes.find((t) => t.id === activeId) || DEFAULT_THEME;
 
   // Apply theme on startup (no animation)
   applyThemeToDOM(activeTheme, false);
@@ -103,8 +103,8 @@ export const useThemeStore = create<ThemeState>((set, get) => {
 
     createTheme: (name, baseThemeId) => {
       const base = baseThemeId
-        ? get().themes.find((t) => t.id === baseThemeId) || DARK_DEFAULT
-        : DARK_DEFAULT;
+        ? get().themes.find((t) => t.id === baseThemeId) || DEFAULT_THEME
+        : DEFAULT_THEME;
       const id = generateId();
       const newTheme: Theme = {
         ...structuredClone(base),
@@ -141,7 +141,7 @@ export const useThemeStore = create<ThemeState>((set, get) => {
       set({ themes });
       saveCustomThemes(themes);
       if (get().activeThemeId === id) {
-        get().setActiveTheme('dark-default');
+        get().setActiveTheme(DEFAULT_THEME.id);
       }
     },
 
@@ -277,7 +277,7 @@ export const useThemeStore = create<ThemeState>((set, get) => {
     },
 
     getActiveTheme: () => {
-      return get().themes.find((t) => t.id === get().activeThemeId) || DARK_DEFAULT;
+      return get().themes.find((t) => t.id === get().activeThemeId) || DEFAULT_THEME;
     },
   };
 });

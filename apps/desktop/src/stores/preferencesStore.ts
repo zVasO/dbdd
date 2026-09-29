@@ -38,7 +38,7 @@ const DEFAULTS: Preferences = {
   alternatingRowColors: false,
   safeModeLevel: 'alert',
   defaultCopyFormat: 'json',
-  darkModeSchedule: { mode: 'manual' },
+  darkModeSchedule: { mode: 'system' },
   notifyOnLongQueries: true,
   longQueryThreshold: 5000,
   editorSplitRatio: 40,
