@@ -91,7 +91,7 @@ const defaultDarkColors: ThemeColors = {
 
 export const DARK_DEFAULT: Theme = {
   id: 'dark-default',
-  name: 'Default',
+  name: 'Classic',
   builtIn: true,
   isDark: true,
   colors: defaultLightColors,
@@ -100,6 +100,111 @@ export const DARK_DEFAULT: Theme = {
   layout: sharedLayout,
   shadows: sharedShadows,
 };
+
+// ─── LOOM ───────────────────────────────────────────────
+//
+// Loom's default family (zVasO/loom, ThemeFamily.loom): near-black flat
+// surfaces with outlined cards and a warm orange accent, plus its daylight
+// counterpart. Mapped from Loom's tokens: its window background is the
+// sidebar, its content background the main pane, its surfaces cards and
+// popovers, and its state colours the charts.
+
+const loomTypography = {
+  fontSans: '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif',
+  fontMono: 'ui-monospace, "SF Mono", "Geist Mono", Menlo, monospace',
+  fontSerif: 'ui-serif, Georgia, Cambria, "Times New Roman", Times, serif',
+};
+
+const loomShadows = {
+  sm: '0 1px 2px 0px hsl(0 0% 0% / 0.06)',
+  md: '0 1px 2px 0px hsl(0 0% 0% / 0.06), 0 2px 4px -1px hsl(0 0% 0% / 0.06)',
+  lg: '0 1px 2px 0px hsl(0 0% 0% / 0.06), 0 4px 8px -2px hsl(0 0% 0% / 0.08)',
+};
+
+const loomLightColors: ThemeColors = {
+  background: '#F7F7F9',
+  foreground: '#1C1C21',
+  card: '#FFFFFF',
+  cardForeground: '#1C1C21',
+  popover: '#FFFFFF',
+  popoverForeground: '#1C1C21',
+  primary: '#D9782F',
+  primaryForeground: '#FFF7EF',
+  secondary: '#ECECEF',
+  secondaryForeground: '#1C1C21',
+  muted: '#ECECEF',
+  mutedForeground: '#6B6B76',
+  accent: '#ECECEF',
+  accentForeground: '#1C1C21',
+  destructive: '#C9333C',
+  destructiveForeground: '#FFFFFF',
+  border: '#DCDCE1',
+  input: '#DCDCE1',
+  ring: '#D9782F',
+  sidebar: '#F2F2F4',
+  sidebarForeground: '#1C1C21',
+  sidebarPrimary: '#D9782F',
+  sidebarPrimaryForeground: '#FFF7EF',
+  sidebarAccent: '#ECECEF',
+  sidebarAccentForeground: '#1C1C21',
+  sidebarBorder: '#DCDCE1',
+  sidebarRing: '#D9782F',
+  chart1: '#D9782F',
+  chart2: '#1C9C95',
+  chart3: '#3B6BB5',
+  chart4: '#2A9D63',
+  chart5: '#B8860B',
+};
+
+const loomDarkColors: ThemeColors = {
+  background: '#111113',
+  foreground: '#ECECEE',
+  card: '#17171A',
+  cardForeground: '#ECECEE',
+  popover: '#1E1E22',
+  popoverForeground: '#ECECEE',
+  primary: '#E8945C',
+  primaryForeground: '#201204',
+  secondary: '#1E1E22',
+  secondaryForeground: '#ECECEE',
+  muted: '#17171A',
+  mutedForeground: '#86868E',
+  accent: '#1E1E22',
+  accentForeground: '#ECECEE',
+  destructive: '#E5646C',
+  destructiveForeground: '#FFFFFF',
+  border: '#26262B',
+  input: '#26262B',
+  ring: '#E8945C',
+  sidebar: '#0D0D0E',
+  sidebarForeground: '#ECECEE',
+  sidebarPrimary: '#E8945C',
+  sidebarPrimaryForeground: '#201204',
+  sidebarAccent: '#17171A',
+  sidebarAccentForeground: '#ECECEE',
+  sidebarBorder: '#26262B',
+  sidebarRing: '#E8945C',
+  chart1: '#E8945C',
+  chart2: '#5CC8C2',
+  chart3: '#6AA2E8',
+  chart4: '#4CC38A',
+  chart5: '#E5B455',
+};
+
+export const LOOM: Theme = {
+  id: 'loom',
+  name: 'Loom',
+  builtIn: true,
+  isDark: true,
+  colors: loomLightColors,
+  darkColors: loomDarkColors,
+  typography: loomTypography,
+  layout: { radius: '0.5rem', spacing: '0.25rem' },
+  shadows: loomShadows,
+};
+
+/** The theme a fresh install starts on — the same identity as Loom. */
+export const DEFAULT_THEME = LOOM;
 
 // ─── DRACULA ────────────────────────────────────────────
 
@@ -440,6 +545,7 @@ export const SOLARIZED: Theme = {
 // ─── EXPORTS ────────────────────────────────────────────
 
 export const BUILT_IN_THEMES: Theme[] = [
+  LOOM,
   DARK_DEFAULT,
   DRACULA,
   NORD,
