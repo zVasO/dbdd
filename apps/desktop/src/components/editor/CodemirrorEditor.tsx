@@ -16,9 +16,9 @@ import {
   lineNumbersExtension,
   wordWrapExtension,
 } from './codemirror/setup';
-import { themeCompartment, purrqlTheme } from './codemirror/theme';
-import { purrqlKeybindings } from './codemirror/keybindings';
-import { purrqlSqlCompleter } from './codemirror/sql-completion';
+import { themeCompartment, spoolTheme } from './codemirror/theme';
+import { spoolKeybindings } from './codemirror/keybindings';
+import { spoolSqlCompleter } from './codemirror/sql-completion';
 import { usePreferencesStore } from '@/stores/preferencesStore';
 import { useThemeStore } from '@/stores/themeStore';
 
@@ -131,10 +131,10 @@ export function CodemirrorEditor({ value, onChange, onExecute, onExecuteAll, onS
         lineNumbersCompartment.of(lineNumbersExtension(showLineNumbers)),
         fontSizeCompartment.of(fontSizeExtension(fontSize)),
         wordWrapCompartment.of(wordWrapExtension(wordWrap)),
-        themeCompartment.of(purrqlTheme(isDark)),
+        themeCompartment.of(spoolTheme(isDark)),
         sql({ dialect: PostgreSQL }),
         autocompletion({
-          override: [purrqlSqlCompleter],
+          override: [spoolSqlCompleter],
           activateOnTyping: true,
           maxRenderedOptions: 50,
         }),
@@ -142,7 +142,7 @@ export function CodemirrorEditor({ value, onChange, onExecute, onExecuteAll, onS
         placeholder(
           `Write a query… ${formatBinding(useShortcutStore.getState().getBinding('editor.execute'))} to run`,
         ),
-        purrqlKeybindings({
+        spoolKeybindings({
           onExecute: () => executeRef.current(),
           onExecuteAll: () => executeAllRef.current(),
           onFormat: () => { void formatRef.current(); },
@@ -205,7 +205,7 @@ export function CodemirrorEditor({ value, onChange, onExecute, onExecuteAll, onS
     const view = viewRef.current;
     if (!view) return;
     view.dispatch({
-      effects: themeCompartment.reconfigure(purrqlTheme(isDark)),
+      effects: themeCompartment.reconfigure(spoolTheme(isDark)),
     });
   }, [isDark, activeThemeId]);
 
@@ -243,8 +243,8 @@ export function CodemirrorEditor({ value, onChange, onExecute, onExecuteAll, onS
   // --- Format event listener (toolbar button) ---
   useEffect(() => {
     const handler = () => { void formatRef.current(); };
-    document.addEventListener('vasodb:format', handler);
-    return () => document.removeEventListener('vasodb:format', handler);
+    document.addEventListener('spool:format', handler);
+    return () => document.removeEventListener('spool:format', handler);
   }, []);
 
   return <div ref={containerRef} className="h-full" />;

@@ -23,7 +23,7 @@ interface NotesState {
   setEditingNoteId: (id: string | null) => void;
 }
 
-const STORAGE_KEY = 'vasodb:notes';
+const STORAGE_KEY = 'spool:notes';
 
 function loadNotes(): Note[] {
   try {

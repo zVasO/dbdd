@@ -6,11 +6,11 @@ product
 
 ## Users
 
-Full-stack developers using PurrQL as their daily-driver database IDE. They live in the app for long sessions: writing and running SQL, browsing schemas, editing rows inline, managing multiple simultaneous connections (MySQL, PostgreSQL, SQLite). Context: a desktop (Tauri) app open all day next to their editor; they are keyboard-comfortable and speed-sensitive. Secondary flows include ER diagrams, visual query building, dashboards, migrations, and data import/export.
+Full-stack developers using Spool as their daily-driver database IDE. They live in the app for long sessions: writing and running SQL, browsing schemas, editing rows inline, managing multiple simultaneous connections (MySQL, PostgreSQL, SQLite). Context: a desktop (Tauri) app open all day next to their editor; they are keyboard-comfortable and speed-sensitive. Secondary flows include ER diagrams, visual query building, dashboards, migrations, and data import/export.
 
 ## Product Purpose
 
-PurrQL is a native-performance database IDE built with Rust (Tauri) and React. It exists because most database tools are either bloated Electron apps or bare-bones CLIs; PurrQL sits in the sweet spot — tiny footprint, elegant UI, multi-database, secure by design (OS keyring, AES-GCM, SSH tunneling). Success looks like: queries and schema exploration feel instant, large result sets stream smoothly, and users trust it with production credentials.
+Spool is a native-performance database IDE built with Rust (Tauri) and React. It exists because most database tools are either bloated Electron apps or bare-bones CLIs; Spool sits in the sweet spot — tiny footprint, elegant UI, multi-database, secure by design (OS keyring, AES-GCM, SSH tunneling). Success looks like: queries and schema exploration feel instant, large result sets stream smoothly, and users trust it with production credentials.
 
 ## Brand Personality
 
@@ -19,8 +19,8 @@ Fast, warm, precise. Native-speed confidence carried by the warm terracotta-and-
 ## Anti-references
 
 - **Bloated Electron-app feel**: heavy chrome, sluggish interactions, oversized spacing that wastes data density.
-- **Generic SaaS admin dashboard**: identical card grids, hero metrics, gradient accents; PurrQL screens are working surfaces, not marketing.
-- **Sterile enterprise austerity** (raw DataGrip energy): dense to the point of joyless; PurrQL keeps warmth in its neutrals and type.
+- **Generic SaaS admin dashboard**: identical card grids, hero metrics, gradient accents; Spool screens are working surfaces, not marketing.
+- **Sterile enterprise austerity** (raw DataGrip energy): dense to the point of joyless; Spool keeps warmth in its neutrals and type.
 - **Mascot-driven cuteness**: the cat is a wink, not a theme; no illustrations interrupting data workflows.
 
 ## Design Principles

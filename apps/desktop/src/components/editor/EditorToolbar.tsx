@@ -186,7 +186,7 @@ export function EditorToolbar({ isExecuting, onRun }: Props) {
             <Button
               size="sm"
               variant="ghost"
-              onClick={() => document.dispatchEvent(new CustomEvent('vasodb:format'))}
+              onClick={() => document.dispatchEvent(new CustomEvent('spool:format'))}
               className="gap-1.5 text-xs"
             >
               <Wand2 className="h-3.5 w-3.5" />

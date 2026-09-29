@@ -63,7 +63,7 @@ function bindingToCm6Key(binding: ShortcutBinding): string {
  * at runtime, the editor must be reconfigured (which the React wrapper
  * handles via compartment reconfiguration).
  */
-export function purrqlKeybindings(callbacks: KeybindingCallbacks): Extension {
+export function spoolKeybindings(callbacks: KeybindingCallbacks): Extension {
   const { getBinding } = useShortcutStore.getState();
 
   const executeBinding = getBinding('editor.execute');

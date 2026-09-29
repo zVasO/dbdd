@@ -1,8 +1,8 @@
 use tauri::State;
 use uuid::Uuid;
 
-use purrql_core::error::IpcError;
-use purrql_core::models::query::SavedQuery;
+use spool_core::error::IpcError;
+use spool_core::models::query::SavedQuery;
 
 use crate::state::AppState;
 

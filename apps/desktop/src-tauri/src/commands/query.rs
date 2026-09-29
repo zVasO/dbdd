@@ -9,12 +9,12 @@ use uuid::Uuid;
 
 use serde::Serialize;
 
-use purrql_core::error::{IpcError, PurrqlError};
-use purrql_core::models::columnar::{column_kind_for_data_type, ColumnData, ColumnKind};
-use purrql_core::models::query::{QueryHistoryEntry, QueryResult, QueryStatus};
-use purrql_core::ports::connection::DatabaseConnection;
-use purrql_engine::event_bus::{AppEvent, EventBus};
-use purrql_engine::schema_cache;
+use spool_core::error::{IpcError, SpoolError};
+use spool_core::models::columnar::{column_kind_for_data_type, ColumnData, ColumnKind};
+use spool_core::models::query::{QueryHistoryEntry, QueryResult, QueryStatus};
+use spool_core::ports::connection::DatabaseConnection;
+use spool_engine::event_bus::{AppEvent, EventBus};
+use spool_engine::schema_cache;
 
 use crate::state::AppState;
 
@@ -76,7 +76,7 @@ async fn cancel_tracked_query<F, Fut>(
 ) -> bool
 where
     F: FnOnce() -> Fut,
-    Fut: std::future::Future<Output = purrql_core::error::Result<()>>,
+    Fut: std::future::Future<Output = spool_core::error::Result<()>>,
 {
     if !cancellers.contains_key(query_id) {
         return false;
@@ -376,7 +376,7 @@ pub async fn execute_query(
     let mut cancel_rx = register_canceller(&state.stream_cancellers, query_id);
     let outcome = tokio::select! {
         biased;
-        _ = cancel_rx.changed() => return Err(IpcError::from(PurrqlError::QueryCancelled)),
+        _ = cancel_rx.changed() => return Err(IpcError::from(SpoolError::QueryCancelled)),
         result = conn.execute_tracked(&effective_sql, &query_id) => result,
     };
     state.stream_cancellers.remove(&query_id);
@@ -449,7 +449,7 @@ pub async fn execute_query_columnar(
     sql: String,
     query_id: Option<Uuid>,
     record_history: Option<bool>,
-) -> Result<purrql_core::models::columnar::ColumnarResult, IpcError> {
+) -> Result<spool_core::models::columnar::ColumnarResult, IpcError> {
     let query_id = query_id.unwrap_or_else(Uuid::new_v4);
     tracing::Span::current().record("query_id", query_id.to_string());
 
@@ -474,7 +474,7 @@ pub async fn execute_query_columnar(
     let mut cancel_rx = register_canceller(&state.stream_cancellers, query_id);
     let outcome = tokio::select! {
         biased;
-        _ = cancel_rx.changed() => return Err(IpcError::from(PurrqlError::QueryCancelled)),
+        _ = cancel_rx.changed() => return Err(IpcError::from(SpoolError::QueryCancelled)),
         result = conn.execute_columnar_tracked(&effective_sql, &query_id) => result,
     };
     state.stream_cancellers.remove(&query_id);
@@ -901,7 +901,7 @@ pub async fn execute_query_stream(
 
                             // Pass ColumnData directly; emit serializes once
                             let chunk_data: Vec<ColumnData> =
-                                purrql_core::models::columnar::rows_to_columnar_chunk(
+                                spool_core::models::columnar::rows_to_columnar_chunk(
                                     &rows, col_count, &column_kinds,
                                 );
 
@@ -1187,7 +1187,7 @@ mod tests {
         let rx = register_canceller(&cancellers, query_id);
 
         let live = cancel_tracked_query(&cancellers, &query_id, || async {
-            Err(purrql_core::error::PurrqlError::QueryExecution(
+            Err(spool_core::error::SpoolError::QueryExecution(
                 "not supported".into(),
             ))
         })

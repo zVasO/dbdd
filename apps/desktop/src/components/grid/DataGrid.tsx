@@ -1052,7 +1052,7 @@ export const DataGrid = memo(function DataGrid({ result, database, table, data: 
     if ((e.metaKey || e.ctrlKey) && e.key === 's') {
       e.preventDefault();
       commitEdit();
-      window.dispatchEvent(new CustomEvent('vasodb:commit'));
+      window.dispatchEvent(new CustomEvent('spool:commit'));
       return;
     }
     e.stopPropagation();

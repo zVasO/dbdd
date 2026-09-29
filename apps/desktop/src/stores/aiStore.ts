@@ -24,7 +24,7 @@ interface AIConfig {
   temperature: number;
 }
 
-const STORAGE_KEY = 'vasodb:ai-config';
+const STORAGE_KEY = 'spool:ai-config';
 
 const DEFAULT_CONFIG: AIConfig = {
   providerType: 'claude',
@@ -179,7 +179,7 @@ function buildSchemaContext(): string {
 function buildSystemPrompt(): string {
   const schemaContext = buildSchemaContext();
 
-  return `You are an expert SQL assistant integrated into VasOdb, a database management application. Your role is to help users write, understand, and optimize SQL queries.
+  return `You are an expert SQL assistant integrated into Spool, a database management application. Your role is to help users write, understand, and optimize SQL queries.
 
 When the user asks you to write SQL, always return the SQL inside a \`\`\`sql code block.
 

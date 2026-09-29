@@ -1,5 +1,5 @@
 {
-  "name": "vasodb",
+  "name": "spool",
   "private": true,
   "scripts": {
     "dev": "pnpm --filter desktop tauri dev",

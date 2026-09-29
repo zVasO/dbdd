@@ -3,8 +3,8 @@ import type { Theme, ThemeColors, ThemeTypography, ThemeLayout, ThemeShadows } f
 import { applyThemeToDOM, importTheme, parseCSSVariablesDual } from '@/lib/themeTypes';
 import { BUILT_IN_THEMES, DEFAULT_THEME } from '@/lib/builtInThemes';
 
-const STORAGE_KEY = 'vasodb:themes';
-const ACTIVE_KEY = 'vasodb:active-theme';
+const STORAGE_KEY = 'spool:themes';
+const ACTIVE_KEY = 'spool:active-theme';
 
 interface ThemeState {
   themes: Theme[];

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-const STORAGE_KEY = 'vasodb:favorites';
+const STORAGE_KEY = 'spool:favorites';
 
 interface FavoritesState {
   favorites: Record<string, string[]>; // connectionId -> table names

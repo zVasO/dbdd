@@ -48,8 +48,8 @@ interface AlertState {
   getUnreadCount: () => number;
 }
 
-const QUERIES_STORAGE_KEY = 'vasodb:scheduled-queries';
-const ALERTS_STORAGE_KEY = 'vasodb:alerts';
+const QUERIES_STORAGE_KEY = 'spool:scheduled-queries';
+const ALERTS_STORAGE_KEY = 'spool:alerts';
 
 // Module-level timers map (not in state since timers are not serializable)
 const timers = new Map<string, ReturnType<typeof setInterval>>();
@@ -197,7 +197,7 @@ async function executeAndCheck(id: string): Promise<void> {
 
       state.updateScheduledQuery(query.id, { lastAlertAt: Date.now() });
 
-      sendNotification(`VasOdb Alert: ${query.name}`, message);
+      sendNotification(`Spool Alert: ${query.name}`, message);
     }
   } catch (e) {
     // Update last run time even on error

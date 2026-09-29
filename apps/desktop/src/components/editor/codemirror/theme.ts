@@ -4,20 +4,20 @@ import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
 
 /**
- * Compartment for hot-swapping the VasOdb theme
+ * Compartment for hot-swapping the Spool theme
  * without recreating the entire editor instance.
  */
 export const themeCompartment = new Compartment();
 
 /**
- * Build the full VasOdb theme extension for CodeMirror 6.
+ * Build the full Spool theme extension for CodeMirror 6.
  *
  * Colors are emitted as `var()` references, not resolved values: CodeMirror
  * injects this theme as real stylesheet rules, so the cascade keeps the editor
  * in sync with `.dark` and with user themes on its own. Resolving the tokens in
  * JS instead would mean reimplementing every color space `globals.css` uses.
  */
-export function purrqlTheme(isDark: boolean): Extension {
+export function spoolTheme(isDark: boolean): Extension {
   const bg = 'var(--background)';
   const fg = 'var(--foreground)';
   const mutedFg = 'var(--muted-foreground)';

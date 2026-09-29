@@ -3,9 +3,9 @@ use std::sync::Arc;
 use tauri::State;
 use uuid::Uuid;
 
-use purrql_core::error::IpcError;
-use purrql_core::models::connection::{ConnectionConfig, SavedConnection};
-use purrql_engine::event_bus::AppEvent;
+use spool_core::error::IpcError;
+use spool_core::models::connection::{ConnectionConfig, SavedConnection};
+use spool_engine::event_bus::AppEvent;
 
 use crate::state::AppState;
 

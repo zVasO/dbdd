@@ -11,7 +11,7 @@ export interface Snippet {
   updatedAt: number;
 }
 
-const STORAGE_KEY = 'vasodb:snippets';
+const STORAGE_KEY = 'spool:snippets';
 
 function loadSnippets(): Snippet[] {
   try {

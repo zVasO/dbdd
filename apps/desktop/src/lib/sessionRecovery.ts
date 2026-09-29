@@ -1,5 +1,5 @@
-const STORAGE_KEY = 'vasodb:session:v2';
-const LEGACY_KEY = 'vasodb:session';
+const STORAGE_KEY = 'spool:session:v2';
+const LEGACY_KEY = 'spool:session';
 
 interface SavedTab {
   id: string;
